@@ -88,8 +88,15 @@ Lưu ý: tên gọi có thể khác nhau tùy loại hợp đồng.
 
 💰 KỸ NĂNG 3 — PHÂN TÍCH GIÁ TRỊ TÀI CHÍNH:
 - Tìm giá trị hợp đồng dù nằm ở bất kỳ phần nào
-- Phân biệt rõ: "đã bao gồm VAT" vs "chưa bao gồm VAT"
-- Nếu hợp đồng ghi cả 2 giá trị (trước VAT và sau VAT), ưu tiên ghi nhận cả 2
+- XÁC ĐỊNH VAT — ĐÂY LÀ QUY TẮC QUAN TRỌNG NHẤT:
+  • "thuế" = "thuế GTGT" = "thuế giá trị gia tăng" = "VAT" — tất cả đều là cùng một loại thuế
+  • Nếu hợp đồng ghi "chưa bao gồm thuế" hoặc "chưa bao gồm thuế GTGT" hoặc "chưa có VAT" → bao_gom_vat = false
+  • Nếu hợp đồng ghi "đã bao gồm thuế" hoặc "đã bao gồm thuế GTGT" hoặc "bao gồm VAT" → bao_gom_vat = true
+  • CHỈ lấy thông tin VAT từ dòng/câu TRỰC TIẾP đi kèm hoặc mô tả giá trị hợp đồng chính
+  • KHÔNG lấy tỷ lệ thuế từ các phần KHÁC trong hợp đồng (như điều khoản thuế, nghĩa vụ thuế, phụ lục) — những phần đó có thể mô tả bối cảnh khác
+  • Nếu hợp đồng ghi rõ con số: "giá trị HĐ là X (chưa bao gồm thuế GTGT Y%)" → so_tien = X, bao_gom_vat = false, thue_vat = "Y%"
+  • Nếu KHÔNG RÕ RÀNG hoặc mâu thuẫn → ưu tiên thông tin NGAY SÁT giá trị hợp đồng
+- Nếu hợp đồng ghi cả 2 giá trị (trước VAT và sau VAT), ghi nhận cả 2
 - Giữ NGUYÊN format số Việt Nam: dấu '.' phân cách hàng nghìn, dấu ',' cho thập phân
 
 📅 KỸ NĂNG 4 — TRÍCH XUẤT LỊCH THANH TOÁN:
@@ -124,9 +131,9 @@ OUTPUT FORMAT — Trả về JSON thuần túy với cấu trúc sau:
     "so_dien_thoai": "SĐT hoặc null"
   },
   "gia_tri_hop_dong": {
-    "so_tien": "1.234.567.890 (giữ format VN)",
-    "bao_gom_vat": true/false,
-    "thue_vat": "10%",
+    "so_tien": "1.234.567.890 (giữ format VN — đây là giá trị gốc ghi trong HĐ)",
+    "bao_gom_vat": true hoặc false (XÁC ĐỊNH TỪ CÂU/DÒNG SÁT GIÁ TRỊ HĐ, 'thuế'='VAT'='thuế GTGT'),
+    "thue_vat": "10% (chỉ ghi nếu HĐ ghi rõ tỷ lệ tại phần giá trị, không suy luận từ phần khác)",
     "tong_sau_vat": "số tiền sau VAT hoặc null",
     "bang_chu": "bằng chữ hoặc null"
   },
@@ -146,7 +153,9 @@ QUY TẮC BẮT BUỘC:
 - Giữ NGUYÊN tiếng Việt gốc, không dịch sang tiếng Anh
 - Format số Việt Nam: dấu '.' hàng nghìn, dấu ',' thập phân
 - Nếu không tìm thấy → null (object fields) hoặc [] (payment array)
-- Nếu thấy nhiều giá trị cho cùng 1 trường, chọn giá trị CỤ THỂ và CHÍNH XÁC nhất`,
+- Nếu thấy nhiều giá trị cho cùng 1 trường, chọn giá trị CỤ THỂ và CHÍNH XÁC nhất
+- "thuế" và "VAT" và "thuế GTGT" là CÙNG MỘT THỨ. "chưa bao gồm thuế" = bao_gom_vat: false
+- Chỉ xác định bao_gom_vat và thue_vat dựa trên dòng/câu NGAY SÁT giá trị hợp đồng chính — KHÔNG suy luận từ phần khác của tài liệu`,
 };
 
 interface GeminiPart {

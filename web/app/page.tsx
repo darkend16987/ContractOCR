@@ -420,7 +420,7 @@ export default function HomePage() {
   // ─── Smart extraction with agent ───────────────────────────────────
 
   const startExtraction = useCallback(async () => {
-    if (!apiKey || pages.length === 0) return;
+    if (!apiKey || !file) return;
 
     setAppState("processing");
     setAppError(null);
@@ -429,8 +429,52 @@ export default function HomePage() {
     setReconInfo("");
     let tokens = 0;
 
-    const isShortDoc = pages.length <= DIRECT_EXTRACT_THRESHOLD;
-    const allPageNumbers = pages.map((p) => p.pageNumber);
+    // Auto-reload pages if scan mode/range changed since last render
+    let currentPages = pages;
+    if (file.type === "application/pdf") {
+      const range =
+        scanMode === "range"
+          ? { from: rangeFrom, to: rangeTo }
+          : undefined;
+
+      // Check if current pages match the expected range
+      const expectedStart = range ? range.from : 1;
+      const firstPage = currentPages[0]?.pageNumber;
+      const needsReload =
+        currentPages.length === 0 ||
+        firstPage !== expectedStart ||
+        (range && currentPages.length !== range.to - range.from + 1) ||
+        (!range && currentPages.length !== totalPdfPages);
+
+      if (needsReload) {
+        setStatusMessage("Đang tải lại trang theo phân vùng...");
+        try {
+          const { pages: reloaded } = await renderPdfPages(
+            file,
+            range,
+            (current, count) => {
+              setStatusMessage(`Đang render trang ${current}/${count}...`);
+            }
+          );
+          currentPages = reloaded;
+          setPages(reloaded);
+        } catch (err) {
+          setAppError({
+            code: "UNKNOWN",
+            message: "Lỗi render PDF",
+            detail: err instanceof Error ? err.message : String(err),
+            retryable: true,
+          });
+          setAppState("idle");
+          return;
+        }
+      }
+    }
+
+    if (currentPages.length === 0) return;
+
+    const isShortDoc = currentPages.length <= DIRECT_EXTRACT_THRESHOLD;
+    const allPageNumbers = currentPages.map((p) => p.pageNumber);
 
     let extractPageNumbers: number[];
 
@@ -448,7 +492,7 @@ export default function HomePage() {
       );
 
       try {
-        const lowResImages = pages.map((p) => p.base64Low || p.base64);
+        const lowResImages = currentPages.map((p) => p.base64Low || p.base64);
         const reconRes = await callExtract(
           lowResImages,
           "recon",
@@ -503,7 +547,7 @@ export default function HomePage() {
 
     try {
       const extractImages = extractPageNumbers.map((pn) => {
-        const page = pages.find((p) => p.pageNumber === pn);
+        const page = currentPages.find((p) => p.pageNumber === pn);
         return page!.base64;
       });
 
@@ -560,7 +604,7 @@ export default function HomePage() {
           fileName: file?.name || "unknown",
           result: extractedResult,
           tokensUsed: tokens,
-          scannedPages: pages.length,
+          scannedPages: currentPages.length,
           createdAt: Date.now(),
           label: buildCacheLabel(extractedResult),
         }).catch(() => {});
@@ -576,7 +620,7 @@ export default function HomePage() {
 
     setStatusMessage("Hoàn thành!");
     setAppState("results");
-  }, [apiKey, model, pages]);
+  }, [apiKey, model, pages, file, scanMode, rangeFrom, rangeTo, totalPdfPages, currentFingerprint]);
 
   // ─── Exports ────────────────────────────────────────────────────────
 
