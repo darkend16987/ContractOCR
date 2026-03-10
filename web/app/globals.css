@@ -1,0 +1,160 @@
+@import url('https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@300;400;500;600;700&family=Inter:wght@300;400;500;600;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --gradient-start: #2563eb;
+    --gradient-end: #7c3aed;
+  }
+
+  body {
+    @apply antialiased text-gray-900 bg-gray-50;
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  }
+
+  ::selection {
+    @apply bg-blue-200/60;
+  }
+}
+
+@layer components {
+  .card {
+    @apply bg-white rounded-2xl border border-gray-100 shadow-sm;
+  }
+
+  .card-hover {
+    @apply card transition-all duration-200 hover:shadow-md hover:border-gray-200;
+  }
+
+  .btn-primary {
+    @apply inline-flex items-center justify-center gap-2 px-6 py-3
+           bg-gradient-to-r from-blue-600 to-violet-600
+           text-white font-semibold rounded-xl
+           shadow-lg shadow-blue-500/25
+           transition-all duration-200
+           hover:shadow-xl hover:shadow-blue-500/30 hover:scale-[1.02]
+           active:scale-[0.98]
+           disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100 disabled:hover:shadow-lg;
+  }
+
+  .btn-secondary {
+    @apply inline-flex items-center justify-center gap-2 px-4 py-2.5
+           bg-white text-gray-700 font-medium rounded-xl
+           border border-gray-200
+           transition-all duration-200
+           hover:bg-gray-50 hover:border-gray-300
+           active:scale-[0.98];
+  }
+
+  .input-field {
+    @apply w-full px-4 py-2.5 rounded-xl border border-gray-200
+           bg-white text-gray-900
+           placeholder:text-gray-400
+           transition-all duration-200
+           focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-400;
+  }
+
+  .gradient-text {
+    @apply bg-gradient-to-r from-blue-600 to-violet-600 bg-clip-text text-transparent;
+  }
+
+  .upload-zone {
+    @apply relative flex flex-col items-center justify-center
+           min-h-[280px] p-8
+           border-2 border-dashed border-gray-300 rounded-2xl
+           bg-gradient-to-br from-gray-50 to-white
+           transition-all duration-300 cursor-pointer
+           hover:border-blue-400 hover:bg-blue-50/30;
+  }
+
+  .upload-zone.drag-over {
+    @apply border-blue-500 bg-blue-50/50 scale-[1.01];
+  }
+
+  .result-card {
+    @apply card p-6 animate-slide-up;
+  }
+
+  .status-badge {
+    @apply inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium;
+  }
+
+  .status-badge.processing {
+    @apply bg-amber-50 text-amber-700 border border-amber-200;
+  }
+
+  .status-badge.done {
+    @apply bg-emerald-50 text-emerald-700 border border-emerald-200;
+  }
+
+  .status-badge.error {
+    @apply bg-red-50 text-red-700 border border-red-200;
+  }
+
+  .table-container {
+    @apply overflow-x-auto rounded-xl border border-gray-100;
+  }
+
+  .table-container table {
+    @apply w-full text-sm;
+  }
+
+  .table-container thead {
+    @apply bg-gray-50/80;
+  }
+
+  .table-container th {
+    @apply px-4 py-3 text-left font-semibold text-gray-600 text-xs uppercase tracking-wider;
+  }
+
+  .table-container td {
+    @apply px-4 py-3 text-gray-700 border-t border-gray-50;
+  }
+
+  .table-container tbody tr {
+    @apply transition-colors hover:bg-blue-50/30;
+  }
+}
+
+@layer utilities {
+  .scrollbar-thin {
+    scrollbar-width: thin;
+    scrollbar-color: #d1d5db transparent;
+  }
+
+  .scrollbar-thin::-webkit-scrollbar {
+    width: 6px;
+  }
+
+  .scrollbar-thin::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  .scrollbar-thin::-webkit-scrollbar-thumb {
+    background-color: #d1d5db;
+    border-radius: 3px;
+  }
+}
+
+/* Processing spinner */
+@keyframes spin-slow {
+  to { transform: rotate(360deg); }
+}
+
+.spinner {
+  animation: spin-slow 1.5s linear infinite;
+}
+
+/* Pulsing dot */
+.pulse-dot {
+  @apply w-2 h-2 rounded-full bg-blue-500;
+  animation: pulse-dot 1.5s ease-in-out infinite;
+}
+
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.5; transform: scale(0.8); }
+}
