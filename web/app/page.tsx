@@ -29,6 +29,8 @@ import {
   Database,
   Zap,
   Trash2,
+  Pencil,
+  Save,
 } from "lucide-react";
 import type {
   ExtractionResult,
@@ -85,14 +87,14 @@ async function renderPdfPages(
     const page = await pdf.getPage(i);
 
     // High quality for extraction
-    const viewport = page.getViewport({ scale: 1.2 });
+    const viewport = page.getViewport({ scale: 1.5 });
     const canvas = document.createElement("canvas");
     canvas.width = viewport.width;
     canvas.height = viewport.height;
     const ctx = canvas.getContext("2d")!;
     await page.render({ canvasContext: ctx, viewport }).promise;
 
-    const dataUrl = canvas.toDataURL("image/jpeg", 0.75);
+    const dataUrl = canvas.toDataURL("image/jpeg", 0.85);
     const base64 = dataUrl.split(",")[1];
 
     // Low quality for recon
@@ -265,6 +267,8 @@ export default function HomePage() {
   const [cacheEntries, setCacheEntries] = useState<CacheEntry[]>([]);
   const [showCachePanel, setShowCachePanel] = useState(false);
   const [currentFingerprint, setCurrentFingerprint] = useState<string>("");
+  const [resultEdited, setResultEdited] = useState(false);
+  const [cacheSaved, setCacheSaved] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [dragOver, setDragOver] = useState(false);
@@ -584,31 +588,8 @@ export default function HomePage() {
 
       setExtractStatus("done");
       setAppError(null); // Clear any previous recon error
-
-      // Save to cache
-      const extractedResult: ExtractionResult = {
-        chu_dau_tu:
-          (d.chu_dau_tu as PartyInfo) || DEFAULT_RESULT.chu_dau_tu,
-        nha_thau: (d.nha_thau as PartyInfo) || DEFAULT_RESULT.nha_thau,
-        gia_tri_hop_dong:
-          (d.gia_tri_hop_dong as ContractValue) ||
-          DEFAULT_RESULT.gia_tri_hop_dong,
-        tien_do_thanh_toan:
-          (d.tien_do_thanh_toan as PaymentMilestone[]) || [],
-        so_hop_dong: (d.so_hop_dong as string) || null,
-        ngay_ky: (d.ngay_ky as string) || null,
-      };
-      if (currentFingerprint) {
-        setCachedResult({
-          fingerprint: currentFingerprint,
-          fileName: file?.name || "unknown",
-          result: extractedResult,
-          tokensUsed: tokens,
-          scannedPages: currentPages.length,
-          createdAt: Date.now(),
-          label: buildCacheLabel(extractedResult),
-        }).catch(() => {});
-      }
+      setResultEdited(false);
+      setCacheSaved(false);
     } catch (err) {
       setExtractStatus("error");
       const classified = classifyError(
@@ -663,6 +644,8 @@ export default function HomePage() {
     setReconInfo("");
     setCacheHit(null);
     setCurrentFingerprint("");
+    setResultEdited(false);
+    setCacheSaved(false);
     if (fileInputRef.current) fileInputRef.current.value = "";
   };
 
@@ -688,6 +671,20 @@ export default function HomePage() {
     setCacheEntries([]);
     setCacheHit(null);
   }, []);
+
+  const handleSaveToCache = useCallback(async () => {
+    if (!currentFingerprint || !file) return;
+    await setCachedResult({
+      fingerprint: currentFingerprint,
+      fileName: file.name,
+      result,
+      tokensUsed: totalTokens,
+      scannedPages: pages.length,
+      createdAt: Date.now(),
+      label: buildCacheLabel(result),
+    });
+    setCacheSaved(true);
+  }, [currentFingerprint, file, result, totalTokens, pages.length]);
 
   const handleDeleteCacheEntry = useCallback(async (fp: string) => {
     await deleteCacheEntry(fp);
@@ -749,24 +746,82 @@ export default function HomePage() {
     </div>
   );
 
+  // Editable state
+  const [editingField, setEditingField] = useState<string | null>(null);
+  const [editValue, setEditValue] = useState("");
+
+  const startEdit = (fieldPath: string, currentValue: string | null | undefined) => {
+    setEditingField(fieldPath);
+    setEditValue(currentValue || "");
+  };
+
+  const saveEdit = (fieldPath: string) => {
+    const newResult = { ...result };
+    const parts = fieldPath.split(".");
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let obj: any = newResult;
+    for (let i = 0; i < parts.length - 1; i++) {
+      obj = obj[parts[i]];
+    }
+    obj[parts[parts.length - 1]] = editValue || null;
+    setResult(newResult);
+    setEditingField(null);
+    setResultEdited(true);
+  };
+
   const InfoRow = ({
     label,
     value,
+    fieldPath,
   }: {
     label: string;
     value: string | null | undefined;
+    fieldPath?: string;
   }) => (
-    <div className="flex justify-between items-start py-2 border-b border-gray-50 last:border-0">
+    <div className="flex justify-between items-start py-2 border-b border-gray-50 last:border-0 group">
       <span className="text-xs font-medium text-gray-500 uppercase tracking-wide min-w-[100px]">
         {label}
       </span>
-      <span className="text-sm text-gray-900 text-right font-medium">
-        {value || (
-          <span className="text-gray-300 italic font-normal">
-            Không tìm thấy
+      {editingField === fieldPath ? (
+        <div className="flex items-center gap-1.5">
+          <input
+            type="text"
+            value={editValue}
+            onChange={(e) => setEditValue(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && fieldPath) saveEdit(fieldPath);
+              if (e.key === "Escape") setEditingField(null);
+            }}
+            className="text-sm text-gray-900 font-medium text-right border border-blue-300 rounded px-2 py-0.5 outline-none focus:ring-2 focus:ring-blue-200 w-48"
+            autoFocus
+          />
+          <button
+            onClick={() => fieldPath && saveEdit(fieldPath)}
+            className="p-0.5 text-blue-500 hover:text-blue-700"
+          >
+            <Check className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      ) : (
+        <div className="flex items-center gap-1.5">
+          <span className="text-sm text-gray-900 text-right font-medium">
+            {value || (
+              <span className="text-gray-300 italic font-normal">
+                Không tìm thấy
+              </span>
+            )}
           </span>
-        )}
-      </span>
+          {fieldPath && appState === "results" && (
+            <button
+              onClick={() => startEdit(fieldPath, value)}
+              className="opacity-0 group-hover:opacity-100 p-0.5 text-gray-300 hover:text-blue-500 transition-all"
+              title="Sửa"
+            >
+              <Pencil className="w-3 h-3" />
+            </button>
+          )}
+        </div>
+      )}
     </div>
   );
 
@@ -935,7 +990,7 @@ export default function HomePage() {
               </div>
               {cacheEntries.length === 0 ? (
                 <p className="text-xs text-gray-400 italic">
-                  Chưa có kết quả nào được cache. Kết quả sẽ tự động lưu sau mỗi lần quét thành công.
+                  Chưa có kết quả nào được cache. Sau khi quét và kiểm tra kết quả, bấm &quot;Lưu vào cache&quot; để lưu.
                 </p>
               ) : (
                 <div className="space-y-2 max-h-48 overflow-y-auto scrollbar-thin">
@@ -1366,6 +1421,42 @@ export default function HomePage() {
               </div>
             </div>
 
+            {/* Editable hint + save to cache */}
+            <div className="flex items-center justify-between flex-wrap gap-2">
+              <p className="text-[11px] text-gray-400 flex items-center gap-1">
+                <Pencil className="w-3 h-3" />
+                Hover vào giá trị để chỉnh sửa
+                {resultEdited && (
+                  <span className="text-amber-500 font-medium ml-1">
+                    (đã chỉnh sửa)
+                  </span>
+                )}
+              </p>
+              {currentFingerprint && (
+                <button
+                  onClick={handleSaveToCache}
+                  disabled={cacheSaved}
+                  className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                    cacheSaved
+                      ? "bg-emerald-50 text-emerald-600 border border-emerald-200"
+                      : "bg-blue-50 text-blue-700 border border-blue-200 hover:bg-blue-100"
+                  }`}
+                >
+                  {cacheSaved ? (
+                    <>
+                      <Check className="w-3.5 h-3.5" />
+                      Đã lưu cache
+                    </>
+                  ) : (
+                    <>
+                      <Save className="w-3.5 h-3.5" />
+                      Lưu vào cache
+                    </>
+                  )}
+                </button>
+              )}
+            </div>
+
             {/* Recon summary badge */}
             {reconInfo && (
               <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-blue-50/50 border border-blue-100">
@@ -1417,11 +1508,11 @@ export default function HomePage() {
                   </div>
                 </div>
                 <div className="space-y-0.5">
-                  <InfoRow label="Địa chỉ" value={result.chu_dau_tu?.dia_chi} />
-                  <InfoRow label="Đại diện" value={result.chu_dau_tu?.dai_dien} />
-                  <InfoRow label="Chức vụ" value={result.chu_dau_tu?.chuc_vu} />
-                  <InfoRow label="MST" value={result.chu_dau_tu?.mst} />
-                  <InfoRow label="SĐT" value={result.chu_dau_tu?.so_dien_thoai} />
+                  <InfoRow label="Địa chỉ" value={result.chu_dau_tu?.dia_chi} fieldPath="chu_dau_tu.dia_chi" />
+                  <InfoRow label="Đại diện" value={result.chu_dau_tu?.dai_dien} fieldPath="chu_dau_tu.dai_dien" />
+                  <InfoRow label="Chức vụ" value={result.chu_dau_tu?.chuc_vu} fieldPath="chu_dau_tu.chuc_vu" />
+                  <InfoRow label="MST" value={result.chu_dau_tu?.mst} fieldPath="chu_dau_tu.mst" />
+                  <InfoRow label="SĐT" value={result.chu_dau_tu?.so_dien_thoai} fieldPath="chu_dau_tu.so_dien_thoai" />
                 </div>
               </div>
 
@@ -1440,11 +1531,11 @@ export default function HomePage() {
                   </div>
                 </div>
                 <div className="space-y-0.5">
-                  <InfoRow label="Địa chỉ" value={result.nha_thau?.dia_chi} />
-                  <InfoRow label="Đại diện" value={result.nha_thau?.dai_dien} />
-                  <InfoRow label="Chức vụ" value={result.nha_thau?.chuc_vu} />
-                  <InfoRow label="MST" value={result.nha_thau?.mst} />
-                  <InfoRow label="SĐT" value={result.nha_thau?.so_dien_thoai} />
+                  <InfoRow label="Địa chỉ" value={result.nha_thau?.dia_chi} fieldPath="nha_thau.dia_chi" />
+                  <InfoRow label="Đại diện" value={result.nha_thau?.dai_dien} fieldPath="nha_thau.dai_dien" />
+                  <InfoRow label="Chức vụ" value={result.nha_thau?.chuc_vu} fieldPath="nha_thau.chuc_vu" />
+                  <InfoRow label="MST" value={result.nha_thau?.mst} fieldPath="nha_thau.mst" />
+                  <InfoRow label="SĐT" value={result.nha_thau?.so_dien_thoai} fieldPath="nha_thau.so_dien_thoai" />
                 </div>
               </div>
             </div>
@@ -1482,9 +1573,9 @@ export default function HomePage() {
                   )}
                 </div>
                 <div className="space-y-0.5">
-                  <InfoRow label="Thuế VAT" value={result.gia_tri_hop_dong?.thue_vat} />
-                  <InfoRow label="Sau VAT" value={result.gia_tri_hop_dong?.tong_sau_vat} />
-                  <InfoRow label="Bằng chữ" value={result.gia_tri_hop_dong?.bang_chu} />
+                  <InfoRow label="Thuế VAT" value={result.gia_tri_hop_dong?.thue_vat} fieldPath="gia_tri_hop_dong.thue_vat" />
+                  <InfoRow label="Sau VAT" value={result.gia_tri_hop_dong?.tong_sau_vat} fieldPath="gia_tri_hop_dong.tong_sau_vat" />
+                  <InfoRow label="Bằng chữ" value={result.gia_tri_hop_dong?.bang_chu} fieldPath="gia_tri_hop_dong.bang_chu" />
                 </div>
               </div>
             </div>
