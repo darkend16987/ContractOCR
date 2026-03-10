@@ -1,0 +1,32 @@
+version: "3.8"
+
+services:
+  # Python OCR API (PaddleOCR + VietOCR)
+  ocr:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8002:8000"
+    environment:
+      - OCR_ENGINE=hybrid
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Next.js Web App (LAN-accessible on 0.0.0.0:3002)
+  web:
+    build:
+      context: ./web
+      dockerfile: Dockerfile
+    ports:
+      - "0.0.0.0:3002:3000"
+    environment:
+      - OCR_API_URL=http://ocr:8000
+    depends_on:
+      ocr:
+        condition: service_healthy
+    restart: unless-stopped

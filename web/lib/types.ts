@@ -42,6 +42,9 @@ export type PhaseStatus = "idle" | "processing" | "done" | "error";
 /** Chế độ quét */
 export type ScanMode = "all" | "range";
 
+/** Chế độ OCR */
+export type OCRMode = "gemini-vision" | "vietocr";
+
 /** Page image data */
 export interface PageImage {
   pageNumber: number;

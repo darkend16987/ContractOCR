@@ -264,6 +264,90 @@ export async function callGeminiExtract(
   }
 }
 
+/**
+ * Call Gemini with plain TEXT (from VietOCR/PaddleOCR).
+ * Much cheaper and more accurate than Vision — no images sent.
+ */
+export async function callGeminiWithText(
+  ocrText: string,
+  apiKey: string,
+  model: string = "gemini-2.5-flash"
+): Promise<{ data: Record<string, unknown>; tokensUsed: number }> {
+  const prompt = PROMPTS["extract"];
+
+  const parts: GeminiPart[] = [
+    {
+      text: `Dưới đây là nội dung text đã được OCR (PaddleOCR + VietOCR) từ hợp đồng tiếng Việt. Text đã được nhận diện chính xác bởi engine OCR chuyên biệt cho tiếng Việt, hãy tin tưởng nội dung text này:\n\n${ocrText}`,
+    },
+    { text: prompt },
+  ];
+
+  const response = await fetch(
+    `${GEMINI_API_URL}/${model}:generateContent?key=${apiKey}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        contents: [{ parts }],
+        generationConfig: {
+          responseMimeType: "application/json",
+          temperature: 0.1,
+        },
+      }),
+    }
+  );
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    let message = `Gemini API error (${response.status})`;
+    try {
+      const err = JSON.parse(errorText);
+      message = err?.error?.message || message;
+    } catch {
+      // keep default message
+    }
+    throw new Error(message);
+  }
+
+  const result = await response.json();
+
+  const candidate = result?.candidates?.[0];
+  if (!candidate) {
+    const blockReason = result?.promptFeedback?.blockReason;
+    if (blockReason) {
+      throw new Error(`SAFETY: Content blocked — ${blockReason}`);
+    }
+    throw new Error("Gemini returned no candidates");
+  }
+
+  if (candidate.finishReason === "SAFETY") {
+    throw new Error("SAFETY: Response blocked by Gemini safety filters");
+  }
+
+  const text = candidate.content?.parts?.[0]?.text;
+  const tokensUsed =
+    (result?.usageMetadata?.promptTokenCount || 0) +
+    (result?.usageMetadata?.candidatesTokenCount || 0);
+
+  if (!text) {
+    throw new Error("Gemini returned empty response text");
+  }
+
+  let cleaned = text.trim();
+  if (cleaned.startsWith("```")) {
+    cleaned = cleaned.replace(/^```(?:json)?\n?/, "").replace(/\n?```$/, "");
+  }
+
+  try {
+    const data = JSON.parse(cleaned);
+    return { data, tokensUsed };
+  } catch {
+    throw new Error(
+      `JSON parse error: Gemini returned invalid JSON. First 200 chars: ${cleaned.slice(0, 200)}`
+    );
+  }
+}
+
 // ─── Recon result types ─────────────────────────────────────────────────────
 
 export interface PageAnalysis {

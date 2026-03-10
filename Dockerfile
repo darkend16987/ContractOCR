@@ -5,6 +5,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     poppler-utils \
     libgl1-mesa-glx \
     libglib2.0-0 \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -14,15 +15,19 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application code
-COPY . .
+COPY src/ src/
+COPY api.py .
+COPY cli.py .
+COPY app.py .
 
 # Create directories
 RUN mkdir -p uploads results
 
-EXPOSE 8501
+EXPOSE 8000
 
 # Health check
-HEALTHCHECK CMD curl --fail http://localhost:8501/_stcore/health || exit 1
+HEALTHCHECK --interval=30s --timeout=10s --retries=3 \
+    CMD curl --fail http://localhost:8000/health || exit 1
 
-# Run Streamlit
-CMD ["streamlit", "run", "app.py", "--server.port=8501", "--server.address=0.0.0.0", "--server.headless=true"]
+# Run FastAPI OCR server
+CMD ["uvicorn", "api:app", "--host", "0.0.0.0", "--port", "8000"]

@@ -41,6 +41,7 @@ import type {
   PhaseStatus,
   ExtractResponse,
   ScanMode,
+  OCRMode,
   AppError,
 } from "@/lib/types";
 import { classifyError } from "@/lib/types";
@@ -86,15 +87,15 @@ async function renderPdfPages(
     onProgress?.(rendered, pageCount);
     const page = await pdf.getPage(i);
 
-    // High quality for extraction
-    const viewport = page.getViewport({ scale: 1.5 });
+    // High quality for extraction (scale 2.0 for crisp text)
+    const viewport = page.getViewport({ scale: 2.0 });
     const canvas = document.createElement("canvas");
     canvas.width = viewport.width;
     canvas.height = viewport.height;
     const ctx = canvas.getContext("2d")!;
     await page.render({ canvasContext: ctx, viewport }).promise;
 
-    const dataUrl = canvas.toDataURL("image/jpeg", 0.85);
+    const dataUrl = canvas.toDataURL("image/jpeg", 0.92);
     const base64 = dataUrl.split(",")[1];
 
     // Low quality for recon
@@ -253,6 +254,10 @@ export default function HomePage() {
   const [rangeFrom, setRangeFrom] = useState(1);
   const [rangeTo, setRangeTo] = useState(10);
 
+  // OCR mode
+  const [ocrMode, setOcrMode] = useState<OCRMode>("gemini-vision");
+  const [ocrAvailable, setOcrAvailable] = useState<boolean | null>(null);
+
   // Phase statuses
   const [reconStatus, setReconStatus] = useState<PhaseStatus>("idle");
   const [extractStatus, setExtractStatus] = useState<PhaseStatus>("idle");
@@ -279,7 +284,23 @@ export default function HomePage() {
     if (saved) setApiKey(saved);
     const savedModel = localStorage.getItem("contractocr_model");
     if (savedModel) setModel(savedModel);
+    const savedOcrMode = localStorage.getItem("contractocr_ocrmode");
+    if (savedOcrMode) setOcrMode(savedOcrMode as OCRMode);
   }, []);
+
+  // Check if VietOCR backend is available
+  useEffect(() => {
+    fetch("/api/ocr", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ images: [] }) })
+      .then((r) => {
+        // 400 = server reachable but bad request; 503 = no OCR_API_URL
+        setOcrAvailable(r.status !== 503);
+        if (r.status !== 503 && ocrMode === "gemini-vision") {
+          setOcrMode("vietocr");
+          localStorage.setItem("contractocr_ocrmode", "vietocr");
+        }
+      })
+      .catch(() => setOcrAvailable(false));
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (apiKey) localStorage.setItem("contractocr_apikey", apiKey);
@@ -389,7 +410,7 @@ export default function HomePage() {
     [handleFile]
   );
 
-  // ─── API call helper ───────────────────────────────────────────────
+  // ─── API call helpers ──────────────────────────────────────────────
 
   const callExtract = async (
     images: string[],
@@ -417,6 +438,45 @@ export default function HomePage() {
         success: false,
         error: err instanceof Error ? err.message : "Lỗi kết nối",
         errorCode: "NETWORK_ERROR",
+      };
+    }
+  };
+
+  const callExtractWithText = async (
+    ocrText: string
+  ): Promise<ExtractResponse> => {
+    try {
+      const res = await fetch("/api/extract", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ocrText, apiKey, model }),
+      });
+      return await res.json();
+    } catch (err) {
+      return {
+        success: false,
+        error: err instanceof Error ? err.message : "Lỗi kết nối",
+        errorCode: "NETWORK_ERROR",
+      };
+    }
+  };
+
+  const callOCR = async (
+    images: string[],
+    pageNumbers?: number[]
+  ): Promise<{ success: boolean; full_text: string; error?: string }> => {
+    try {
+      const res = await fetch("/api/ocr", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ images, pageNumbers }),
+      });
+      return await res.json();
+    } catch (err) {
+      return {
+        success: false,
+        full_text: "",
+        error: err instanceof Error ? err.message : "Lỗi kết nối OCR server",
       };
     }
   };
@@ -477,8 +537,70 @@ export default function HomePage() {
 
     if (currentPages.length === 0) return;
 
-    const isShortDoc = currentPages.length <= DIRECT_EXTRACT_THRESHOLD;
     const allPageNumbers = currentPages.map((p) => p.pageNumber);
+
+    // ── VietOCR mode: OCR → text → Gemini structuring ──
+    if (ocrMode === "vietocr") {
+      setReconStatus("done");
+      setReconInfo("VietOCR mode — skipping visual recon");
+
+      setExtractStatus("processing");
+      setStatusMessage(
+        `VietOCR đang nhận dạng chữ từ ${currentPages.length} trang...`
+      );
+
+      const ocrRes = await callOCR(
+        currentPages.map((p) => p.base64),
+        allPageNumbers
+      );
+
+      if (!ocrRes.success || !ocrRes.full_text) {
+        // Fallback to Gemini Vision if OCR fails
+        setStatusMessage("VietOCR lỗi — chuyển sang Gemini Vision...");
+        setOcrMode("gemini-vision");
+        // Continue below with Gemini Vision flow
+      } else {
+        setStatusMessage("Gemini đang trích xuất dữ liệu từ OCR text...");
+
+        const extractRes = await callExtractWithText(ocrRes.full_text);
+
+        if (!extractRes.success) {
+          setExtractStatus("error");
+          const classified = classifyError(500, extractRes.error || "");
+          setAppError(classified);
+          setAppState("results");
+          return;
+        }
+
+        tokens += extractRes.tokensUsed || 0;
+        setTotalTokens(tokens);
+
+        const d = extractRes.data as Record<string, unknown>;
+        setResult({
+          chu_dau_tu:
+            (d.chu_dau_tu as PartyInfo) || DEFAULT_RESULT.chu_dau_tu,
+          nha_thau: (d.nha_thau as PartyInfo) || DEFAULT_RESULT.nha_thau,
+          gia_tri_hop_dong:
+            (d.gia_tri_hop_dong as ContractValue) ||
+            DEFAULT_RESULT.gia_tri_hop_dong,
+          tien_do_thanh_toan:
+            (d.tien_do_thanh_toan as PaymentMilestone[]) || [],
+          so_hop_dong: (d.so_hop_dong as string) || null,
+          ngay_ky: (d.ngay_ky as string) || null,
+        });
+
+        setExtractStatus("done");
+        setAppError(null);
+        setResultEdited(false);
+        setCacheSaved(false);
+        setStatusMessage("Hoàn thành!");
+        setAppState("results");
+        return;
+      }
+    }
+
+    // ── Gemini Vision mode: image-based extraction ──
+    const isShortDoc = currentPages.length <= DIRECT_EXTRACT_THRESHOLD;
 
     let extractPageNumbers: number[];
 
@@ -601,7 +723,7 @@ export default function HomePage() {
 
     setStatusMessage("Hoàn thành!");
     setAppState("results");
-  }, [apiKey, model, pages, file, scanMode, rangeFrom, rangeTo, totalPdfPages, currentFingerprint]);
+  }, [apiKey, model, pages, file, scanMode, rangeFrom, rangeTo, totalPdfPages, currentFingerprint, ocrMode]);
 
   // ─── Exports ────────────────────────────────────────────────────────
 
@@ -1032,7 +1154,7 @@ export default function HomePage() {
         {/* Settings dropdown */}
         {showSettings && (
           <div className="border-t border-gray-100 bg-white/95 backdrop-blur-xl animate-fade-in">
-            <div className="max-w-6xl mx-auto px-4 sm:px-6 py-4 grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div className="max-w-6xl mx-auto px-4 sm:px-6 py-4 grid grid-cols-1 sm:grid-cols-3 gap-4">
               <div>
                 <label className="block text-xs font-semibold text-gray-500 mb-1.5 uppercase tracking-wide">
                   Gemini API Key
@@ -1064,6 +1186,34 @@ export default function HomePage() {
                     Gemini 3.1 Flash Lite (Fastest)
                   </option>
                 </select>
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-gray-500 mb-1.5 uppercase tracking-wide">
+                  OCR Mode
+                </label>
+                <select
+                  className="input-field text-sm"
+                  value={ocrMode}
+                  onChange={(e) => {
+                    const v = e.target.value as OCRMode;
+                    setOcrMode(v);
+                    localStorage.setItem("contractocr_ocrmode", v);
+                  }}
+                >
+                  <option value="vietocr" disabled={!ocrAvailable}>
+                    VietOCR + PaddleOCR (Docker){!ocrAvailable ? " — unavailable" : ""}
+                  </option>
+                  <option value="gemini-vision">
+                    Gemini Vision (Cloud)
+                  </option>
+                </select>
+                <p className="text-[10px] text-gray-400 mt-1">
+                  {ocrAvailable
+                    ? "VietOCR server detected — text-based mode active"
+                    : ocrAvailable === null
+                      ? "Checking OCR server..."
+                      : "OCR server offline — using Gemini Vision"}
+                </p>
               </div>
             </div>
           </div>
@@ -1162,7 +1312,7 @@ export default function HomePage() {
                           <img
                             src={p.dataUrl}
                             alt={`Trang ${p.pageNumber}`}
-                            className="w-full h-full object-cover"
+                            className="w-full h-full object-contain"
                           />
                           <div className="absolute bottom-0 inset-x-0 bg-black/50 text-white text-[8px] text-center py-0.5">
                             {p.pageNumber}

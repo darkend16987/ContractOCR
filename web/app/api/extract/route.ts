@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { callGeminiExtract } from "@/lib/gemini";
+import { callGeminiExtract, callGeminiWithText } from "@/lib/gemini";
 import type { ExtractRequest, ExtractResponse } from "@/lib/types";
 import { classifyError } from "@/lib/types";
 
@@ -22,7 +22,7 @@ export async function POST(
       );
     }
 
-    const body: ExtractRequest = await req.json();
+    const body = await req.json();
 
     // Validate API key
     const apiKey = body.apiKey || process.env.GEMINI_API_KEY;
@@ -37,11 +37,7 @@ export async function POST(
       );
     }
 
-    // Basic API key format check
-    if (
-      typeof apiKey !== "string" ||
-      apiKey.length < 10
-    ) {
+    if (typeof apiKey !== "string" || apiKey.length < 10) {
       return NextResponse.json(
         {
           success: false,
@@ -52,20 +48,37 @@ export async function POST(
       );
     }
 
-    // Validate images
-    if (!body.images || !Array.isArray(body.images) || body.images.length === 0) {
+    const model = body.model || "gemini-3-flash-preview";
+
+    // Text-based extraction (from OCR server)
+    if (body.ocrText && typeof body.ocrText === "string") {
+      const { data, tokensUsed } = await callGeminiWithText(
+        body.ocrText,
+        apiKey,
+        model
+      );
+      return NextResponse.json({ success: true, data, tokensUsed });
+    }
+
+    // Image-based extraction (fallback / Vercel-only mode)
+    const extractBody = body as ExtractRequest;
+
+    if (
+      !extractBody.images ||
+      !Array.isArray(extractBody.images) ||
+      extractBody.images.length === 0
+    ) {
       return NextResponse.json(
         {
           success: false,
-          error: "Không có ảnh để xử lý",
+          error: "Không có ảnh hoặc text OCR để xử lý",
           errorCode: "UNKNOWN" as const,
         },
         { status: 400 }
       );
     }
 
-    // Validate phase
-    if (!["recon", "extract"].includes(body.phase)) {
+    if (!["recon", "extract"].includes(extractBody.phase)) {
       return NextResponse.json(
         {
           success: false,
@@ -76,27 +89,20 @@ export async function POST(
       );
     }
 
-    const model = body.model || "gemini-3-flash-preview";
-
     const { data, tokensUsed } = await callGeminiExtract(
-      body.images,
-      body.phase,
+      extractBody.images,
+      extractBody.phase,
       apiKey,
       model,
-      body.pageNumbers
+      extractBody.pageNumbers
     );
 
-    return NextResponse.json({
-      success: true,
-      data,
-      tokensUsed,
-    });
+    return NextResponse.json({ success: true, data, tokensUsed });
   } catch (error) {
     const message =
       error instanceof Error ? error.message : "Lỗi không xác định";
     console.error("Extract API error:", message);
 
-    // Classify the error for frontend
     const appError = classifyError(500, message);
 
     return NextResponse.json(
