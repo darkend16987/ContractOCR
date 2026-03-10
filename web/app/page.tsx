@@ -234,7 +234,7 @@ export default function HomePage() {
   // Core state
   const [appState, setAppState] = useState<AppState>("idle");
   const [apiKey, setApiKey] = useState("");
-  const [model, setModel] = useState("gemini-2.5-flash");
+  const [model, setModel] = useState("gemini-3-flash-preview");
   const [file, setFile] = useState<File | null>(null);
   const [pages, setPages] = useState<PageImage[]>([]);
   const [totalPdfPages, setTotalPdfPages] = useState(0);
@@ -999,14 +999,14 @@ export default function HomePage() {
                   value={model}
                   onChange={(e) => setModel(e.target.value)}
                 >
-                  <option value="gemini-2.5-flash">
-                    Gemini 2.5 Flash (Recommended)
+                  <option value="gemini-3-flash-preview">
+                    Gemini 3 Flash (Recommended)
                   </option>
-                  <option value="gemini-2.5-pro">
-                    Gemini 2.5 Pro (Best accuracy)
+                  <option value="gemini-3.1-pro-preview">
+                    Gemini 3.1 Pro (Best accuracy)
                   </option>
-                  <option value="gemini-2.5-flash-lite">
-                    Gemini 2.5 Flash Lite (Fastest)
+                  <option value="gemini-3.1-flash-lite-preview">
+                    Gemini 3.1 Flash Lite (Fastest)
                   </option>
                 </select>
               </div>

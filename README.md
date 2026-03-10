@@ -73,7 +73,7 @@ python cli.py scan.png --engine paddleocr --api-key YOUR_KEY --verbose
 |------|--------|---------|
 | `--engine` | OCR engine: `auto`, `paddleocr`, `vietocr` | `auto` |
 | `--api-key` | Gemini API key | từ `.env` |
-| `--model` | Gemini model | `gemini-2.0-flash` |
+| `--model` | Gemini model | `gemini-3-flash-preview` |
 | `--template` | Template trường: `generic`, `mua_ban`, `lao_dong`, `dich_vu` | `generic` |
 | `--output-format` | Output: `json`, `excel`, `markdown`, `all` | `json` |
 | `--output-dir` | Thư mục output | `results/` |

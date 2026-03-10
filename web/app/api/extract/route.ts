@@ -76,7 +76,7 @@ export async function POST(
       );
     }
 
-    const model = body.model || "gemini-2.5-flash";
+    const model = body.model || "gemini-3-flash-preview";
 
     const { data, tokensUsed } = await callGeminiExtract(
       body.images,

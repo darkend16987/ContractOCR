@@ -177,7 +177,7 @@ export async function callGeminiExtract(
   images: string[],
   phase: Phase,
   apiKey: string,
-  model: string = "gemini-2.5-flash",
+  model: string = "gemini-3-flash-preview",
   pageNumbers?: number[]
 ): Promise<{ data: Record<string, unknown>; tokensUsed: number }> {
   const prompt = PROMPTS[phase];
