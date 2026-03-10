@@ -16,12 +16,12 @@ UPLOAD_DIR.mkdir(exist_ok=True)
 RESULTS_DIR.mkdir(exist_ok=True)
 
 # OCR settings
-OCR_ENGINE = os.getenv("OCR_ENGINE", "auto")  # "vietocr", "paddleocr", "auto"
+OCR_ENGINE = os.getenv("OCR_ENGINE", "auto")  # "vietocr", "paddleocr", "hybrid", "auto"
 VIETOCR_MODEL = os.getenv("VIETOCR_MODEL", "vgg_transformer")
 
 # Gemini API
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 
 # Google Sheets (optional)
 GOOGLE_SHEETS_CREDENTIALS_FILE = os.getenv("GOOGLE_SHEETS_CREDENTIALS_FILE", "credentials.json")

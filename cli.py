@@ -27,7 +27,7 @@ def main():
     )
     parser.add_argument(
         "--engine",
-        choices=["auto", "paddleocr", "vietocr"],
+        choices=["auto", "hybrid", "paddleocr", "vietocr"],
         default=OCR_ENGINE,
         help="OCR engine (default: auto)",
     )

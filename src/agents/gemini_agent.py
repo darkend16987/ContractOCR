@@ -31,27 +31,29 @@ DEFAULT_CONTRACT_FIELDS = {
 
 
 class GeminiAgent:
-    """AI Agent using Google Gemini to extract structured data from contract text."""
+    """AI Agent using Google Gemini to extract structured data from contract text.
+
+    Uses the new google-genai SDK with structured JSON output support.
+    """
 
     def __init__(
         self,
         api_key: str,
-        model_name: str = "gemini-2.0-flash",
+        model_name: str = "gemini-2.5-flash",
         fields: dict[str, str] | None = None,
     ):
         self.api_key = api_key
         self.model_name = model_name
         self.fields = fields or DEFAULT_CONTRACT_FIELDS
-        self._model = None
+        self._client = None
 
     @property
-    def model(self):
-        if self._model is None:
-            import google.generativeai as genai
-            genai.configure(api_key=self.api_key)
-            self._model = genai.GenerativeModel(self.model_name)
-            logger.info("Gemini model initialized: %s", self.model_name)
-        return self._model
+    def client(self):
+        if self._client is None:
+            from google import genai
+            self._client = genai.Client(api_key=self.api_key)
+            logger.info("Gemini client initialized: %s", self.model_name)
+        return self._client
 
     def _build_extraction_prompt(self, ocr_text: str, custom_fields: dict[str, str] | None = None) -> str:
         """Build the prompt for contract field extraction."""
@@ -80,6 +82,24 @@ VĂN BẢN HỢP ĐỒNG (từ OCR):
 
 Trả về JSON với đúng các key đã liệt kê ở trên."""
 
+    def _generate(self, prompt: str, system_instruction: str | None = None) -> str:
+        """Call Gemini API and return response text."""
+        from google.genai import types
+
+        config = types.GenerateContentConfig(
+            response_mime_type="application/json",
+            temperature=0.1,
+        )
+        if system_instruction:
+            config.system_instruction = system_instruction
+
+        response = self.client.models.generate_content(
+            model=self.model_name,
+            contents=prompt,
+            config=config,
+        )
+        return response.text.strip()
+
     def extract_fields(
         self,
         ocr_text: str,
@@ -104,15 +124,10 @@ Trả về JSON với đúng các key đã liệt kê ở trên."""
 
         for attempt in range(max_retries + 1):
             try:
-                response = self.model.generate_content(prompt)
-                text = response.text.strip()
-
-                # Clean response - remove markdown code blocks if present
-                if text.startswith("```"):
-                    text = text.split("\n", 1)[1] if "\n" in text else text[3:]
-                if text.endswith("```"):
-                    text = text[:-3]
-                text = text.strip()
+                text = self._generate(
+                    prompt,
+                    system_instruction="Bạn là chuyên gia trích xuất dữ liệu hợp đồng tiếng Việt. Luôn trả về JSON hợp lệ.",
+                )
 
                 result = json.loads(text)
                 logger.info("Successfully extracted %d fields", len(result))
@@ -124,7 +139,6 @@ Trả về JSON với đúng các key đã liệt kê ở trên."""
                     attempt + 1, max_retries + 1, e,
                 )
                 if attempt < max_retries:
-                    # Re-prompt with stricter instruction
                     prompt = (
                         f"Lần trước bạn trả về JSON không hợp lệ. "
                         f"Hãy CHỈ trả về JSON thuần túy, không có text nào khác.\n\n"
@@ -143,7 +157,7 @@ Trả về JSON với đúng các key đã liệt kê ở trên."""
 
         Returns dict with 'loai_van_ban' (type) and 'do_tin_cay' (confidence).
         """
-        prompt = f"""Phân loại văn bản sau thuộc loại nào. Trả về JSON thuần túy với 2 trường:
+        prompt = f"""Phân loại văn bản sau thuộc loại nào. Trả về JSON với 2 trường:
 - "loai_van_ban": loại văn bản (vd: "Hợp đồng mua bán", "Hợp đồng dịch vụ", "Hợp đồng lao động", "Phụ lục hợp đồng", "Biên bản", "Khác")
 - "do_tin_cay": "cao", "trung_binh", hoặc "thap"
 
@@ -151,13 +165,8 @@ VĂN BẢN:
 {ocr_text[:2000]}"""
 
         try:
-            response = self.model.generate_content(prompt)
-            text = response.text.strip()
-            if text.startswith("```"):
-                text = text.split("\n", 1)[1] if "\n" in text else text[3:]
-            if text.endswith("```"):
-                text = text[:-3]
-            return json.loads(text.strip())
+            text = self._generate(prompt)
+            return json.loads(text)
         except Exception as e:
             logger.error("Classification failed: %s", e)
             return {"loai_van_ban": "Không xác định", "do_tin_cay": "thap"}

@@ -42,14 +42,14 @@ with st.sidebar:
     # OCR Engine
     ocr_engine_type = st.selectbox(
         "OCR Engine",
-        options=["auto", "paddleocr", "vietocr"],
-        help="auto: tự động chọn engine tốt nhất",
+        options=["auto", "hybrid", "paddleocr", "vietocr"],
+        help="auto: tự động chọn engine tốt nhất. hybrid: PaddleOCR detection + VietOCR recognition",
     )
 
     # Gemini Model
     gemini_model = st.selectbox(
         "Gemini Model",
-        options=["gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-pro"],
+        options=["gemini-2.5-flash", "gemini-2.5-pro", "gemini-2.5-flash-lite"],
     )
 
     # Field Template
