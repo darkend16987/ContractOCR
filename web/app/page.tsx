@@ -26,6 +26,9 @@ import {
   ScanLine,
   Layers,
   Info,
+  Database,
+  Zap,
+  Trash2,
 } from "lucide-react";
 import type {
   ExtractionResult,
@@ -41,6 +44,16 @@ import type {
 import { classifyError } from "@/lib/types";
 import type { ReconResult } from "@/lib/gemini";
 import { selectPagesForExtraction } from "@/lib/gemini";
+import {
+  generateFingerprint,
+  getCachedResult,
+  setCachedResult,
+  getAllCacheEntries,
+  clearAllCache,
+  deleteCacheEntry,
+  buildCacheLabel,
+  type CacheEntry,
+} from "@/lib/cache";
 
 // ─── PDF Renderer (only renders requested page range) ───────────────────────
 
@@ -247,6 +260,12 @@ export default function HomePage() {
   // Error handling
   const [appError, setAppError] = useState<AppError | null>(null);
 
+  // Cache
+  const [cacheHit, setCacheHit] = useState<CacheEntry | null>(null);
+  const [cacheEntries, setCacheEntries] = useState<CacheEntry[]>([]);
+  const [showCachePanel, setShowCachePanel] = useState(false);
+  const [currentFingerprint, setCurrentFingerprint] = useState<string>("");
+
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [dragOver, setDragOver] = useState(false);
 
@@ -302,11 +321,33 @@ export default function HomePage() {
               ? `${pageImages.length} trang (${range.from}-${range.to} / ${total} trang)`
               : `${total} trang`
           );
+
+          // Check cache
+          const fp = await generateFingerprint(
+            pageImages[0].base64,
+            f.name,
+            f.size,
+            pageImages.length
+          );
+          setCurrentFingerprint(fp);
+          const cached = await getCachedResult(fp);
+          setCacheHit(cached);
         } else {
           const img = await imageFileToPageImage(f);
           setPages([img]);
           setTotalPdfPages(1);
           setStatusMessage("1 trang");
+
+          // Check cache for images too
+          const fp = await generateFingerprint(
+            img.base64,
+            f.name,
+            f.size,
+            1
+          );
+          setCurrentFingerprint(fp);
+          const cached = await getCachedResult(fp);
+          setCacheHit(cached);
         }
         setAppState("idle");
       } catch (err) {
@@ -499,6 +540,31 @@ export default function HomePage() {
 
       setExtractStatus("done");
       setAppError(null); // Clear any previous recon error
+
+      // Save to cache
+      const extractedResult: ExtractionResult = {
+        chu_dau_tu:
+          (d.chu_dau_tu as PartyInfo) || DEFAULT_RESULT.chu_dau_tu,
+        nha_thau: (d.nha_thau as PartyInfo) || DEFAULT_RESULT.nha_thau,
+        gia_tri_hop_dong:
+          (d.gia_tri_hop_dong as ContractValue) ||
+          DEFAULT_RESULT.gia_tri_hop_dong,
+        tien_do_thanh_toan:
+          (d.tien_do_thanh_toan as PaymentMilestone[]) || [],
+        so_hop_dong: (d.so_hop_dong as string) || null,
+        ngay_ky: (d.ngay_ky as string) || null,
+      };
+      if (currentFingerprint) {
+        setCachedResult({
+          fingerprint: currentFingerprint,
+          fileName: file?.name || "unknown",
+          result: extractedResult,
+          tokensUsed: tokens,
+          scannedPages: pages.length,
+          createdAt: Date.now(),
+          label: buildCacheLabel(extractedResult),
+        }).catch(() => {});
+      }
     } catch (err) {
       setExtractStatus("error");
       const classified = classifyError(
@@ -551,8 +617,39 @@ export default function HomePage() {
     setTotalTokens(0);
     setStatusMessage("");
     setReconInfo("");
+    setCacheHit(null);
+    setCurrentFingerprint("");
     if (fileInputRef.current) fileInputRef.current.value = "";
   };
+
+  // ─── Cache actions ─────────────────────────────────────────────────
+
+  const useCachedResultAction = useCallback(() => {
+    if (!cacheHit) return;
+    setResult(cacheHit.result);
+    setTotalTokens(0);
+    setReconStatus("done");
+    setExtractStatus("done");
+    setReconInfo(`Cache hit — kết quả từ phiên trước (${cacheHit.scannedPages} trang, ${cacheHit.tokensUsed.toLocaleString()} tokens)`);
+    setAppState("results");
+  }, [cacheHit]);
+
+  const loadCacheEntries = useCallback(async () => {
+    const entries = await getAllCacheEntries();
+    setCacheEntries(entries);
+  }, []);
+
+  const handleClearCache = useCallback(async () => {
+    await clearAllCache();
+    setCacheEntries([]);
+    setCacheHit(null);
+  }, []);
+
+  const handleDeleteCacheEntry = useCallback(async (fp: string) => {
+    await deleteCacheEntry(fp);
+    setCacheEntries((prev) => prev.filter((e) => e.fingerprint !== fp));
+    if (cacheHit?.fingerprint === fp) setCacheHit(null);
+  }, [cacheHit]);
 
   // ─── Render helpers ─────────────────────────────────────────────────
 
@@ -695,6 +792,16 @@ export default function HomePage() {
               </span>
             )}
             <button
+              onClick={() => {
+                setShowCachePanel(!showCachePanel);
+                if (!showCachePanel) loadCacheEntries();
+              }}
+              className="btn-secondary !px-2 !py-2"
+              title="Cache"
+            >
+              <Database className="w-4 h-4" />
+            </button>
+            <button
               onClick={() => setShowSecurity(!showSecurity)}
               className="btn-secondary !px-2 !py-2"
               title="Bảo mật"
@@ -754,6 +861,71 @@ export default function HomePage() {
                   </p>
                 </div>
               </div>
+            </div>
+          </div>
+        )}
+
+        {/* Cache panel */}
+        {showCachePanel && (
+          <div className="border-t border-gray-100 bg-white/95 backdrop-blur-xl animate-fade-in">
+            <div className="max-w-6xl mx-auto px-4 sm:px-6 py-4">
+              <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center gap-2">
+                  <Database className="w-4 h-4 text-gray-500" />
+                  <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
+                    Semantic Cache
+                  </span>
+                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-gray-100 text-gray-500 font-mono">
+                    {cacheEntries.length} mục
+                  </span>
+                </div>
+                {cacheEntries.length > 0 && (
+                  <button
+                    onClick={handleClearCache}
+                    className="inline-flex items-center gap-1 text-xs text-red-500 hover:text-red-700 transition-colors"
+                  >
+                    <Trash2 className="w-3 h-3" />
+                    Xóa tất cả
+                  </button>
+                )}
+              </div>
+              {cacheEntries.length === 0 ? (
+                <p className="text-xs text-gray-400 italic">
+                  Chưa có kết quả nào được cache. Kết quả sẽ tự động lưu sau mỗi lần quét thành công.
+                </p>
+              ) : (
+                <div className="space-y-2 max-h-48 overflow-y-auto scrollbar-thin">
+                  {cacheEntries.map((entry) => (
+                    <div
+                      key={entry.fingerprint}
+                      className="flex items-center justify-between p-2.5 rounded-lg bg-gray-50 border border-gray-100"
+                    >
+                      <div className="min-w-0 flex-1">
+                        <p className="text-xs font-medium text-gray-700 truncate">
+                          {entry.fileName}
+                        </p>
+                        <p className="text-[11px] text-gray-400 mt-0.5">
+                          {entry.label} &mdash; {entry.scannedPages} trang &mdash;{" "}
+                          {new Date(entry.createdAt).toLocaleDateString("vi-VN", {
+                            day: "2-digit",
+                            month: "2-digit",
+                            year: "numeric",
+                            hour: "2-digit",
+                            minute: "2-digit",
+                          })}
+                        </p>
+                      </div>
+                      <button
+                        onClick={() => handleDeleteCacheEntry(entry.fingerprint)}
+                        className="ml-2 p-1.5 text-gray-400 hover:text-red-500 transition-colors flex-shrink-0"
+                        title="Xóa"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -1006,6 +1178,46 @@ export default function HomePage() {
                     </div>
                   </div>
                 )}
+              </div>
+            )}
+
+            {/* Cache hit banner */}
+            {file && pages.length > 0 && appState === "idle" && cacheHit && (
+              <div className="mt-4 card p-4 animate-fade-in border-emerald-200 bg-emerald-50/50">
+                <div className="flex items-start gap-3">
+                  <Zap className="w-5 h-5 text-emerald-500 flex-shrink-0 mt-0.5" />
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-semibold text-emerald-800">
+                      Tài liệu đã được quét trước đó
+                    </p>
+                    <p className="text-xs text-emerald-600 mt-0.5">
+                      {cacheHit.label} &mdash; {cacheHit.scannedPages} trang,{" "}
+                      {cacheHit.tokensUsed.toLocaleString()} tokens &mdash;{" "}
+                      {new Date(cacheHit.createdAt).toLocaleDateString("vi-VN", {
+                        day: "2-digit",
+                        month: "2-digit",
+                        year: "numeric",
+                        hour: "2-digit",
+                        minute: "2-digit",
+                      })}
+                    </p>
+                    <div className="flex gap-2 mt-2">
+                      <button
+                        onClick={useCachedResultAction}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-emerald-600 text-white hover:bg-emerald-700 transition-colors"
+                      >
+                        <Zap className="w-3.5 h-3.5" />
+                        Dùng kết quả cache (0 token)
+                      </button>
+                      <button
+                        onClick={() => setCacheHit(null)}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-white border border-emerald-200 text-emerald-700 hover:bg-emerald-50 transition-colors"
+                      >
+                        Quét lại
+                      </button>
+                    </div>
+                  </div>
+                </div>
               </div>
             )}
 
@@ -1300,12 +1512,17 @@ export default function HomePage() {
               )}
             </div>
 
-            {/* Token usage */}
-            {totalTokens > 0 && (
-              <p className="text-center text-xs text-gray-400">
-                Tổng tokens: {totalTokens.toLocaleString()} | Model: {model}
-              </p>
-            )}
+            {/* Token usage / cache indicator */}
+            <p className="text-center text-xs text-gray-400">
+              {totalTokens > 0 ? (
+                <>Tổng tokens: {totalTokens.toLocaleString()} | Model: {model}</>
+              ) : (
+                <span className="inline-flex items-center gap-1 text-emerald-500">
+                  <Zap className="w-3 h-3" />
+                  Kết quả từ cache — 0 token
+                </span>
+              )}
+            </p>
           </div>
         )}
 
