@@ -19,6 +19,8 @@ import {
   Sparkles,
   X,
   Eye,
+  ScanSearch,
+  BrainCircuit,
 } from "lucide-react";
 import type {
   ExtractionResult,
@@ -29,10 +31,15 @@ import type {
   PhaseStatus,
   ExtractResponse,
 } from "@/lib/types";
+import type { ReconResult } from "@/lib/gemini";
+import { selectPagesForExtraction } from "@/lib/gemini";
 
 // ─── PDF Renderer ───────────────────────────────────────────────────────────
 
-async function renderPdfToImages(file: File): Promise<PageImage[]> {
+async function renderPdfToImages(
+  file: File,
+  onProgress?: (current: number, total: number) => void
+): Promise<PageImage[]> {
   const pdfjsLib = await import("pdfjs-dist");
   pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.mjs`;
 
@@ -41,18 +48,31 @@ async function renderPdfToImages(file: File): Promise<PageImage[]> {
 
   const pages: PageImage[] = [];
   for (let i = 1; i <= pdf.numPages; i++) {
+    onProgress?.(i, pdf.numPages);
     const page = await pdf.getPage(i);
-    const viewport = page.getViewport({ scale: 1.5 }); // Good balance quality/size
+
+    // High quality for extraction
+    const viewport = page.getViewport({ scale: 1.2 });
     const canvas = document.createElement("canvas");
     canvas.width = viewport.width;
     canvas.height = viewport.height;
-
     const ctx = canvas.getContext("2d")!;
     await page.render({ canvasContext: ctx, viewport }).promise;
 
-    const dataUrl = canvas.toDataURL("image/jpeg", 0.85);
+    const dataUrl = canvas.toDataURL("image/jpeg", 0.75);
     const base64 = dataUrl.split(",")[1];
-    pages.push({ pageNumber: i, dataUrl, base64 });
+
+    // Low quality for recon (smaller images, less tokens)
+    const lowViewport = page.getViewport({ scale: 0.5 });
+    const lowCanvas = document.createElement("canvas");
+    lowCanvas.width = lowViewport.width;
+    lowCanvas.height = lowViewport.height;
+    const lowCtx = lowCanvas.getContext("2d")!;
+    await page.render({ canvasContext: lowCtx, viewport: lowViewport }).promise;
+
+    const base64Low = lowCanvas.toDataURL("image/jpeg", 0.4).split(",")[1];
+
+    pages.push({ pageNumber: i, dataUrl, base64, base64Low });
   }
 
   return pages;
@@ -64,7 +84,7 @@ async function imageFileToPageImage(file: File): Promise<PageImage> {
     reader.onload = () => {
       const dataUrl = reader.result as string;
       const base64 = dataUrl.split(",")[1];
-      resolve({ pageNumber: 1, dataUrl, base64 });
+      resolve({ pageNumber: 1, dataUrl, base64, base64Low: base64 });
     };
     reader.readAsDataURL(file);
   });
@@ -74,10 +94,8 @@ async function imageFileToPageImage(file: File): Promise<PageImage> {
 
 async function exportToExcel(result: ExtractionResult, fileName: string) {
   const XLSX = await import("xlsx");
-
   const wb = XLSX.utils.book_new();
 
-  // Sheet 1: Thông tin chung
   const infoData = [
     ["Trường", "Giá trị"],
     ["Số hợp đồng", result.so_hop_dong || ""],
@@ -116,7 +134,6 @@ async function exportToExcel(result: ExtractionResult, fileName: string) {
   ws1["!cols"] = [{ wch: 20 }, { wch: 60 }];
   XLSX.utils.book_append_sheet(wb, ws1, "Thông tin chung");
 
-  // Sheet 2: Tiến độ thanh toán
   if (result.tien_do_thanh_toan?.length) {
     const paymentData = [
       ["Đợt", "Nội dung", "Tỷ lệ", "Số tiền", "Trước/Sau thuế"],
@@ -142,7 +159,10 @@ async function exportToExcel(result: ExtractionResult, fileName: string) {
   XLSX.writeFile(wb, fileName);
 }
 
-// ─── Main Component ─────────────────────────────────────────────────────────
+// ─── Constants ──────────────────────────────────────────────────────────────
+
+/** Docs with ≤ this many pages skip recon and extract directly */
+const DIRECT_EXTRACT_THRESHOLD = 5;
 
 type AppState = "idle" | "uploading" | "processing" | "results";
 
@@ -175,6 +195,8 @@ const DEFAULT_RESULT: ExtractionResult = {
   ngay_ky: null,
 };
 
+// ─── Main Component ─────────────────────────────────────────────────────────
+
 export default function HomePage() {
   // State
   const [appState, setAppState] = useState<AppState>("idle");
@@ -191,15 +213,15 @@ export default function HomePage() {
   const [totalTokens, setTotalTokens] = useState(0);
 
   // Phase statuses
-  const [phase1, setPhase1] = useState<PhaseStatus>("idle");
-  const [phase2, setPhase2] = useState<PhaseStatus>("idle");
-  const [phase3, setPhase3] = useState<PhaseStatus>("idle");
+  const [reconStatus, setReconStatus] = useState<PhaseStatus>("idle");
+  const [extractStatus, setExtractStatus] = useState<PhaseStatus>("idle");
   const [statusMessage, setStatusMessage] = useState("");
+  const [reconInfo, setReconInfo] = useState<string>(""); // What recon found
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [dragOver, setDragOver] = useState(false);
 
-  // Load API key from localStorage
+  // Load settings from localStorage
   useEffect(() => {
     const saved = localStorage.getItem("contractocr_apikey");
     if (saved) setApiKey(saved);
@@ -207,7 +229,6 @@ export default function HomePage() {
     if (savedModel) setModel(savedModel);
   }, []);
 
-  // Save API key
   useEffect(() => {
     if (apiKey) localStorage.setItem("contractocr_apikey", apiKey);
   }, [apiKey]);
@@ -223,9 +244,9 @@ export default function HomePage() {
     setError(null);
     setResult(DEFAULT_RESULT);
     setTotalTokens(0);
-    setPhase1("idle");
-    setPhase2("idle");
-    setPhase3("idle");
+    setReconStatus("idle");
+    setExtractStatus("idle");
+    setReconInfo("");
 
     setAppState("uploading");
     setStatusMessage("Đang đọc file...");
@@ -233,7 +254,9 @@ export default function HomePage() {
     try {
       let pageImages: PageImage[];
       if (f.type === "application/pdf") {
-        pageImages = await renderPdfToImages(f);
+        pageImages = await renderPdfToImages(f, (current, total) => {
+          setStatusMessage(`Đang render trang ${current}/${total}...`);
+        });
       } else {
         const img = await imageFileToPageImage(f);
         pageImages = [img];
@@ -265,11 +288,11 @@ export default function HomePage() {
     [handleFile]
   );
 
-  // ─── Smart extraction ──────────────────────────────────────────────
+  // ─── API call helper ───────────────────────────────────────────────
 
   const callExtract = async (
     images: string[],
-    phase: "basic_info" | "payment_schedule" | "supplement"
+    phase: "recon" | "extract"
   ): Promise<ExtractResponse> => {
     const res = await fetch("/api/extract", {
       method: "POST",
@@ -279,6 +302,8 @@ export default function HomePage() {
     return res.json();
   };
 
+  // ─── Smart extraction with agent ───────────────────────────────────
+
   const startExtraction = useCallback(async () => {
     if (!apiKey || pages.length === 0) return;
 
@@ -286,118 +311,109 @@ export default function HomePage() {
     setError(null);
     setResult(DEFAULT_RESULT);
     setTotalTokens(0);
+    setReconInfo("");
     let tokens = 0;
-    let mergedResult: ExtractionResult = { ...DEFAULT_RESULT };
 
-    // Phase 1: Basic info (pages 1-3)
-    setPhase1("processing");
-    setStatusMessage("Đang trích xuất thông tin Bên A, Bên B, giá trị HĐ...");
-    try {
-      const phase1Pages = pages.slice(0, Math.min(3, pages.length));
-      const res1 = await callExtract(
-        phase1Pages.map((p) => p.base64),
-        "basic_info"
+    const isShortDoc = pages.length <= DIRECT_EXTRACT_THRESHOLD;
+
+    // Determine which pages to send for extraction
+    let extractPageNumbers: number[];
+
+    if (isShortDoc) {
+      // Short doc: skip recon, extract all pages directly
+      setReconStatus("done");
+      setReconInfo(`Tài liệu ngắn (${pages.length} trang) → quét trực tiếp tất cả`);
+      extractPageNumbers = pages.map((p) => p.pageNumber);
+    } else {
+      // Long doc: run recon first with low-res images
+      setReconStatus("processing");
+      setStatusMessage(
+        `Agent đang phân tích bố cục ${pages.length} trang...`
       );
 
-      if (!res1.success) {
-        setPhase1("error");
-        setError(res1.error || "Lỗi Phase 1");
+      try {
+        const lowResImages = pages.map((p) => p.base64Low || p.base64);
+        const reconRes = await callExtract(lowResImages, "recon");
+
+        if (!reconRes.success) {
+          setReconStatus("error");
+          setError(reconRes.error || "Lỗi phân tích bố cục");
+          setAppState("results");
+          return;
+        }
+
+        tokens += reconRes.tokensUsed || 0;
+        setTotalTokens(tokens);
+
+        const reconData = reconRes.data as unknown as ReconResult;
+        extractPageNumbers = selectPagesForExtraction(reconData);
+
+        // Build info string about what was found
+        const highPages = reconData.page_analysis
+          .filter((p) => p.relevance === "high" || p.relevance === "medium")
+          .map((p) => `T${p.page}: ${p.note || p.contains.join(", ")}`)
+          .join(" | ");
+
+        setReconInfo(
+          `${pages.length} trang → Agent chọn ${extractPageNumbers.length} trang quan trọng: [${extractPageNumbers.join(", ")}]`
+        );
+        setReconStatus("done");
+
+        if (highPages) {
+          console.log("Recon analysis:", highPages);
+        }
+      } catch (err) {
+        setReconStatus("error");
+        setError(
+          `Lỗi recon: ${err instanceof Error ? err.message : err}`
+        );
+        // Fallback: try extracting all pages
+        extractPageNumbers = pages.map((p) => p.pageNumber);
+        setReconInfo(`Recon lỗi → fallback quét tất cả ${pages.length} trang`);
+        setReconStatus("done");
+      }
+    }
+
+    // Phase 2: Extract structured data from selected pages
+    setExtractStatus("processing");
+    setStatusMessage(
+      `Agent đang trích xuất dữ liệu từ ${extractPageNumbers.length} trang...`
+    );
+
+    try {
+      const extractImages = extractPageNumbers.map(
+        (pn) => pages[pn - 1].base64
+      );
+      const extractRes = await callExtract(extractImages, "extract");
+
+      if (!extractRes.success) {
+        setExtractStatus("error");
+        setError(extractRes.error || "Lỗi trích xuất dữ liệu");
         setAppState("results");
         return;
       }
 
-      tokens += res1.tokensUsed || 0;
+      tokens += extractRes.tokensUsed || 0;
       setTotalTokens(tokens);
 
-      // Merge phase 1 data
-      const d = res1.data as Record<string, unknown>;
-      mergedResult = {
-        ...mergedResult,
-        chu_dau_tu: (d.chu_dau_tu as PartyInfo) || mergedResult.chu_dau_tu,
-        nha_thau: (d.nha_thau as PartyInfo) || mergedResult.nha_thau,
+      const d = extractRes.data as Record<string, unknown>;
+      const finalResult: ExtractionResult = {
+        chu_dau_tu: (d.chu_dau_tu as PartyInfo) || DEFAULT_RESULT.chu_dau_tu,
+        nha_thau: (d.nha_thau as PartyInfo) || DEFAULT_RESULT.nha_thau,
         gia_tri_hop_dong:
           (d.gia_tri_hop_dong as ContractValue) ||
-          mergedResult.gia_tri_hop_dong,
-        so_hop_dong: (d.so_hop_dong as string) || mergedResult.so_hop_dong,
-        ngay_ky: (d.ngay_ky as string) || mergedResult.ngay_ky,
+          DEFAULT_RESULT.gia_tri_hop_dong,
+        tien_do_thanh_toan:
+          (d.tien_do_thanh_toan as PaymentMilestone[]) || [],
+        so_hop_dong: (d.so_hop_dong as string) || null,
+        ngay_ky: (d.ngay_ky as string) || null,
       };
-      setResult({ ...mergedResult });
-      setPhase1("done");
+
+      setResult(finalResult);
+      setExtractStatus("done");
     } catch (err) {
-      setPhase1("error");
-      setError(`Phase 1 error: ${err instanceof Error ? err.message : err}`);
-      setAppState("results");
-      return;
-    }
-
-    // Phase 2: Payment schedule (pages 3-8)
-    if (pages.length > 1) {
-      setPhase2("processing");
-      setStatusMessage("Đang trích xuất tiến độ thanh toán...");
-      try {
-        const startPage = Math.max(0, Math.min(2, pages.length - 1));
-        const endPage = Math.min(8, pages.length);
-        const phase2Pages = pages.slice(startPage, endPage);
-        const res2 = await callExtract(
-          phase2Pages.map((p) => p.base64),
-          "payment_schedule"
-        );
-
-        if (res2.success && res2.data) {
-          tokens += res2.tokensUsed || 0;
-          setTotalTokens(tokens);
-
-          const d2 = res2.data as Record<string, unknown>;
-          mergedResult = {
-            ...mergedResult,
-            tien_do_thanh_toan:
-              (d2.tien_do_thanh_toan as PaymentMilestone[]) ||
-              mergedResult.tien_do_thanh_toan,
-          };
-          setResult({ ...mergedResult });
-        }
-        setPhase2("done");
-      } catch (err) {
-        setPhase2("error");
-        console.error("Phase 2 error:", err);
-        // Non-critical, continue
-      }
-
-      // Phase 3: Supplement if payment not found and more pages available
-      if (
-        mergedResult.tien_do_thanh_toan.length === 0 &&
-        pages.length > 8
-      ) {
-        setPhase3("processing");
-        setStatusMessage("Đang quét thêm trang bổ sung...");
-        try {
-          const phase3Pages = pages.slice(8);
-          const res3 = await callExtract(
-            phase3Pages.map((p) => p.base64),
-            "supplement"
-          );
-
-          if (res3.success && res3.data) {
-            tokens += res3.tokensUsed || 0;
-            setTotalTokens(tokens);
-
-            const d3 = res3.data as Record<string, unknown>;
-            if (d3.tien_do_thanh_toan) {
-              mergedResult.tien_do_thanh_toan =
-                d3.tien_do_thanh_toan as PaymentMilestone[];
-            }
-            setResult({ ...mergedResult });
-          }
-          setPhase3("done");
-        } catch {
-          setPhase3("error");
-        }
-      } else {
-        setPhase3("done");
-      }
-    } else {
-      setPhase2("done");
-      setPhase3("done");
+      setExtractStatus("error");
+      setError(`Lỗi extract: ${err instanceof Error ? err.message : err}`);
     }
 
     setStatusMessage("Hoàn thành!");
@@ -437,49 +453,63 @@ export default function HomePage() {
     setPages([]);
     setResult(DEFAULT_RESULT);
     setError(null);
-    setPhase1("idle");
-    setPhase2("idle");
-    setPhase3("idle");
+    setReconStatus("idle");
+    setExtractStatus("idle");
     setTotalTokens(0);
     setStatusMessage("");
+    setReconInfo("");
     if (fileInputRef.current) fileInputRef.current.value = "";
   };
 
   // ─── Render helpers ─────────────────────────────────────────────────
 
   const PhaseIndicator = ({
+    icon: Icon,
     label,
     status,
+    detail,
   }: {
+    icon: React.ElementType;
     label: string;
     status: PhaseStatus;
+    detail?: string;
   }) => (
-    <div className="flex items-center gap-2.5">
-      {status === "idle" && (
-        <div className="w-5 h-5 rounded-full border-2 border-gray-300" />
-      )}
-      {status === "processing" && (
-        <Loader2 className="w-5 h-5 text-blue-500 spinner" />
-      )}
-      {status === "done" && (
-        <CheckCircle2 className="w-5 h-5 text-emerald-500" />
-      )}
-      {status === "error" && (
-        <AlertCircle className="w-5 h-5 text-red-500" />
-      )}
-      <span
-        className={`text-sm font-medium ${
-          status === "processing"
-            ? "text-blue-700"
-            : status === "done"
-            ? "text-emerald-700"
-            : status === "error"
-            ? "text-red-600"
-            : "text-gray-400"
-        }`}
-      >
-        {label}
-      </span>
+    <div className="flex items-start gap-2.5">
+      <div className="mt-0.5">
+        {status === "idle" && (
+          <div className="w-5 h-5 rounded-full border-2 border-gray-300" />
+        )}
+        {status === "processing" && (
+          <Loader2 className="w-5 h-5 text-blue-500 spinner" />
+        )}
+        {status === "done" && (
+          <CheckCircle2 className="w-5 h-5 text-emerald-500" />
+        )}
+        {status === "error" && (
+          <AlertCircle className="w-5 h-5 text-red-500" />
+        )}
+      </div>
+      <div>
+        <div className="flex items-center gap-1.5">
+          <Icon className="w-3.5 h-3.5 text-gray-400" />
+          <span
+            className={`text-sm font-medium ${
+              status === "processing"
+                ? "text-blue-700"
+                : status === "done"
+                ? "text-emerald-700"
+                : status === "error"
+                ? "text-red-600"
+                : "text-gray-400"
+            }`}
+          >
+            {label}
+          </span>
+        </div>
+        {detail && (
+          <p className="text-xs text-gray-400 mt-0.5 ml-5">{detail}</p>
+        )}
+      </div>
     </div>
   );
 
@@ -495,7 +525,11 @@ export default function HomePage() {
         {label}
       </span>
       <span className="text-sm text-gray-900 text-right font-medium">
-        {value || <span className="text-gray-300 italic font-normal">Không tìm thấy</span>}
+        {value || (
+          <span className="text-gray-300 italic font-normal">
+            Không tìm thấy
+          </span>
+        )}
       </span>
     </div>
   );
@@ -542,7 +576,6 @@ export default function HomePage() {
           </div>
         </div>
 
-        {/* Settings dropdown */}
         {showSettings && (
           <div className="border-t border-gray-100 bg-white/95 backdrop-blur-xl animate-fade-in">
             <div className="max-w-6xl mx-auto px-4 sm:px-6 py-4 grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -600,7 +633,7 @@ export default function HomePage() {
           </div>
         )}
 
-        {/* Upload Zone (visible when no results) */}
+        {/* Upload Zone */}
         {appState !== "results" && (
           <div className="mb-8">
             <div
@@ -674,7 +707,6 @@ export default function HomePage() {
               )}
             </div>
 
-            {/* Action buttons */}
             {file && pages.length > 0 && appState !== "processing" && (
               <div className="mt-4 flex justify-center gap-3 animate-fade-in">
                 <button
@@ -697,31 +729,32 @@ export default function HomePage() {
         {/* Processing Status */}
         {appState === "processing" && (
           <div className="card p-6 mb-8 animate-fade-in">
-            <div className="flex items-center gap-3 mb-4">
+            <div className="flex items-center gap-3 mb-5">
               <Loader2 className="w-5 h-5 text-blue-500 spinner" />
               <span className="text-sm font-medium text-gray-700">
                 {statusMessage}
               </span>
             </div>
-            <div className="space-y-3">
+            <div className="space-y-4">
               <PhaseIndicator
-                label="Thông tin Bên A, Bên B & Giá trị HĐ"
-                status={phase1}
+                icon={ScanSearch}
+                label={
+                  pages.length > DIRECT_EXTRACT_THRESHOLD
+                    ? "Phân tích bố cục tài liệu"
+                    : "Phân tích tài liệu"
+                }
+                status={reconStatus}
+                detail={reconInfo || undefined}
               />
               <PhaseIndicator
-                label="Tiến độ thanh toán"
-                status={phase2}
+                icon={BrainCircuit}
+                label="Trích xuất dữ liệu hợp đồng"
+                status={extractStatus}
               />
-              {pages.length > 8 && (
-                <PhaseIndicator
-                  label="Quét bổ sung"
-                  status={phase3}
-                />
-              )}
             </div>
             {totalTokens > 0 && (
               <p className="text-xs text-gray-400 mt-4">
-                Tokens sử dụng: {totalTokens.toLocaleString()}
+                Tokens: {totalTokens.toLocaleString()}
               </p>
             )}
           </div>
@@ -749,13 +782,14 @@ export default function HomePage() {
                   Kết quả trích xuất
                 </span>
                 {file && (
-                  <span className="text-xs text-gray-400">
-                    {file.name}
-                  </span>
+                  <span className="text-xs text-gray-400">{file.name}</span>
                 )}
               </div>
               <div className="flex gap-2">
-                <button onClick={handleCopyJSON} className="btn-secondary text-xs">
+                <button
+                  onClick={handleCopyJSON}
+                  className="btn-secondary text-xs"
+                >
                   {copied ? (
                     <Check className="w-3.5 h-3.5 text-emerald-500" />
                   ) : (
@@ -763,11 +797,17 @@ export default function HomePage() {
                   )}
                   {copied ? "Đã copy" : "Copy JSON"}
                 </button>
-                <button onClick={handleExportJSON} className="btn-secondary text-xs">
+                <button
+                  onClick={handleExportJSON}
+                  className="btn-secondary text-xs"
+                >
                   <Download className="w-3.5 h-3.5" />
                   JSON
                 </button>
-                <button onClick={handleExportExcel} className="btn-secondary text-xs">
+                <button
+                  onClick={handleExportExcel}
+                  className="btn-secondary text-xs"
+                >
                   <Download className="w-3.5 h-3.5" />
                   Excel
                 </button>
@@ -777,6 +817,14 @@ export default function HomePage() {
                 </button>
               </div>
             </div>
+
+            {/* Recon summary badge */}
+            {reconInfo && (
+              <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-blue-50/50 border border-blue-100">
+                <ScanSearch className="w-3.5 h-3.5 text-blue-500" />
+                <span className="text-xs text-blue-600">{reconInfo}</span>
+              </div>
+            )}
 
             {/* Contract header info */}
             {(result.so_hop_dong || result.ngay_ky) && (
@@ -806,7 +854,6 @@ export default function HomePage() {
 
             {/* Parties */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              {/* Party A */}
               <div className="result-card">
                 <div className="flex items-center gap-2.5 mb-4">
                   <div className="w-8 h-8 rounded-lg bg-blue-50 flex items-center justify-center">
@@ -822,18 +869,26 @@ export default function HomePage() {
                   </div>
                 </div>
                 <div className="space-y-0.5">
-                  <InfoRow label="Địa chỉ" value={result.chu_dau_tu?.dia_chi} />
+                  <InfoRow
+                    label="Địa chỉ"
+                    value={result.chu_dau_tu?.dia_chi}
+                  />
                   <InfoRow
                     label="Đại diện"
                     value={result.chu_dau_tu?.dai_dien}
                   />
-                  <InfoRow label="Chức vụ" value={result.chu_dau_tu?.chuc_vu} />
+                  <InfoRow
+                    label="Chức vụ"
+                    value={result.chu_dau_tu?.chuc_vu}
+                  />
                   <InfoRow label="MST" value={result.chu_dau_tu?.mst} />
-                  <InfoRow label="SĐT" value={result.chu_dau_tu?.so_dien_thoai} />
+                  <InfoRow
+                    label="SĐT"
+                    value={result.chu_dau_tu?.so_dien_thoai}
+                  />
                 </div>
               </div>
 
-              {/* Party B */}
               <div className="result-card">
                 <div className="flex items-center gap-2.5 mb-4">
                   <div className="w-8 h-8 rounded-lg bg-violet-50 flex items-center justify-center">
@@ -853,7 +908,10 @@ export default function HomePage() {
                   <InfoRow label="Đại diện" value={result.nha_thau?.dai_dien} />
                   <InfoRow label="Chức vụ" value={result.nha_thau?.chuc_vu} />
                   <InfoRow label="MST" value={result.nha_thau?.mst} />
-                  <InfoRow label="SĐT" value={result.nha_thau?.so_dien_thoai} />
+                  <InfoRow
+                    label="SĐT"
+                    value={result.nha_thau?.so_dien_thoai}
+                  />
                 </div>
               </div>
             </div>
@@ -985,7 +1043,7 @@ export default function HomePage() {
           </div>
         )}
 
-        {/* Idle state - info */}
+        {/* Idle state - info cards */}
         {appState === "idle" && !file && (
           <div className="mt-8 grid grid-cols-1 sm:grid-cols-3 gap-4">
             {[
@@ -998,8 +1056,8 @@ export default function HomePage() {
               {
                 icon: Sparkles,
                 color: "violet",
-                title: "AI Extraction",
-                desc: "Gemini Vision AI tự động trích xuất dữ liệu quan trọng",
+                title: "AI Agent",
+                desc: "Agent thông minh phân tích bố cục & trích xuất chính xác",
               },
               {
                 icon: Download,

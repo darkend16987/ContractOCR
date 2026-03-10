@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { callGeminiExtract } from "@/lib/gemini";
 import type { ExtractRequest, ExtractResponse } from "@/lib/types";
 
-export const maxDuration = 60; // Vercel Pro: 60s timeout
+export const maxDuration = 120; // Allow up to 120s for large documents
 
 export async function POST(req: NextRequest): Promise<NextResponse<ExtractResponse>> {
   try {
