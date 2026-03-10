@@ -12,7 +12,7 @@ from PIL import Image
 from src.ocr.engine import BaseOCREngine, create_engine
 from src.agents.gemini_agent import GeminiAgent, DEFAULT_CONTRACT_FIELDS
 from src.output.writer import (
-    JSONWriter, ExcelWriter, MarkdownWriter, GoogleSheetWriter
+    JSONWriter, ExcelWriter, CSVWriter, MarkdownWriter, GoogleSheetWriter
 )
 from src.utils.config import (
     OCR_ENGINE, VIETOCR_MODEL, GEMINI_API_KEY, GEMINI_MODEL,
@@ -128,12 +128,15 @@ class ContractOCRPipeline:
         base_name = Path(source_filename).stem
 
         formats = (
-            ["json", "excel", "markdown"]
+            ["json", "excel", "csv", "markdown"]
             if self.output_format == "all"
             else [self.output_format]
         )
 
         saved = {}
+        
+        # Calculate the fields mapping based on current template
+        fields_mapping = self.custom_fields or DEFAULT_CONTRACT_FIELDS
 
         for fmt in formats:
             saved[fmt] = []
@@ -153,8 +156,13 @@ class ContractOCRPipeline:
                     saved[fmt].append(path)
 
                 elif fmt == "excel":
-                    writer = ExcelWriter()
+                    writer = ExcelWriter(fields_mapping=fields_mapping)
                     path = writer.save(data, output_dir / f"contracts_{timestamp}.xlsx")
+                    saved[fmt].append(path)
+
+                elif fmt == "csv":
+                    writer = CSVWriter(fields_mapping=fields_mapping)
+                    path = writer.save(data, output_dir / f"contracts_{timestamp}.csv")
                     saved[fmt].append(path)
 
                 elif fmt == "markdown":

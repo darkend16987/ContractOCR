@@ -28,11 +28,22 @@ class JSONWriter:
 class ExcelWriter:
     """Write extracted data to Excel files."""
 
+    def __init__(self, fields_mapping: dict[str, str] | None = None):
+        """Initialize with an optional mapping from data keys to human-readable headers."""
+        self.fields_mapping = fields_mapping
+
     def save(self, data: dict[str, Any], output_path: str | Path) -> Path:
         import openpyxl
 
         path = Path(output_path)
         path.parent.mkdir(parents=True, exist_ok=True)
+
+        mapping = self.fields_mapping or {k: k for k in data.keys()}
+        # Add metadata keys if not present
+        for meta_key in ["_source_file", "_page", "_document_type", "_timestamp"]:
+            if meta_key in data and meta_key not in mapping:
+                # E.g. "_source_file" -> "Source File"
+                mapping[meta_key] = meta_key.replace("_", " ").title().strip()
 
         if path.exists():
             wb = openpyxl.load_workbook(path)
@@ -42,7 +53,7 @@ class ExcelWriter:
             ws = wb.active
             ws.title = "Contracts"
             # Write header row
-            headers = list(data.keys())
+            headers = list(mapping.values())
             for col, header in enumerate(headers, 1):
                 ws.cell(row=1, column=col, value=header)
 
@@ -52,15 +63,58 @@ class ExcelWriter:
             # File was just created, headers are in row 1
             pass
 
-        # Write data row matching header order
-        headers = [ws.cell(row=1, column=col).value for col in range(1, ws.max_column + 1)]
-        for col, header in enumerate(headers, 1):
-            value = data.get(header, "")
+        # Write data row matching existing header order
+        existing_headers = [ws.cell(row=1, column=col).value for col in range(1, ws.max_column + 1)]
+        reverse_mapping = {v: k for k, v in mapping.items()}
+
+        for col, header in enumerate(existing_headers, 1):
+            key = reverse_mapping.get(header, header)
+            value = data.get(key, "")
             ws.cell(row=next_row, column=col, value=str(value) if value is not None else "")
 
         wb.save(path)
         logger.info("Saved Excel: %s (row %d)", path, next_row)
         return path
+
+
+class CSVWriter:
+    """Write extracted data to CSV files."""
+
+    def __init__(self, fields_mapping: dict[str, str] | None = None):
+        """Initialize with an optional mapping from data keys to human-readable headers."""
+        self.fields_mapping = fields_mapping
+
+    def save(self, data: dict[str, Any], output_path: str | Path) -> Path:
+        import csv
+
+        path = Path(output_path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+
+        mapping = self.fields_mapping or {k: k for k in data.keys()}
+        # Add metadata keys if not present
+        for meta_key in ["_source_file", "_page", "_document_type", "_timestamp"]:
+            if meta_key in data and meta_key not in mapping:
+                mapping[meta_key] = meta_key.replace("_", " ").title().strip()
+
+        file_exists = path.exists()
+
+        # utf-8-sig ensures Excel can open the CSV and read Vietnamese correctly
+        with open(path, "a", encoding="utf-8-sig", newline="") as f:
+            headers = list(mapping.values())
+            writer = csv.writer(f)
+
+            if not file_exists:
+                writer.writerow(headers)
+
+            row = []
+            for key in mapping.keys():
+                value = data.get(key, "")
+                row.append(str(value) if value is not None else "")
+            writer.writerow(row)
+
+        logger.info("Saved CSV: %s", path)
+        return path
+
 
 
 class GoogleSheetWriter:
@@ -136,6 +190,7 @@ def create_writer(format_type: str, **kwargs):
     writers = {
         "json": JSONWriter,
         "excel": ExcelWriter,
+        "csv": CSVWriter,
         "gsheet": GoogleSheetWriter,
         "markdown": MarkdownWriter,
     }

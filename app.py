@@ -68,7 +68,7 @@ with st.sidebar:
     # Output format
     output_format = st.selectbox(
         "Định dạng output",
-        options=["json", "excel", "markdown", "all"],
+        options=["json", "excel", "csv", "markdown", "all"],
     )
 
     st.divider()
