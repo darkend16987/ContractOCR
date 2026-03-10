@@ -21,6 +21,11 @@ import {
   Eye,
   ScanSearch,
   BrainCircuit,
+  ShieldAlert,
+  RefreshCw,
+  ScanLine,
+  Layers,
+  Info,
 } from "lucide-react";
 import type {
   ExtractionResult,
@@ -30,25 +35,40 @@ import type {
   PageImage,
   PhaseStatus,
   ExtractResponse,
+  ScanMode,
+  AppError,
 } from "@/lib/types";
+import { classifyError } from "@/lib/types";
 import type { ReconResult } from "@/lib/gemini";
 import { selectPagesForExtraction } from "@/lib/gemini";
 
-// ─── PDF Renderer ───────────────────────────────────────────────────────────
+// ─── PDF Renderer (only renders requested page range) ───────────────────────
 
-async function renderPdfToImages(
+async function renderPdfPages(
   file: File,
+  pageRange?: { from: number; to: number },
   onProgress?: (current: number, total: number) => void
-): Promise<PageImage[]> {
+): Promise<{ pages: PageImage[]; totalPdfPages: number }> {
   const pdfjsLib = await import("pdfjs-dist");
   pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.mjs`;
 
   const arrayBuffer = await file.arrayBuffer();
   const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+  const totalPdfPages = pdf.numPages;
+
+  // Determine which pages to render
+  const startPage = pageRange ? Math.max(1, pageRange.from) : 1;
+  const endPage = pageRange
+    ? Math.min(totalPdfPages, pageRange.to)
+    : totalPdfPages;
+  const pageCount = endPage - startPage + 1;
 
   const pages: PageImage[] = [];
-  for (let i = 1; i <= pdf.numPages; i++) {
-    onProgress?.(i, pdf.numPages);
+  let rendered = 0;
+
+  for (let i = startPage; i <= endPage; i++) {
+    rendered++;
+    onProgress?.(rendered, pageCount);
     const page = await pdf.getPage(i);
 
     // High quality for extraction
@@ -62,7 +82,7 @@ async function renderPdfToImages(
     const dataUrl = canvas.toDataURL("image/jpeg", 0.75);
     const base64 = dataUrl.split(",")[1];
 
-    // Low quality for recon (smaller images, less tokens)
+    // Low quality for recon
     const lowViewport = page.getViewport({ scale: 0.5 });
     const lowCanvas = document.createElement("canvas");
     lowCanvas.width = lowViewport.width;
@@ -72,10 +92,11 @@ async function renderPdfToImages(
 
     const base64Low = lowCanvas.toDataURL("image/jpeg", 0.4).split(",")[1];
 
+    // pageNumber = original PDF page number
     pages.push({ pageNumber: i, dataUrl, base64, base64Low });
   }
 
-  return pages;
+  return { pages, totalPdfPages };
 }
 
 async function imageFileToPageImage(file: File): Promise<PageImage> {
@@ -161,7 +182,6 @@ async function exportToExcel(result: ExtractionResult, fileName: string) {
 
 // ─── Constants ──────────────────────────────────────────────────────────────
 
-/** Docs with ≤ this many pages skip recon and extract directly */
 const DIRECT_EXTRACT_THRESHOLD = 5;
 
 type AppState = "idle" | "uploading" | "processing" | "results";
@@ -198,25 +218,34 @@ const DEFAULT_RESULT: ExtractionResult = {
 // ─── Main Component ─────────────────────────────────────────────────────────
 
 export default function HomePage() {
-  // State
+  // Core state
   const [appState, setAppState] = useState<AppState>("idle");
   const [apiKey, setApiKey] = useState("");
   const [model, setModel] = useState("gemini-2.5-flash");
   const [file, setFile] = useState<File | null>(null);
   const [pages, setPages] = useState<PageImage[]>([]);
+  const [totalPdfPages, setTotalPdfPages] = useState(0);
   const [result, setResult] = useState<ExtractionResult>(DEFAULT_RESULT);
-  const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [showPreview, setShowPreview] = useState(false);
   const [previewPage, setPreviewPage] = useState(0);
   const [totalTokens, setTotalTokens] = useState(0);
+  const [showSecurity, setShowSecurity] = useState(false);
+
+  // Scan mode
+  const [scanMode, setScanMode] = useState<ScanMode>("all");
+  const [rangeFrom, setRangeFrom] = useState(1);
+  const [rangeTo, setRangeTo] = useState(10);
 
   // Phase statuses
   const [reconStatus, setReconStatus] = useState<PhaseStatus>("idle");
   const [extractStatus, setExtractStatus] = useState<PhaseStatus>("idle");
   const [statusMessage, setStatusMessage] = useState("");
-  const [reconInfo, setReconInfo] = useState<string>(""); // What recon found
+  const [reconInfo, setReconInfo] = useState("");
+
+  // Error handling
+  const [appError, setAppError] = useState<AppError | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [dragOver, setDragOver] = useState(false);
@@ -239,36 +268,63 @@ export default function HomePage() {
 
   // ─── File handling ──────────────────────────────────────────────────
 
-  const handleFile = useCallback(async (f: File) => {
-    setFile(f);
-    setError(null);
-    setResult(DEFAULT_RESULT);
-    setTotalTokens(0);
-    setReconStatus("idle");
-    setExtractStatus("idle");
-    setReconInfo("");
+  const handleFile = useCallback(
+    async (f: File) => {
+      setFile(f);
+      setAppError(null);
+      setResult(DEFAULT_RESULT);
+      setTotalTokens(0);
+      setReconStatus("idle");
+      setExtractStatus("idle");
+      setReconInfo("");
 
-    setAppState("uploading");
-    setStatusMessage("Đang đọc file...");
+      setAppState("uploading");
+      setStatusMessage("Đang đọc file...");
 
-    try {
-      let pageImages: PageImage[];
-      if (f.type === "application/pdf") {
-        pageImages = await renderPdfToImages(f, (current, total) => {
-          setStatusMessage(`Đang render trang ${current}/${total}...`);
+      try {
+        if (f.type === "application/pdf") {
+          const range =
+            scanMode === "range"
+              ? { from: rangeFrom, to: rangeTo }
+              : undefined;
+          const { pages: pageImages, totalPdfPages: total } =
+            await renderPdfPages(f, range, (current, count) => {
+              setStatusMessage(`Đang render trang ${current}/${count}...`);
+            });
+          setPages(pageImages);
+          setTotalPdfPages(total);
+
+          // Auto-adjust rangeTo if it exceeds total
+          if (rangeTo > total) setRangeTo(total);
+
+          setStatusMessage(
+            range
+              ? `${pageImages.length} trang (${range.from}-${range.to} / ${total} trang)`
+              : `${total} trang`
+          );
+        } else {
+          const img = await imageFileToPageImage(f);
+          setPages([img]);
+          setTotalPdfPages(1);
+          setStatusMessage("1 trang");
+        }
+        setAppState("idle");
+      } catch (err) {
+        setAppError({
+          code: "UNKNOWN",
+          message: "Lỗi đọc file",
+          detail: err instanceof Error ? err.message : String(err),
+          retryable: false,
         });
-      } else {
-        const img = await imageFileToPageImage(f);
-        pageImages = [img];
+        setAppState("idle");
       }
-      setPages(pageImages);
-      setAppState("idle");
-      setStatusMessage(`${pageImages.length} trang`);
-    } catch (err) {
-      setError(`Lỗi đọc file: ${err instanceof Error ? err.message : err}`);
-      setAppState("idle");
-    }
-  }, []);
+    },
+    [scanMode, rangeFrom, rangeTo]
+  );
+
+  const reloadWithRange = useCallback(() => {
+    if (file) handleFile(file);
+  }, [file, handleFile]);
 
   const onDrop = useCallback(
     (e: React.DragEvent) => {
@@ -292,14 +348,32 @@ export default function HomePage() {
 
   const callExtract = async (
     images: string[],
-    phase: "recon" | "extract"
+    phase: "recon" | "extract",
+    pageNumbers?: number[]
   ): Promise<ExtractResponse> => {
-    const res = await fetch("/api/extract", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ images, phase, apiKey, model }),
-    });
-    return res.json();
+    try {
+      const res = await fetch("/api/extract", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ images, phase, apiKey, model, pageNumbers }),
+      });
+
+      if (!res.ok && res.status === 413) {
+        return {
+          success: false,
+          error: "Dữ liệu quá lớn",
+          errorCode: "PAYLOAD_TOO_LARGE",
+        };
+      }
+
+      return await res.json();
+    } catch (err) {
+      return {
+        success: false,
+        error: err instanceof Error ? err.message : "Lỗi kết nối",
+        errorCode: "NETWORK_ERROR",
+      };
+    }
   };
 
   // ─── Smart extraction with agent ───────────────────────────────────
@@ -308,24 +382,25 @@ export default function HomePage() {
     if (!apiKey || pages.length === 0) return;
 
     setAppState("processing");
-    setError(null);
+    setAppError(null);
     setResult(DEFAULT_RESULT);
     setTotalTokens(0);
     setReconInfo("");
     let tokens = 0;
 
     const isShortDoc = pages.length <= DIRECT_EXTRACT_THRESHOLD;
+    const allPageNumbers = pages.map((p) => p.pageNumber);
 
-    // Determine which pages to send for extraction
     let extractPageNumbers: number[];
 
     if (isShortDoc) {
-      // Short doc: skip recon, extract all pages directly
       setReconStatus("done");
-      setReconInfo(`Tài liệu ngắn (${pages.length} trang) → quét trực tiếp tất cả`);
-      extractPageNumbers = pages.map((p) => p.pageNumber);
+      setReconInfo(
+        `${pages.length} trang → quét trực tiếp tất cả`
+      );
+      extractPageNumbers = allPageNumbers;
     } else {
-      // Long doc: run recon first with low-res images
+      // Recon phase with low-res images
       setReconStatus("processing");
       setStatusMessage(
         `Agent đang phân tích bố cục ${pages.length} trang...`
@@ -333,62 +408,74 @@ export default function HomePage() {
 
       try {
         const lowResImages = pages.map((p) => p.base64Low || p.base64);
-        const reconRes = await callExtract(lowResImages, "recon");
+        const reconRes = await callExtract(
+          lowResImages,
+          "recon",
+          allPageNumbers
+        );
 
         if (!reconRes.success) {
           setReconStatus("error");
-          setError(reconRes.error || "Lỗi phân tích bố cục");
-          setAppState("results");
-          return;
-        }
+          const classified = classifyError(500, reconRes.error || "");
+          setAppError(classified);
 
-        tokens += reconRes.tokensUsed || 0;
-        setTotalTokens(tokens);
+          // Fallback: extract all pages
+          extractPageNumbers = allPageNumbers;
+          setReconInfo(
+            `Recon lỗi → fallback quét tất cả ${pages.length} trang`
+          );
+          setReconStatus("done");
+        } else {
+          tokens += reconRes.tokensUsed || 0;
+          setTotalTokens(tokens);
 
-        const reconData = reconRes.data as unknown as ReconResult;
-        extractPageNumbers = selectPagesForExtraction(reconData);
+          const reconData = reconRes.data as unknown as ReconResult;
+          extractPageNumbers = selectPagesForExtraction(reconData);
 
-        // Build info string about what was found
-        const highPages = reconData.page_analysis
-          .filter((p) => p.relevance === "high" || p.relevance === "medium")
-          .map((p) => `T${p.page}: ${p.note || p.contains.join(", ")}`)
-          .join(" | ");
+          // Ensure at least the first page in scope
+          if (extractPageNumbers.length === 0) {
+            extractPageNumbers = [allPageNumbers[0]];
+          }
 
-        setReconInfo(
-          `${pages.length} trang → Agent chọn ${extractPageNumbers.length} trang quan trọng: [${extractPageNumbers.join(", ")}]`
-        );
-        setReconStatus("done");
-
-        if (highPages) {
-          console.log("Recon analysis:", highPages);
+          setReconInfo(
+            `${pages.length} trang → Agent chọn ${extractPageNumbers.length} trang: [${extractPageNumbers.join(", ")}]`
+          );
+          setReconStatus("done");
         }
       } catch (err) {
         setReconStatus("error");
-        setError(
-          `Lỗi recon: ${err instanceof Error ? err.message : err}`
+        // Fallback
+        extractPageNumbers = allPageNumbers;
+        setReconInfo(
+          `Recon lỗi → fallback quét tất cả ${pages.length} trang`
         );
-        // Fallback: try extracting all pages
-        extractPageNumbers = pages.map((p) => p.pageNumber);
-        setReconInfo(`Recon lỗi → fallback quét tất cả ${pages.length} trang`);
         setReconStatus("done");
+        console.error("Recon error:", err);
       }
     }
 
-    // Phase 2: Extract structured data from selected pages
+    // Extract phase
     setExtractStatus("processing");
     setStatusMessage(
       `Agent đang trích xuất dữ liệu từ ${extractPageNumbers.length} trang...`
     );
 
     try {
-      const extractImages = extractPageNumbers.map(
-        (pn) => pages[pn - 1].base64
+      const extractImages = extractPageNumbers.map((pn) => {
+        const page = pages.find((p) => p.pageNumber === pn);
+        return page!.base64;
+      });
+
+      const extractRes = await callExtract(
+        extractImages,
+        "extract",
+        extractPageNumbers
       );
-      const extractRes = await callExtract(extractImages, "extract");
 
       if (!extractRes.success) {
         setExtractStatus("error");
-        setError(extractRes.error || "Lỗi trích xuất dữ liệu");
+        const classified = classifyError(500, extractRes.error || "");
+        setAppError(classified);
         setAppState("results");
         return;
       }
@@ -397,8 +484,9 @@ export default function HomePage() {
       setTotalTokens(tokens);
 
       const d = extractRes.data as Record<string, unknown>;
-      const finalResult: ExtractionResult = {
-        chu_dau_tu: (d.chu_dau_tu as PartyInfo) || DEFAULT_RESULT.chu_dau_tu,
+      setResult({
+        chu_dau_tu:
+          (d.chu_dau_tu as PartyInfo) || DEFAULT_RESULT.chu_dau_tu,
         nha_thau: (d.nha_thau as PartyInfo) || DEFAULT_RESULT.nha_thau,
         gia_tri_hop_dong:
           (d.gia_tri_hop_dong as ContractValue) ||
@@ -407,13 +495,17 @@ export default function HomePage() {
           (d.tien_do_thanh_toan as PaymentMilestone[]) || [],
         so_hop_dong: (d.so_hop_dong as string) || null,
         ngay_ky: (d.ngay_ky as string) || null,
-      };
+      });
 
-      setResult(finalResult);
       setExtractStatus("done");
+      setAppError(null); // Clear any previous recon error
     } catch (err) {
       setExtractStatus("error");
-      setError(`Lỗi extract: ${err instanceof Error ? err.message : err}`);
+      const classified = classifyError(
+        500,
+        err instanceof Error ? err.message : String(err)
+      );
+      setAppError(classified);
     }
 
     setStatusMessage("Hoàn thành!");
@@ -451,8 +543,9 @@ export default function HomePage() {
     setAppState("idle");
     setFile(null);
     setPages([]);
+    setTotalPdfPages(0);
     setResult(DEFAULT_RESULT);
-    setError(null);
+    setAppError(null);
     setReconStatus("idle");
     setExtractStatus("idle");
     setTotalTokens(0);
@@ -489,9 +582,9 @@ export default function HomePage() {
           <AlertCircle className="w-5 h-5 text-red-500" />
         )}
       </div>
-      <div>
+      <div className="min-w-0">
         <div className="flex items-center gap-1.5">
-          <Icon className="w-3.5 h-3.5 text-gray-400" />
+          <Icon className="w-3.5 h-3.5 text-gray-400 flex-shrink-0" />
           <span
             className={`text-sm font-medium ${
               status === "processing"
@@ -507,7 +600,9 @@ export default function HomePage() {
           </span>
         </div>
         {detail && (
-          <p className="text-xs text-gray-400 mt-0.5 ml-5">{detail}</p>
+          <p className="text-xs text-gray-400 mt-0.5 ml-5 break-words">
+            {detail}
+          </p>
         )}
       </div>
     </div>
@@ -531,6 +626,44 @@ export default function HomePage() {
           </span>
         )}
       </span>
+    </div>
+  );
+
+  // ─── Error Banner Component ─────────────────────────────────────────
+
+  const ErrorBanner = ({ error, onRetry }: { error: AppError; onRetry?: () => void }) => (
+    <div className="mb-6 p-4 rounded-xl bg-red-50 border border-red-200 animate-fade-in">
+      <div className="flex items-start gap-3">
+        <AlertCircle className="w-5 h-5 text-red-500 flex-shrink-0 mt-0.5" />
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <p className="text-sm font-semibold text-red-800">
+              {error.message}
+            </p>
+            <span className="text-[10px] px-1.5 py-0.5 rounded bg-red-100 text-red-600 font-mono">
+              {error.code}
+            </span>
+          </div>
+          {error.detail && (
+            <p className="text-xs text-red-600 mt-1">{error.detail}</p>
+          )}
+          {error.retryable && onRetry && (
+            <button
+              onClick={onRetry}
+              className="mt-2 inline-flex items-center gap-1.5 text-xs font-medium text-red-700 hover:text-red-900 transition-colors"
+            >
+              <RefreshCw className="w-3.5 h-3.5" />
+              Thử lại
+            </button>
+          )}
+        </div>
+        <button
+          onClick={() => setAppError(null)}
+          className="text-red-400 hover:text-red-600 flex-shrink-0"
+        >
+          <X className="w-4 h-4" />
+        </button>
+      </div>
     </div>
   );
 
@@ -562,6 +695,13 @@ export default function HomePage() {
               </span>
             )}
             <button
+              onClick={() => setShowSecurity(!showSecurity)}
+              className="btn-secondary !px-2 !py-2"
+              title="Bảo mật"
+            >
+              <ShieldAlert className="w-4 h-4" />
+            </button>
+            <button
               onClick={() => setShowSettings(!showSettings)}
               className="btn-secondary !px-3 !py-2"
               title="Cài đặt"
@@ -576,6 +716,49 @@ export default function HomePage() {
           </div>
         </div>
 
+        {/* Security info panel */}
+        {showSecurity && (
+          <div className="border-t border-gray-100 bg-amber-50/80 backdrop-blur-xl animate-fade-in">
+            <div className="max-w-6xl mx-auto px-4 sm:px-6 py-4">
+              <div className="flex items-start gap-3">
+                <ShieldAlert className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" />
+                <div className="text-xs text-amber-800 space-y-1.5">
+                  <p className="font-semibold text-sm">Chính sách bảo mật dữ liệu</p>
+                  <ul className="space-y-1 list-disc list-inside text-amber-700">
+                    <li>
+                      Ảnh tài liệu được gửi đến <strong>Google Gemini API</strong> để phân tích.
+                      Google xử lý dữ liệu theo{" "}
+                      <a
+                        href="https://ai.google.dev/gemini-api/terms"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="underline font-medium"
+                      >
+                        Điều khoản Gemini API
+                      </a>
+                      . Với API key trả phí, Google <strong>không</strong> sử dụng dữ liệu để huấn luyện model.
+                    </li>
+                    <li>
+                      API Key lưu trong <strong>localStorage trình duyệt</strong> của bạn — không gửi đến server nào ngoài Gemini.
+                    </li>
+                    <li>
+                      <strong>Không có dữ liệu nào</strong> (ảnh, kết quả, API key) được lưu trữ trên server ContractOCR.
+                    </li>
+                    <li>
+                      Toàn bộ xử lý PDF → ảnh diễn ra <strong>trong trình duyệt</strong> (client-side).
+                    </li>
+                  </ul>
+                  <p className="text-amber-600 italic">
+                    Khuyến nghị: với tài liệu mật cấp cao, nên cân nhắc sử dụng Gemini API plan trả phí
+                    (đảm bảo data không dùng để train) hoặc tự host model riêng.
+                  </p>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Settings dropdown */}
         {showSettings && (
           <div className="border-t border-gray-100 bg-white/95 backdrop-blur-xl animate-fade-in">
             <div className="max-w-6xl mx-auto px-4 sm:px-6 py-4 grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -626,11 +809,26 @@ export default function HomePage() {
                 Cần nhập Gemini API Key
               </p>
               <p className="text-xs text-amber-600 mt-0.5">
-                Mở Settings (icon gear) ở góc phải trên, nhập API key từ{" "}
-                Google AI Studio.
+                Mở Settings (icon gear) ở góc phải trên, nhập API key từ Google
+                AI Studio.
               </p>
             </div>
           </div>
+        )}
+
+        {/* Error banner */}
+        {appError && (
+          <ErrorBanner
+            error={appError}
+            onRetry={
+              appError.retryable
+                ? () => {
+                    setAppError(null);
+                    startExtraction();
+                  }
+                : undefined
+            }
+          />
         )}
 
         {/* Upload Zone */}
@@ -671,18 +869,22 @@ export default function HomePage() {
                   </p>
                   <p className="text-sm text-gray-400">
                     {file
-                      ? `${pages.length} trang | ${(file.size / 1024 / 1024).toFixed(1)} MB`
+                      ? statusMessage ||
+                        `${pages.length} trang | ${(file.size / 1024 / 1024).toFixed(1)} MB`
                       : "PDF, JPG, PNG, TIFF"}
                   </p>
                   {file && pages.length > 0 && (
                     <div className="mt-4 flex flex-wrap gap-2 justify-center">
-                      {pages.slice(0, 6).map((p) => (
+                      {pages.slice(0, 8).map((p) => (
                         <div
                           key={p.pageNumber}
                           className="relative w-12 h-16 rounded-lg overflow-hidden border border-gray-200 shadow-sm cursor-pointer hover:border-blue-400 transition-colors"
                           onClick={(e) => {
                             e.stopPropagation();
-                            setPreviewPage(p.pageNumber - 1);
+                            const idx = pages.findIndex(
+                              (pg) => pg.pageNumber === p.pageNumber
+                            );
+                            setPreviewPage(idx);
                             setShowPreview(true);
                           }}
                         >
@@ -696,9 +898,9 @@ export default function HomePage() {
                           </div>
                         </div>
                       ))}
-                      {pages.length > 6 && (
+                      {pages.length > 8 && (
                         <div className="w-12 h-16 rounded-lg border border-gray-200 flex items-center justify-center text-xs text-gray-400">
-                          +{pages.length - 6}
+                          +{pages.length - 8}
                         </div>
                       )}
                     </div>
@@ -707,7 +909,108 @@ export default function HomePage() {
               )}
             </div>
 
-            {file && pages.length > 0 && appState !== "processing" && (
+            {/* Scan Mode selector — shown after file upload */}
+            {file && pages.length > 0 && appState === "idle" && (
+              <div className="mt-4 card p-4 animate-fade-in" onClick={(e) => e.stopPropagation()}>
+                <div className="flex items-center gap-2 mb-3">
+                  <ScanLine className="w-4 h-4 text-gray-500" />
+                  <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
+                    Chế độ quét
+                  </span>
+                </div>
+
+                <div className="flex flex-wrap gap-2 mb-3">
+                  <button
+                    onClick={() => {
+                      setScanMode("all");
+                      if (file && scanMode !== "all") {
+                        // Will re-render when extraction starts
+                      }
+                    }}
+                    className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium border transition-all ${
+                      scanMode === "all"
+                        ? "bg-blue-50 border-blue-300 text-blue-700"
+                        : "bg-white border-gray-200 text-gray-600 hover:border-gray-300"
+                    }`}
+                  >
+                    <Layers className="w-3.5 h-3.5" />
+                    Quét tất cả ({totalPdfPages} trang)
+                  </button>
+                  <button
+                    onClick={() => setScanMode("range")}
+                    className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium border transition-all ${
+                      scanMode === "range"
+                        ? "bg-blue-50 border-blue-300 text-blue-700"
+                        : "bg-white border-gray-200 text-gray-600 hover:border-gray-300"
+                    }`}
+                  >
+                    <ScanSearch className="w-3.5 h-3.5" />
+                    Quét phân vùng
+                  </button>
+                </div>
+
+                {scanMode === "range" && (
+                  <div className="animate-fade-in">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-xs text-gray-500">Từ trang</span>
+                      <input
+                        type="number"
+                        min={1}
+                        max={totalPdfPages}
+                        value={rangeFrom}
+                        onChange={(e) =>
+                          setRangeFrom(
+                            Math.max(1, Math.min(totalPdfPages, Number(e.target.value) || 1))
+                          )
+                        }
+                        className="input-field !w-20 text-sm text-center"
+                        onClick={(e) => e.stopPropagation()}
+                      />
+                      <span className="text-xs text-gray-500">đến trang</span>
+                      <input
+                        type="number"
+                        min={rangeFrom}
+                        max={totalPdfPages}
+                        value={rangeTo}
+                        onChange={(e) =>
+                          setRangeTo(
+                            Math.max(
+                              rangeFrom,
+                              Math.min(totalPdfPages, Number(e.target.value) || rangeFrom)
+                            )
+                          )
+                        }
+                        className="input-field !w-20 text-sm text-center"
+                        onClick={(e) => e.stopPropagation()}
+                      />
+                      <span className="text-xs text-gray-400">
+                        / {totalPdfPages} trang
+                      </span>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          reloadWithRange();
+                        }}
+                        className="btn-secondary text-xs !py-1.5"
+                      >
+                        <RefreshCw className="w-3 h-3" />
+                        Tải lại
+                      </button>
+                    </div>
+                    <div className="flex items-start gap-1.5 mt-2">
+                      <Info className="w-3 h-3 text-blue-400 flex-shrink-0 mt-0.5" />
+                      <p className="text-[11px] text-blue-500">
+                        Chỉ render và gửi trang trong phạm vi. Tiết kiệm thời gian render
+                        và token cho tài liệu lớn (100+ trang).
+                      </p>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Action buttons */}
+            {file && pages.length > 0 && appState === "idle" && (
               <div className="mt-4 flex justify-center gap-3 animate-fade-in">
                 <button
                   onClick={startExtraction}
@@ -760,17 +1063,6 @@ export default function HomePage() {
           </div>
         )}
 
-        {/* Error */}
-        {error && (
-          <div className="mb-6 p-4 rounded-xl bg-red-50 border border-red-200 flex items-start gap-3 animate-fade-in">
-            <AlertCircle className="w-5 h-5 text-red-500 flex-shrink-0 mt-0.5" />
-            <div>
-              <p className="text-sm font-medium text-red-800">Lỗi xử lý</p>
-              <p className="text-xs text-red-600 mt-0.5">{error}</p>
-            </div>
-          </div>
-        )}
-
         {/* Results */}
         {appState === "results" && (
           <div className="space-y-6 animate-fade-in">
@@ -785,7 +1077,7 @@ export default function HomePage() {
                   <span className="text-xs text-gray-400">{file.name}</span>
                 )}
               </div>
-              <div className="flex gap-2">
+              <div className="flex gap-2 flex-wrap">
                 <button
                   onClick={handleCopyJSON}
                   className="btn-secondary text-xs"
@@ -821,7 +1113,7 @@ export default function HomePage() {
             {/* Recon summary badge */}
             {reconInfo && (
               <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-blue-50/50 border border-blue-100">
-                <ScanSearch className="w-3.5 h-3.5 text-blue-500" />
+                <ScanSearch className="w-3.5 h-3.5 text-blue-500 flex-shrink-0" />
                 <span className="text-xs text-blue-600">{reconInfo}</span>
               </div>
             )}
@@ -869,23 +1161,11 @@ export default function HomePage() {
                   </div>
                 </div>
                 <div className="space-y-0.5">
-                  <InfoRow
-                    label="Địa chỉ"
-                    value={result.chu_dau_tu?.dia_chi}
-                  />
-                  <InfoRow
-                    label="Đại diện"
-                    value={result.chu_dau_tu?.dai_dien}
-                  />
-                  <InfoRow
-                    label="Chức vụ"
-                    value={result.chu_dau_tu?.chuc_vu}
-                  />
+                  <InfoRow label="Địa chỉ" value={result.chu_dau_tu?.dia_chi} />
+                  <InfoRow label="Đại diện" value={result.chu_dau_tu?.dai_dien} />
+                  <InfoRow label="Chức vụ" value={result.chu_dau_tu?.chuc_vu} />
                   <InfoRow label="MST" value={result.chu_dau_tu?.mst} />
-                  <InfoRow
-                    label="SĐT"
-                    value={result.chu_dau_tu?.so_dien_thoai}
-                  />
+                  <InfoRow label="SĐT" value={result.chu_dau_tu?.so_dien_thoai} />
                 </div>
               </div>
 
@@ -908,10 +1188,7 @@ export default function HomePage() {
                   <InfoRow label="Đại diện" value={result.nha_thau?.dai_dien} />
                   <InfoRow label="Chức vụ" value={result.nha_thau?.chuc_vu} />
                   <InfoRow label="MST" value={result.nha_thau?.mst} />
-                  <InfoRow
-                    label="SĐT"
-                    value={result.nha_thau?.so_dien_thoai}
-                  />
+                  <InfoRow label="SĐT" value={result.nha_thau?.so_dien_thoai} />
                 </div>
               </div>
             </div>
@@ -949,18 +1226,9 @@ export default function HomePage() {
                   )}
                 </div>
                 <div className="space-y-0.5">
-                  <InfoRow
-                    label="Thuế VAT"
-                    value={result.gia_tri_hop_dong?.thue_vat}
-                  />
-                  <InfoRow
-                    label="Sau VAT"
-                    value={result.gia_tri_hop_dong?.tong_sau_vat}
-                  />
-                  <InfoRow
-                    label="Bằng chữ"
-                    value={result.gia_tri_hop_dong?.bang_chu}
-                  />
+                  <InfoRow label="Thuế VAT" value={result.gia_tri_hop_dong?.thue_vat} />
+                  <InfoRow label="Sau VAT" value={result.gia_tri_hop_dong?.tong_sau_vat} />
+                  <InfoRow label="Bằng chữ" value={result.gia_tri_hop_dong?.bang_chu} />
                 </div>
               </div>
             </div>
@@ -996,9 +1264,7 @@ export default function HomePage() {
                     <tbody>
                       {result.tien_do_thanh_toan.map((p, i) => (
                         <tr key={i}>
-                          <td className="font-semibold text-center">
-                            {p.dot}
-                          </td>
+                          <td className="font-semibold text-center">{p.dot}</td>
                           <td>{p.noi_dung}</td>
                           <td className="text-center font-medium">
                             {p.ty_le || "—"}
@@ -1096,7 +1362,7 @@ export default function HomePage() {
               <div className="flex items-center gap-2">
                 <Eye className="w-4 h-4 text-gray-400" />
                 <span className="text-sm font-medium text-gray-700">
-                  Trang {previewPage + 1} / {pages.length}
+                  Trang {pages[previewPage]?.pageNumber} / {totalPdfPages}
                 </span>
               </div>
               <div className="flex items-center gap-2">
@@ -1125,7 +1391,7 @@ export default function HomePage() {
             <div className="overflow-auto max-h-[calc(90vh-60px)] scrollbar-thin bg-gray-100 flex justify-center p-4">
               <img
                 src={pages[previewPage]?.dataUrl}
-                alt={`Trang ${previewPage + 1}`}
+                alt={`Trang ${pages[previewPage]?.pageNumber}`}
                 className="max-w-full h-auto rounded-lg shadow-lg"
               />
             </div>

@@ -3,8 +3,8 @@
  *
  * Strategy (2 phases):
  *
- * 1. RECON (all pages, low quality):
- *    Agent reads ALL pages and classifies which ones contain relevant data.
+ * 1. RECON (all pages in scope, low quality):
+ *    Agent reads pages and classifies which ones contain relevant data.
  *    Uses "skills" to reason about document structure, not keyword matching.
  *
  * 2. EXTRACT (relevant pages only, high quality):
@@ -12,6 +12,11 @@
  *    Comprehensive prompt covers all fields in one pass.
  *
  * For short documents (≤5 pages): skip recon, send all pages directly.
+ *
+ * Security note:
+ * - API key is sent per-request, never stored server-side
+ * - Images are sent to Gemini API and subject to Google's data policies
+ * - No document data is persisted on our servers
  */
 
 const GEMINI_API_URL =
@@ -20,7 +25,6 @@ const GEMINI_API_URL =
 // ─── Agent Skill Prompts ────────────────────────────────────────────────────
 
 const PROMPTS: Record<string, string> = {
-  // Phase 1: Recon — classify all pages
   recon: `Bạn là AI Agent chuyên phân tích bố cục hợp đồng tiếng Việt.
 
 NHIỆM VỤ: Đọc lướt TẤT CẢ các trang và xác định trang nào chứa thông tin quan trọng.
@@ -42,13 +46,14 @@ LƯU Ý QUAN TRỌNG:
 - Các đợt thanh toán thường nằm trong phần điều khoản, KHÔNG PHẢI phần đầu
 - Trang chứa nhiều text pháp lý thuần túy (quyền, nghĩa vụ chung chung, giải quyết tranh chấp) → đánh dấu "low"
 - Trang có chữ ký, con dấu → "low"
+- SỐ TRANG HIỂN THỊ LÀ SỐ TRANG GỐC CỦA TÀI LIỆU — hãy giữ nguyên số trang này trong kết quả
 
 Trả về JSON:
 {
-  "total_pages": <số trang>,
+  "total_pages": <số trang đã quét>,
   "page_analysis": [
     {
-      "page": <số trang>,
+      "page": <SỐ TRANG GỐC như hiển thị trong [Trang X]>,
       "contains": ["party_info", "contract_value", "payment_schedule"],
       "relevance": "high" | "medium" | "low",
       "note": "<mô tả ngắn nội dung trang>"
@@ -66,7 +71,6 @@ Chỉ liệt kê các loại nội dung thực sự có trên trang đó. Các l
 - "signatures": chữ ký, con dấu
 - "appendix": phụ lục`,
 
-  // Phase 2: Full extraction — with agent skills
   extract: `Bạn là AI Agent chuyên trích xuất dữ liệu có cấu trúc từ hợp đồng tiếng Việt.
 
 BỘ KỸ NĂNG CỦA BẠN:
@@ -152,19 +156,34 @@ interface GeminiPart {
 
 export type Phase = "recon" | "extract";
 
+/**
+ * Call Gemini API for extraction.
+ * @param images - base64 encoded JPEG images
+ * @param phase - "recon" or "extract"
+ * @param apiKey - Gemini API key
+ * @param model - Gemini model name
+ * @param pageNumbers - Original page numbers for labeling (e.g. [3,4,5] for pages 3-5)
+ */
 export async function callGeminiExtract(
   images: string[],
   phase: Phase,
   apiKey: string,
-  model: string = "gemini-2.5-flash"
+  model: string = "gemini-2.5-flash",
+  pageNumbers?: number[]
 ): Promise<{ data: Record<string, unknown>; tokensUsed: number }> {
   const prompt = PROMPTS[phase];
 
+  // Label each image with its original page number
   const parts: GeminiPart[] = [
-    ...images.map((base64, i) => [
-      { text: `[Trang ${i + 1}]` },
-      { inlineData: { mimeType: "image/jpeg", data: base64 } },
-    ]).flat(),
+    ...images
+      .map((base64, i) => {
+        const pageNum = pageNumbers ? pageNumbers[i] : i + 1;
+        return [
+          { text: `[Trang ${pageNum}]` },
+          { inlineData: { mimeType: "image/jpeg", data: base64 } },
+        ];
+      })
+      .flat(),
     { text: prompt },
   ];
 
@@ -196,13 +215,28 @@ export async function callGeminiExtract(
   }
 
   const result = await response.json();
-  const text = result?.candidates?.[0]?.content?.parts?.[0]?.text;
+
+  // Handle safety blocks or empty candidates
+  const candidate = result?.candidates?.[0];
+  if (!candidate) {
+    const blockReason = result?.promptFeedback?.blockReason;
+    if (blockReason) {
+      throw new Error(`SAFETY: Content blocked — ${blockReason}`);
+    }
+    throw new Error("Gemini returned no candidates");
+  }
+
+  if (candidate.finishReason === "SAFETY") {
+    throw new Error("SAFETY: Response blocked by Gemini safety filters");
+  }
+
+  const text = candidate.content?.parts?.[0]?.text;
   const tokensUsed =
     (result?.usageMetadata?.promptTokenCount || 0) +
     (result?.usageMetadata?.candidatesTokenCount || 0);
 
   if (!text) {
-    throw new Error("Gemini returned empty response");
+    throw new Error("Gemini returned empty response text");
   }
 
   // Clean potential markdown code blocks
@@ -211,8 +245,14 @@ export async function callGeminiExtract(
     cleaned = cleaned.replace(/^```(?:json)?\n?/, "").replace(/\n?```$/, "");
   }
 
-  const data = JSON.parse(cleaned);
-  return { data, tokensUsed };
+  try {
+    const data = JSON.parse(cleaned);
+    return { data, tokensUsed };
+  } catch {
+    throw new Error(
+      `JSON parse error: Gemini returned invalid JSON. First 200 chars: ${cleaned.slice(0, 200)}`
+    );
+  }
 }
 
 // ─── Recon result types ─────────────────────────────────────────────────────
@@ -248,14 +288,10 @@ export function selectPagesForExtraction(recon: ReconResult): number[] {
     if (page.relevance === "high" || page.relevance === "medium") {
       selected.add(page.page);
     }
-    // Also include any page that has target content regardless of relevance
     if (page.contains.some((c) => targetTypes.has(c))) {
       selected.add(page.page);
     }
   }
-
-  // Always include page 1 (contract header is almost always there)
-  selected.add(1);
 
   return Array.from(selected).sort((a, b) => a - b);
 }
