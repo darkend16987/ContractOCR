@@ -1,0 +1,16 @@
+{
+  "name": "contractocr-desktop",
+  "version": "0.0.1",
+  "private": true,
+  "description": "ContractOCR desktop shell (Electron + Python sidecar)",
+  "main": "src/main.js",
+  "scripts": {
+    "start": "electron .",
+    "build:sidecar": "cd .. && pyinstaller sidecar.spec --noconfirm",
+    "build": "electron-builder --config electron-builder.yml"
+  },
+  "devDependencies": {
+    "electron": "^33.0.0",
+    "electron-builder": "^25.0.0"
+  }
+}

@@ -1,12 +1,17 @@
 # OCR Engines
+# NOTE: Requires Python 3.12 (NOT 3.13 — vietocr's pinned deps have no cp313 wheels).
+# torch is needed by VietOCR but is NOT pulled in automatically, so list it here.
+# On Windows torch must import before paddle (handled in src/ocr/engine.py).
 vietocr>=0.3.5
-paddleocr>=2.7.0
-paddlepaddle>=2.5.0
+paddleocr==3.7.0
+paddlepaddle==3.3.1
+torch>=2.6.0
+torchvision>=0.21.0
 
 # Image processing
 Pillow>=10.0.0
 pdf2image>=1.16.0
-opencv-python-headless>=4.8.0
+opencv-python-headless==4.10.0.84  # 4.10 = numpy-2 ABI compatible; matches paddlex's opencv pin
 
 # AI Agent - Gemini (new unified SDK)
 google-genai>=1.0.0

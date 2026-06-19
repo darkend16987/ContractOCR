@@ -1,0 +1,4 @@
+# Build-only dependencies for packaging the desktop sidecar.
+# Install alongside requirements.txt before running PyInstaller:
+#   pip install -r requirements.txt -r requirements-build.txt
+pyinstaller>=6.3.0

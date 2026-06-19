@@ -9,6 +9,16 @@ from PIL import Image
 
 logger = logging.getLogger(__name__)
 
+# IMPORTANT (Windows): torch must load its native DLLs *before* paddle. If paddle
+# is imported first it shadows torch's MKL/OpenMP dependencies and torch then
+# fails with `OSError: [WinError 127] ... shm.dll`. Importing torch at module load
+# guarantees the correct order for every entry point, since paddle is only
+# imported lazily inside PaddleOCREngine further down.
+try:
+    import torch  # noqa: F401
+except ImportError:
+    pass
+
 
 class BaseOCREngine(ABC):
     """Abstract base class for OCR engines."""
@@ -80,10 +90,16 @@ class PaddleOCREngine(BaseOCREngine):
         if self._ocr is None:
             logger.info("Loading PaddleOCR with lang=%s", self.lang)
             from paddleocr import PaddleOCR
+            # PaddleOCR 3.x API: `use_angle_cls`/`show_log` removed. Disable the
+            # doc-orientation and unwarping sub-pipelines we don't need (faster load).
+            # enable_mkldnn=False avoids a paddlepaddle 3.3 PIR+oneDNN bug
+            # (NotImplementedError: ConvertPirAttribute2RuntimeAttribute) on CPU.
             self._ocr = PaddleOCR(
-                use_angle_cls=True,
                 lang=self.lang,
-                show_log=False,
+                use_textline_orientation=True,
+                use_doc_orientation_classify=False,
+                use_doc_unwarping=False,
+                enable_mkldnn=False,
             )
             logger.info("PaddleOCR loaded successfully")
         return self._ocr
@@ -94,32 +110,34 @@ class PaddleOCREngine(BaseOCREngine):
         Returns all detected text joined by newlines, preserving reading order.
         """
         import numpy as np
-        img_array = np.array(image)
-        results = self.ocr.ocr(img_array, cls=True)
+        results = self.ocr.predict(np.array(image))
 
-        if not results or not results[0]:
+        if not results:
             return ""
 
-        lines = []
-        for line in results[0]:
-            text = line[1][0]  # (bbox, (text, confidence))
-            lines.append(text)
-
-        return "\n".join(lines)
+        # PaddleOCR 3.x returns a list of OCRResult (dict-like), one per image.
+        res = results[0]
+        texts = res.get("rec_texts", []) if hasattr(res, "get") else []
+        return "\n".join(texts)
 
     def detect_only(self, image: Image.Image) -> list[list[list[int]]]:
-        """Run text detection only, returns list of bounding boxes.
+        """Run text detection, returns list of bounding boxes.
 
         Each bbox is [[x1,y1],[x2,y2],[x3,y3],[x4,y4]].
         """
         import numpy as np
-        img_array = np.array(image)
-        results = self.ocr.ocr(img_array, rec=False)
+        results = self.ocr.predict(np.array(image))
 
-        if not results or not results[0]:
+        if not results:
             return []
 
-        return results[0]
+        res = results[0]
+        polys = res.get("dt_polys", None) if hasattr(res, "get") else None
+        if polys is None:
+            return []
+
+        # dt_polys is an ndarray of shape (N, 4, 2); normalise to nested lists.
+        return [np.asarray(p).tolist() for p in polys]
 
 
 class HybridOCREngine(BaseOCREngine):

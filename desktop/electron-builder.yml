@@ -1,0 +1,32 @@
+appId: com.contractocr.desktop
+productName: ContractOCR
+copyright: ContractOCR
+
+directories:
+  output: dist-app
+  buildResources: build
+
+# Only ship the Electron app source. The Python sidecar is added via extraResources.
+files:
+  - src/**/*
+  - renderer/**/*
+  - package.json
+
+# PyInstaller onedir output (../dist/sidecar) → app's resources/sidecar at runtime.
+# Run `npm run build:sidecar` first so this folder exists.
+extraResources:
+  - from: ../dist/sidecar
+    to: sidecar
+
+win:
+  target:
+    - target: portable   # single .exe, run from USB, no install
+    - target: nsis       # standard installer
+  artifactName: ${productName}-${version}-${arch}.${ext}
+
+portable:
+  artifactName: ${productName}-${version}-portable.exe
+
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true

@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="utf-8" />
+    <title>Lỗi khởi động</title>
+    <style>
+      body { font-family: system-ui, sans-serif; display: grid; place-items: center;
+             height: 100vh; margin: 0; background: #0f172a; color: #e2e8f0; }
+      .box { max-width: 560px; text-align: center; padding: 24px; }
+      code { display: block; margin-top: 16px; padding: 12px; background: #1e293b;
+             border-radius: 8px; color: #fca5a5; font-size: 13px; white-space: pre-wrap;
+             text-align: left; }
+    </style>
+  </head>
+  <body>
+    <div class="box">
+      <h2>⚠️ Không khởi động được engine OCR</h2>
+      <p>Sidecar Python không phản hồi. Kiểm tra log console hoặc cài đặt.</p>
+      <code id="msg"></code>
+    </div>
+    <script>
+      const message = new URLSearchParams(location.search).get("message") || "Không rõ nguyên nhân.";
+      document.getElementById("msg").textContent = message;
+    </script>
+  </body>
+</html>

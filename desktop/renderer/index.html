@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="utf-8" />
+    <title>ContractOCR — P0 test</title>
+    <style>
+      body { font-family: system-ui, sans-serif; margin: 0; background: #0f172a;
+             color: #e2e8f0; padding: 28px; }
+      h1 { font-size: 20px; }
+      .pill { display: inline-block; padding: 3px 10px; border-radius: 999px;
+              font-size: 13px; background: #1e293b; }
+      .ok { color: #4ade80; } .bad { color: #fca5a5; }
+      button, input[type=file] { font: inherit; }
+      button { padding: 8px 14px; border: 0; border-radius: 8px; background: #38bdf8;
+               color: #0f172a; font-weight: 600; cursor: pointer; }
+      section { margin-top: 22px; }
+      pre { background: #1e293b; padding: 14px; border-radius: 8px; white-space: pre-wrap;
+            max-height: 320px; overflow: auto; font-size: 13px; }
+      .muted { opacity: 0.7; font-size: 13px; }
+    </style>
+  </head>
+  <body>
+    <h1>ContractOCR — Phase 0 smoke test</h1>
+    <p>Sidecar: <span class="pill" id="base">…</span> &nbsp; Health: <span id="health" class="pill">đang kiểm tra…</span></p>
+
+    <section>
+      <h3>Test OCR trên 1 ảnh</h3>
+      <p class="muted">Chọn 1 file ảnh (jpg/png) chứa chữ tiếng Việt để xác nhận pipeline chạy local.</p>
+      <input type="file" id="file" accept="image/*" />
+      <button id="run">Chạy OCR</button>
+      <pre id="out">(chưa có kết quả)</pre>
+    </section>
+
+    <script src="renderer.js"></script>
+  </body>
+</html>
