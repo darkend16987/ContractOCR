@@ -36,7 +36,7 @@ Xem kiến trúc & quyết định ở [DESIGN.md](DESIGN.md). Dựng môi trư�
 
 ▶️ = cần chạy trên máy bạn; tôi không tự chạy được build nặng/đóng gói ở đây.
 
-## Phase 1 — PDF core (đang làm)
+## Phase 1 — PDF core (✅ xong, GUI tested)
 
 Chạy hoàn toàn trong renderer (pdf.js xem + pdf-lib sửa cấu trúc) — không cần Python.
 Tài liệu canonical = `state.bytes` (Uint8Array); mỗi thao tác dựng lại bytes bằng pdf-lib rồi re-render.
@@ -52,10 +52,10 @@ Tài liệu canonical = `state.bytes` (Uint8Array); mỗi thao tác dựng lại
   chèn trang từ PDF khác, tách trang chọn → PDF mới.
 - [x] **T1.4** Lưu qua dialog native (IPC `dialog:save-pdf` / `dialog:open-pdf`), Ctrl+S, kéo-thả mở file.
 - [x] **T1.5** Validate headless ops pdf-lib (reorder/rotate/merge/insert/delete/extract) — page count đúng.
-- [ ] **T1.6** ▶️ **(bạn chạy GUI)** `cd desktop && pnpm start` — xác nhận viewer render + các thao tác trên file thật.
+- [x] **T1.6** ✅ Test GUI: viewer render + view/reorder/rotate/merge/insert/tách/delete/save chạy tốt trên file thật.
 - [ ] **T1.7** Refactor renderer sang module/React khi UI phình (hiện tại vanilla JS, đủ dùng).
 
-## Phase 2 — Tích hợp OCR (code xong, chờ test runtime)
+## Phase 2 — Tích hợp OCR (✅ xong, GUI tested)
 
 Tận dụng backend sẵn có (OCR engine + gemini_agent + writers). Code xong cả backend + UI.
 **Test runtime cần venv Python 3.12 + deps + `GEMINI_API_KEY`** (máy hiện tại chưa có).
@@ -72,7 +72,7 @@ Tận dụng backend sẵn có (OCR engine + gemini_agent + writers). Code xong 
 - [x] **T2.3b** Test headless backend OK: `/health`, `/templates` (5 mẫu), `/extract` (ảnh HĐ
   tiếng Việt synthetic → OCR đọc đúng dấu → Gemini phân loại "Hợp đồng mua bán" + bóc đủ field,
   ngày chuẩn hóa DD/MM/YYYY), `/export` excel/csv/json (openpyxl mở được, header đúng nhãn VN).
-- [ ] **T2.3c** ▶️ **(bạn chạy GUI)** Test end-to-end trong app: mở PDF scan → Bóc tách → sửa field → xuất Excel.
+- [x] **T2.3c** ✅ Test GUI end-to-end OK: mở PDF scan → Bóc tách → sửa field → xuất Excel.
 - [ ] **T2.4** (tùy chọn) Bóc tách nhiều hợp đồng/1 lần → nhiều record → 1 Excel nhiều dòng.
 
 ## Ghi chú thực thi
