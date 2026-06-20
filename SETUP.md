@@ -43,12 +43,17 @@ OCR_ENGINE=hybrid
 
 ```powershell
 cd desktop
-pnpm install          # pnpm-workspace.yaml đã cho phép Electron tải binary
-pnpm start            # mở app: loading -> spawn sidecar (.venv) -> UI test OCR
+pnpm install          # tải Electron + pdf-lib/pdfjs-dist; postinstall vendor libs vào renderer/vendor/
+pnpm start            # mở app: UI PDF hiện ngay; sidecar OCR boot ở nền (badge starting->ready)
 ```
 
-Nếu `pnpm install` báo "Ignored build scripts: electron", chạy `node node_modules/electron/install.js`
-một lần (file `pnpm-workspace.yaml` lẽ ra đã xử lý việc này).
+Từ P1, **UI PDF (xem/ghép/tách/chèn/xoay/xóa/sắp xếp/lưu) chạy không cần Python** — sidecar OCR
+là lazy. Máy chỉ có Python 3.13 (không có `.venv` 3.12): PDF vẫn chạy đủ, badge OCR sẽ báo `lỗi`.
+Muốn dùng OCR thì dựng `.venv` 3.12 ở mục 1.
+
+Nếu thiếu file trong `renderer/vendor/` (pdf-lib.min.js, pdf.min.js, pdf.worker.min.js), chạy lại
+`pnpm run vendor`. Nếu `pnpm install` báo "Ignored build scripts: electron", chạy
+`node node_modules/electron/install.js` một lần (file `pnpm-workspace.yaml` lẽ ra đã xử lý).
 
 ## 3. Đóng gói portable .exe (Phase 0 — T0.9/T0.10)
 

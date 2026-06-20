@@ -48,8 +48,11 @@ Mục tiêu mở rộng: đọc / merge-split-insert / edit / nén / xuất PDF 
 └─────────────────────────────────────────────────────────┘
 ```
 
-Vòng đời: Electron `main` chọn **port trống động** → spawn sidecar (`sidecar.py --port`)
-→ poll `GET /health` tới khi OK → load renderer kèm port. Đóng app → kill sidecar.
+Vòng đời (từ P1, **lazy**): Electron `main` load renderer (UI PDF) **ngay lập tức**, song song
+spawn sidecar ở nền → chọn **port trống động** → poll `GET /health` → khi OK đẩy trạng thái
+`ready` + port về renderer qua IPC `sidecar:status`. UI PDF không chờ sidecar; chỉ feature OCR
+mới phụ thuộc badge `ready`. Đóng app → kill sidecar.
+(Trước P1 thì main chặn UI tới khi /health OK — đã bỏ vì vi phạm D5.)
 
 ## 4. Feature theo nơi xử lý
 

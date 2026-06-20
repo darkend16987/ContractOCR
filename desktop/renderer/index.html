@@ -2,35 +2,81 @@
 <html lang="vi">
   <head>
     <meta charset="utf-8" />
-    <title>ContractOCR — P0 test</title>
-    <style>
-      body { font-family: system-ui, sans-serif; margin: 0; background: #0f172a;
-             color: #e2e8f0; padding: 28px; }
-      h1 { font-size: 20px; }
-      .pill { display: inline-block; padding: 3px 10px; border-radius: 999px;
-              font-size: 13px; background: #1e293b; }
-      .ok { color: #4ade80; } .bad { color: #fca5a5; }
-      button, input[type=file] { font: inherit; }
-      button { padding: 8px 14px; border: 0; border-radius: 8px; background: #38bdf8;
-               color: #0f172a; font-weight: 600; cursor: pointer; }
-      section { margin-top: 22px; }
-      pre { background: #1e293b; padding: 14px; border-radius: 8px; white-space: pre-wrap;
-            max-height: 320px; overflow: auto; font-size: 13px; }
-      .muted { opacity: 0.7; font-size: 13px; }
-    </style>
+    <title>ContractOCR — PDF Suite</title>
+    <link rel="stylesheet" href="app.css" />
   </head>
   <body>
-    <h1>ContractOCR — Phase 0 smoke test</h1>
-    <p>Sidecar: <span class="pill" id="base">…</span> &nbsp; Health: <span id="health" class="pill">đang kiểm tra…</span></p>
+    <header class="toolbar">
+      <div class="brand">📄 ContractOCR</div>
 
-    <section>
-      <h3>Test OCR trên 1 ảnh</h3>
-      <p class="muted">Chọn 1 file ảnh (jpg/png) chứa chữ tiếng Việt để xác nhận pipeline chạy local.</p>
-      <input type="file" id="file" accept="image/*" />
-      <button id="run">Chạy OCR</button>
-      <pre id="out">(chưa có kết quả)</pre>
-    </section>
+      <div class="group">
+        <button id="btn-open" title="Mở PDF">Mở</button>
+        <button id="btn-save" class="primary" disabled title="Lưu PDF (Ctrl+S)">Lưu</button>
+      </div>
 
-    <script src="renderer.js"></script>
+      <div class="sep"></div>
+
+      <div class="group" data-needs-doc>
+        <button id="btn-merge" disabled title="Ghép thêm PDF vào cuối">Ghép</button>
+        <button id="btn-insert" disabled title="Chèn trang từ PDF khác sau trang đang chọn">Chèn</button>
+        <button id="btn-extract" disabled title="Tách các trang đang chọn ra PDF mới">Tách</button>
+      </div>
+
+      <div class="sep"></div>
+
+      <div class="group" data-needs-doc>
+        <button id="btn-rotate-l" disabled title="Xoay trái 90°">⟲</button>
+        <button id="btn-rotate-r" disabled title="Xoay phải 90°">⟳</button>
+        <button id="btn-delete" disabled title="Xóa trang đang chọn">🗑</button>
+      </div>
+
+      <div class="sep"></div>
+
+      <div class="group" data-needs-doc>
+        <button id="btn-zoom-out" disabled title="Thu nhỏ">−</button>
+        <span id="zoom-label" class="readout">100%</span>
+        <button id="btn-zoom-in" disabled title="Phóng to">+</button>
+      </div>
+
+      <div class="spacer"></div>
+
+      <button id="btn-ocr" class="ghost" disabled title="OCR trang hiện tại">OCR</button>
+      <span id="sidecar-badge" class="badge starting" title="Trạng thái engine OCR">OCR: …</span>
+    </header>
+
+    <main class="workspace">
+      <aside class="sidebar" id="sidebar">
+        <div class="sidebar-head">
+          <span id="page-count">Chưa có tài liệu</span>
+          <button id="btn-select-all" class="link" disabled>Chọn tất cả</button>
+        </div>
+        <div class="thumbs" id="thumbs"></div>
+      </aside>
+
+      <section class="viewer" id="viewer">
+        <div class="empty" id="empty-state">
+          <div class="empty-icon">📄</div>
+          <h2>Mở một file PDF để bắt đầu</h2>
+          <p>Kéo–thả file vào đây, hoặc bấm <b>Mở</b>.</p>
+          <p class="hint">Xem · ghép · tách · chèn · xoay · xóa · sắp xếp lại trang — chạy hoàn toàn trên máy.</p>
+        </div>
+      </section>
+    </main>
+
+    <div class="ocr-panel" id="ocr-panel" hidden>
+      <div class="ocr-head">
+        <b>Kết quả OCR</b>
+        <button id="ocr-close" class="link">Đóng</button>
+      </div>
+      <pre id="ocr-out"></pre>
+    </div>
+
+    <div class="toast" id="toast" hidden></div>
+    <div class="overlay" id="overlay" hidden><div class="spinner"></div><span id="overlay-msg"></span></div>
+
+    <!-- pdf-lib: UMD global `PDFLib`. pdf.js: UMD global `pdfjsLib`. Both vendored offline. -->
+    <script src="vendor/pdf-lib.min.js"></script>
+    <script src="vendor/pdf.min.js"></script>
+    <script src="app.js"></script>
   </body>
 </html>

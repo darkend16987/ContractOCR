@@ -6,11 +6,15 @@
   "main": "src/main.js",
   "scripts": {
     "start": "electron .",
+    "vendor": "node scripts/vendor-libs.js",
+    "postinstall": "node scripts/vendor-libs.js",
     "build:sidecar": "cd .. && pyinstaller sidecar.spec --noconfirm",
     "build": "electron-builder --config electron-builder.yml"
   },
   "devDependencies": {
     "electron": "^33.0.0",
-    "electron-builder": "^25.0.0"
+    "electron-builder": "^25.0.0",
+    "pdf-lib": "^1.17.1",
+    "pdfjs-dist": "3.11.174"
   }
 }

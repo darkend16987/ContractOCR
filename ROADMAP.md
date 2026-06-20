@@ -36,6 +36,32 @@ Xem kiến trúc & quyết định ở [DESIGN.md](DESIGN.md). Dựng môi trư�
 
 ▶️ = cần chạy trên máy bạn; tôi không tự chạy được build nặng/đóng gói ở đây.
 
+## Phase 1 — PDF core (đang làm)
+
+Chạy hoàn toàn trong renderer (pdf.js xem + pdf-lib sửa cấu trúc) — không cần Python.
+Tài liệu canonical = `state.bytes` (Uint8Array); mỗi thao tác dựng lại bytes bằng pdf-lib rồi re-render.
+
+- [x] **T1.0** Tách sidecar OCR thành **lazy/non-blocking**: UI PDF mở tức thì, sidecar boot nền,
+  trạng thái đẩy về renderer qua IPC `sidecar:status` (badge starting/ready/error). Quyết định D5.
+  → cũng cho phép dev P1 trên máy chỉ có Python 3.13 (sidecar lỗi nhưng PDF vẫn chạy).
+- [x] **T1.1** Vendor offline `pdf-lib` (UMD) + `pdfjs-dist` **v3** (UMD) vào `renderer/vendor/`
+  qua `scripts/vendor-libs.js` (chạy `postinstall`). Dùng v3 vì v4 chỉ có ESM → vỡ trên `file://`.
+- [x] **T1.2** Viewer: pdf.js render thumbnails (sidebar) + trang lớn (zoom 40–300%), chọn trang
+  (click / Ctrl / Shift), cuộn tới trang.
+- [x] **T1.3** Thao tác trang (pdf-lib): xoay ±90°, xóa, **kéo-thả sắp xếp lại**, ghép nhiều PDF,
+  chèn trang từ PDF khác, tách trang chọn → PDF mới.
+- [x] **T1.4** Lưu qua dialog native (IPC `dialog:save-pdf` / `dialog:open-pdf`), Ctrl+S, kéo-thả mở file.
+- [x] **T1.5** Validate headless ops pdf-lib (reorder/rotate/merge/insert/delete/extract) — page count đúng.
+- [ ] **T1.6** ▶️ **(bạn chạy GUI)** `cd desktop && pnpm start` — xác nhận viewer render + các thao tác trên file thật.
+- [ ] **T1.7** Refactor renderer sang module/React khi UI phình (hiện tại vanilla JS, đủ dùng).
+
+## Phase 2 — Tích hợp OCR (seed đã có)
+
+- [x] **T2.0** Nút OCR trong UI: rasterize trang hiện tại → POST `/ocr` sidecar → panel kết quả
+  (bật khi badge = ready). Mới ở mức 1 trang.
+- [ ] **T2.1** Upload PDF scan nhiều trang → chọn template field → bóc tách (gemini_agent) → panel.
+- [ ] **T2.2** Xuất kết quả bóc tách → Excel/CSV/JSON (nối `src/output/writer.py` đã có).
+
 ## Ghi chú thực thi
 
 - **Onedir, không onefile**: torch giải nén onefile rất chậm + dễ lỗi. Spec tạo `dist/sidecar/`.
