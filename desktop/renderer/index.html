@@ -40,9 +40,38 @@
 
       <div class="spacer"></div>
 
+      <button id="btn-edit" class="ghost" disabled title="Chỉnh sửa: chú thích, watermark, redact, điền form">Chỉnh sửa</button>
+      <button id="btn-searchable" class="ghost" disabled title="Tạo PDF tìm-kiếm-được (OCR thêm lớp text vô hình)">Searchable</button>
+      <button id="btn-compress" class="ghost" disabled title="Nén PDF (giảm dung lượng ảnh)">Nén</button>
       <button id="btn-ocr" class="ghost" disabled title="OCR + bóc tách field bằng AI">Bóc tách</button>
       <span id="sidecar-badge" class="badge starting" title="Trạng thái engine OCR">OCR: …</span>
     </header>
+
+    <!-- P4 overlay-editor toolbar (hidden until edit mode is on) -->
+    <div class="edit-bar" id="edit-bar" hidden>
+      <div class="group tools" id="ed-tools">
+        <button class="tool active" data-tool="select" title="Chọn / di chuyển / đổi kích thước">✛</button>
+        <button class="tool" data-tool="text" title="Hộp văn bản">T</button>
+        <button class="tool" data-tool="highlight" title="Tô sáng">▭</button>
+        <button class="tool" data-tool="draw" title="Vẽ tay">✎</button>
+        <button class="tool" data-tool="image" title="Chèn ảnh / chữ ký">🖼</button>
+        <button class="tool" data-tool="redact" title="Che thông tin (an toàn — xoá nội dung gốc)">⬛</button>
+      </div>
+      <div class="sep"></div>
+      <label class="ctl" title="Màu (tô sáng / chữ / nét vẽ)">Màu <input type="color" id="ed-color" value="#ffd54a" /></label>
+      <label class="ctl" title="Cỡ chữ (điểm)">Cỡ <input type="number" id="ed-fontsize" min="6" max="120" value="16" /></label>
+      <label class="ctl" title="Độ dày nét vẽ">Nét <input type="number" id="ed-penwidth" min="1" max="24" value="2" /></label>
+      <div class="sep"></div>
+      <button id="ed-watermark" title="Đóng dấu mờ lên mọi trang">Watermark</button>
+      <button id="ed-form" title="Điền các trường biểu mẫu PDF">Điền form</button>
+      <div class="sep"></div>
+      <button id="ed-delete" title="Xoá mục đang chọn (Delete)">Xoá mục</button>
+      <span id="ed-hint" class="readout"></span>
+      <div class="spacer"></div>
+      <button id="ed-apply" class="primary" title="Ghi các thay đổi vào tài liệu">Áp dụng</button>
+      <button id="ed-exit" title="Thoát chế độ chỉnh sửa">Thoát</button>
+    </div>
+    <input type="file" id="ed-file" accept="image/png,image/jpeg" hidden />
 
     <main class="workspace">
       <aside class="sidebar" id="sidebar">
@@ -58,7 +87,7 @@
           <div class="empty-icon">📄</div>
           <h2>Mở một file PDF để bắt đầu</h2>
           <p>Kéo–thả file vào đây, hoặc bấm <b>Mở</b>.</p>
-          <p class="hint">Xem · ghép · tách · chèn · xoay · xóa · sắp xếp lại trang — chạy hoàn toàn trên máy.</p>
+          <p class="hint">Xem · ghép · tách · chèn · xoay · xóa · sắp xếp · chú thích · watermark · redact · OCR — chạy hoàn toàn trên máy.</p>
         </div>
       </section>
     </main>
@@ -94,6 +123,59 @@
       </details>
     </div>
 
+    <!-- Watermark dialog -->
+    <div class="modal" id="wm-modal" hidden>
+      <div class="modal-card">
+        <h3>Watermark (đóng dấu mờ)</h3>
+        <label>Nội dung <input id="wm-text" type="text" value="BẢN SAO" /></label>
+        <div class="modal-row">
+          <label>Cỡ chữ <input id="wm-size" type="number" min="8" max="200" value="56" /></label>
+          <label>Góc (°) <input id="wm-angle" type="number" min="-90" max="90" value="45" /></label>
+        </div>
+        <div class="modal-row">
+          <label>Độ mờ <input id="wm-opacity" type="number" step="0.05" min="0.05" max="1" value="0.22" /></label>
+          <label>Màu <input id="wm-color" type="color" value="#888888" /></label>
+        </div>
+        <div class="modal-actions">
+          <button id="wm-cancel">Hủy</button>
+          <button id="wm-ok" class="primary">Thêm vào mọi trang</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Form-fill dialog -->
+    <div class="modal" id="form-modal" hidden>
+      <div class="modal-card">
+        <h3>Điền biểu mẫu PDF</h3>
+        <div id="form-fields" class="form-fields"></div>
+        <label class="chk"><input type="checkbox" id="form-flatten" /> Khóa giá trị sau khi điền (flatten)</label>
+        <div class="modal-actions">
+          <button id="form-cancel">Hủy</button>
+          <button id="form-ok" class="primary">Áp dụng</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Compress dialog -->
+    <div class="modal" id="cmp-modal" hidden>
+      <div class="modal-card">
+        <h3>Nén PDF</h3>
+        <label>Mức nén
+          <select id="cmp-preset">
+            <option value="screen">Mạnh — màn hình (~96 DPI)</option>
+            <option value="ebook" selected>Vừa — ebook (~150 DPI)</option>
+            <option value="printer">Nhẹ — in ấn (~300 DPI)</option>
+            <option value="lossless">Không giảm chất lượng (chỉ dọn rác)</option>
+          </select>
+        </label>
+        <p class="cmp-note">Chỉ ảnh độ phân giải cao bị hạ xuống mức đã chọn; văn bản và vector giữ nguyên.</p>
+        <div class="modal-actions">
+          <button id="cmp-cancel">Hủy</button>
+          <button id="cmp-ok" class="primary">Nén &amp; lưu</button>
+        </div>
+      </div>
+    </div>
+
     <div class="toast" id="toast" hidden></div>
     <div class="overlay" id="overlay" hidden><div class="spinner"></div><span id="overlay-msg"></span></div>
 
@@ -101,5 +183,6 @@
     <script src="vendor/pdf-lib.min.js"></script>
     <script src="vendor/pdf.min.js"></script>
     <script src="app.js"></script>
+    <script src="editor.js"></script>
   </body>
 </html>

@@ -34,6 +34,14 @@ class BaseOCREngine(ABC):
         image = load_image(file_path)
         return self.recognize(image)
 
+    def recognize_boxes(self, image: Image.Image) -> list[tuple[str, list[float]]]:
+        """Recognize text with positions: [(text, [x0,y0,x1,y1]), ...].
+
+        Default: not supported (e.g. recognition-only engines that lack layout).
+        Overridden by detection-capable engines (Paddle, Hybrid).
+        """
+        raise NotImplementedError("This engine does not support positional OCR")
+
 
 class VietOCREngine(BaseOCREngine):
     """Vietnamese OCR using VietOCR (Transformer-based, optimized for Vietnamese).
@@ -139,6 +147,26 @@ class PaddleOCREngine(BaseOCREngine):
         # dt_polys is an ndarray of shape (N, 4, 2); normalise to nested lists.
         return [np.asarray(p).tolist() for p in polys]
 
+    def recognize_boxes(self, image: Image.Image) -> list[tuple[str, list[float]]]:
+        """Recognize text with positions. Returns [(text, [x0,y0,x1,y1]), ...].
+
+        Boxes are axis-aligned in image-pixel coordinates (top-left origin).
+        Used to build a searchable PDF text layer.
+        """
+        import numpy as np
+        results = self.ocr.predict(np.array(image))
+        if not results:
+            return []
+        res = results[0]
+        texts = res.get("rec_texts", []) if hasattr(res, "get") else []
+        polys = res.get("dt_polys", []) if hasattr(res, "get") else []
+        out: list[tuple[str, list[float]]] = []
+        for text, poly in zip(texts, polys):
+            p = np.asarray(poly, dtype=float)
+            out.append((text, [float(p[:, 0].min()), float(p[:, 1].min()),
+                               float(p[:, 0].max()), float(p[:, 1].max())]))
+        return out
+
 
 class HybridOCREngine(BaseOCREngine):
     """Hybrid engine: PaddleOCR for text detection + VietOCR for recognition.
@@ -195,6 +223,24 @@ class HybridOCREngine(BaseOCREngine):
         logger.info("Hybrid OCR: detected %d regions, recognized %d texts", len(bboxes), len(texts))
         return "\n".join(texts)
 
+    def recognize_boxes(self, image: Image.Image) -> list[tuple[str, list[float]]]:
+        """Recognize text with positions (PaddleOCR detect + VietOCR recognize).
+
+        Returns [(text, [x0,y0,x1,y1]), ...] in image-pixel coords (top-left origin).
+        """
+        bboxes = self._detector.detect_only(image)
+        if not bboxes:
+            return []
+        bboxes = self._sort_bboxes_reading_order(bboxes)
+        crops = [self._crop_text_region(image, b) for b in bboxes]
+        texts = self._recognizer.recognize_batch(crops)
+        out: list[tuple[str, list[float]]] = []
+        for b, t in zip(bboxes, texts):
+            xs = [pt[0] for pt in b]
+            ys = [pt[1] for pt in b]
+            out.append((t, [float(min(xs)), float(min(ys)), float(max(xs)), float(max(ys))]))
+        return out
+
 
 class AutoOCREngine(BaseOCREngine):
     """Automatic engine selection.
@@ -240,6 +286,9 @@ class AutoOCREngine(BaseOCREngine):
 
     def recognize(self, image: Image.Image) -> str:
         return self.engine.recognize(image)
+
+    def recognize_boxes(self, image: Image.Image) -> list[tuple[str, list[float]]]:
+        return self.engine.recognize_boxes(image)
 
 
 def create_engine(engine_type: str = "auto", **kwargs) -> BaseOCREngine:

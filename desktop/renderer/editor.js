@@ -1,0 +1,917 @@
+"use strict";
+
+/**
+ * ContractOCR — PDF Suite renderer (Phase 4: overlay editor).
+ *
+ * Adds annotation / watermark / redaction / form-fill on top of the P1 viewer.
+ * Design notes:
+ *  - Annotations live in `ed.annots[pageIndex]` as plain objects whose coords are
+ *    in *scale-1 PDF-point space, top-left origin* (the pdf.js viewport at scale 1).
+ *    The overlay renders them at `state.scale`; baking maps them to pdf-lib's
+ *    bottom-left user space via the page viewport's `convertToPdfPoint`.
+ *  - Vietnamese text is rendered to a PNG via the system font and embedded as an
+ *    image — pdf-lib's standard fonts can't encode Vietnamese diacritics and we
+ *    deliberately avoid vendoring a Unicode font (offline / zero new deps).
+ *  - Redaction is *secure*: any page with a redaction box is rasterised with the
+ *    box burned in and the page content is replaced by that image, so the original
+ *    text is physically gone (not merely covered). Other pages stay vector.
+ *
+ * Shares app.js globals (same classic-script scope): state, $, toast,
+ * showOverlay/hideOverlay, renderAll, renderViewer, updateToolbar.
+ */
+
+(function () {
+  const PDFLib = window.PDFLib;
+  const { PDFDocument, rgb } = PDFLib;
+
+  const ed = {
+    active: false,
+    tool: "select",
+    color: "#ffd54a", // highlight / draw / new-text colour
+    fontSize: 16, // points
+    penWidth: 2,
+    annots: {}, // pageIndex -> [annot]
+    watermark: null, // { text, size, angle, opacity, color }
+    seq: 1,
+    sel: null, // selected annot id (numbers are unique across pages)
+    pendingImage: null, // { dataUrl, mime } awaiting a placement click
+    _form: null,
+    _formDoc: null,
+  };
+
+  // ---- model helpers -------------------------------------------------------
+
+  function annotsFor(i) {
+    return ed.annots[i] || (ed.annots[i] = []);
+  }
+  function findAnnot(id) {
+    for (const i of Object.keys(ed.annots)) {
+      const a = ed.annots[i].find((x) => x.id === id);
+      if (a) return { a, page: +i };
+    }
+    return null;
+  }
+  function hasAny() {
+    return Object.values(ed.annots).some((a) => a.length) || !!ed.watermark;
+  }
+
+  // ---- geometry helpers ----------------------------------------------------
+
+  function layerFor(i) {
+    return document.querySelector(`.annot-layer[data-index="${i}"]`);
+  }
+  function layerPoint(layer, e) {
+    const r = layer.getBoundingClientRect();
+    const s = state.scale;
+    const w = +layer.dataset.w || r.width / s;
+    const h = +layer.dataset.h || r.height / s;
+    const x = Math.max(0, Math.min(w, (e.clientX - r.left) / s));
+    const y = Math.max(0, Math.min(h, (e.clientY - r.top) / s));
+    return { x, y };
+  }
+
+  let _measureCtx;
+  function measureCtx() {
+    if (!_measureCtx) _measureCtx = document.createElement("canvas").getContext("2d");
+    return _measureCtx;
+  }
+  function textFont(fontSizePx) {
+    return `${fontSizePx}px system-ui, "Segoe UI", Arial, sans-serif`;
+  }
+  function measureText(text, fontSizePt) {
+    const ctx = measureCtx();
+    ctx.font = textFont(fontSizePt);
+    const lines = (text || "").split("\n");
+    let w = 1;
+    for (const ln of lines) w = Math.max(w, ctx.measureText(ln || " ").width);
+    const lh = fontSizePt * 1.3;
+    return { w: Math.ceil(w) + 4, h: Math.ceil(lh * lines.length) + 4 };
+  }
+
+  function hexRgb(hex) {
+    const m = /^#?([0-9a-f]{6})$/i.exec(hex || "");
+    if (!m) return rgb(0, 0, 0);
+    const n = parseInt(m[1], 16);
+    return rgb(((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255);
+  }
+  function dataUrlToBytes(dataUrl) {
+    const bin = atob(dataUrl.split(",")[1]);
+    const u8 = new Uint8Array(bin.length);
+    for (let k = 0; k < bin.length; k++) u8[k] = bin.charCodeAt(k);
+    return u8;
+  }
+
+  // ---- overlay rendering ---------------------------------------------------
+
+  function syncOverlays() {
+    document.querySelectorAll("#viewer .page-wrap").forEach((wrap) => {
+      const i = +wrap.dataset.index;
+      const canvas = wrap.querySelector("canvas");
+      if (!canvas) return;
+      let layer = wrap.querySelector(".annot-layer");
+      if (!layer) {
+        layer = document.createElement("div");
+        layer.className = "annot-layer";
+        wrap.appendChild(layer);
+      }
+      const cw = parseFloat(canvas.style.width) || canvas.width;
+      const ch = parseFloat(canvas.style.height) || canvas.height;
+      layer.style.width = cw + "px";
+      layer.style.height = ch + "px";
+      layer.dataset.index = String(i);
+      layer.dataset.w = String(cw / state.scale);
+      layer.dataset.h = String(ch / state.scale);
+      renderLayer(layer, i);
+    });
+    document.body.classList.toggle("editing", ed.active);
+  }
+
+  function renderLayer(layer, i) {
+    layer.innerHTML = "";
+    const s = state.scale;
+    for (const a of annotsFor(i)) layer.appendChild(renderAnnot(a, s));
+    if (ed.watermark) layer.appendChild(renderWatermarkEl());
+  }
+
+  function renderAnnot(a, s) {
+    const el = document.createElement("div");
+    el.className = "an an-" + a.kind;
+    el.dataset.id = String(a.id);
+    el.dataset.kind = a.kind;
+    if (ed.sel === a.id) el.classList.add("sel");
+
+    if (a.kind === "draw") {
+      // SVG sized to the path's bounding box; coords relative to that box.
+      const xs = a.pts.map((p) => p.x);
+      const ys = a.pts.map((p) => p.y);
+      const minX = Math.min(...xs);
+      const minY = Math.min(...ys);
+      const w = Math.max(1, Math.max(...xs) - minX);
+      const h = Math.max(1, Math.max(...ys) - minY);
+      el.style.left = minX * s + "px";
+      el.style.top = minY * s + "px";
+      el.style.width = w * s + "px";
+      el.style.height = h * s + "px";
+      const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+      svg.setAttribute("viewBox", `0 0 ${w} ${h}`);
+      svg.setAttribute("width", "100%");
+      svg.setAttribute("height", "100%");
+      const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+      path.setAttribute(
+        "d",
+        a.pts.map((p, k) => (k ? "L" : "M") + (p.x - minX) + " " + (p.y - minY)).join(" ")
+      );
+      path.setAttribute("fill", "none");
+      path.setAttribute("stroke", a.color);
+      path.setAttribute("stroke-width", String(a.width));
+      path.setAttribute("stroke-linecap", "round");
+      path.setAttribute("stroke-linejoin", "round");
+      svg.appendChild(path);
+      el.appendChild(svg);
+      return el;
+    }
+
+    el.style.left = a.x * s + "px";
+    el.style.top = a.y * s + "px";
+    el.style.width = a.w * s + "px";
+    el.style.height = a.h * s + "px";
+
+    if (a.kind === "text") {
+      el.style.fontSize = a.fontSize * s + "px";
+      el.style.color = a.color;
+      el.textContent = a.text;
+    } else if (a.kind === "highlight") {
+      el.style.background = a.color;
+    } else if (a.kind === "image") {
+      const img = document.createElement("img");
+      img.src = a.dataUrl;
+      img.draggable = false;
+      el.appendChild(img);
+    }
+    // redact needs no extra content (solid black via CSS)
+
+    if (ed.sel === a.id && (a.kind === "highlight" || a.kind === "redact" || a.kind === "image")) {
+      const h = document.createElement("div");
+      h.className = "handle";
+      el.appendChild(h);
+    }
+    return el;
+  }
+
+  function renderWatermarkEl() {
+    const wm = ed.watermark;
+    const el = document.createElement("div");
+    el.className = "an an-watermark";
+    el.textContent = wm.text;
+    el.style.color = wm.color;
+    el.style.opacity = String(wm.opacity);
+    el.style.fontSize = wm.size * state.scale + "px";
+    el.style.transform = `translate(-50%,-50%) rotate(${-wm.angle}deg)`;
+    return el;
+  }
+
+  // ---- selection -----------------------------------------------------------
+
+  function select(id) {
+    ed.sel = id;
+    syncOverlays();
+    syncControls();
+  }
+  function deselect() {
+    if (ed.sel == null) return;
+    ed.sel = null;
+    syncOverlays();
+  }
+  function deleteSelected() {
+    if (ed.sel == null) return;
+    const hit = findAnnot(ed.sel);
+    if (!hit) return;
+    ed.annots[hit.page] = ed.annots[hit.page].filter((x) => x.id !== ed.sel);
+    ed.sel = null;
+    syncOverlays();
+  }
+
+  // Reflect the selected annotation's style in the palette controls.
+  function syncControls() {
+    if (ed.sel == null) return;
+    const hit = findAnnot(ed.sel);
+    if (!hit) return;
+    const a = hit.a;
+    if (a.color) $("ed-color").value = toHex(a.color);
+    if (a.kind === "text") $("ed-fontsize").value = String(a.fontSize);
+    if (a.kind === "draw") $("ed-penwidth").value = String(a.width);
+  }
+  function toHex(c) {
+    return /^#/.test(c) ? c : c;
+  }
+
+  // ---- pointer interaction (create / move / resize) ------------------------
+
+  let drag = null; // { type, page, id, layer, sx, sy, orig }
+
+  function onDown(e) {
+    if (!ed.active || e.button !== 0) return;
+    const layer = e.target.closest(".annot-layer");
+    if (!layer) return;
+    const i = +layer.dataset.index;
+    const p = layerPoint(layer, e);
+
+    if (e.target.classList.contains("handle")) {
+      const id = +e.target.closest(".an").dataset.id;
+      const a = findAnnot(id).a;
+      drag = { type: "resize", page: i, id, layer, sx: p.x, sy: p.y, orig: { w: a.w, h: a.h } };
+      e.preventDefault();
+      return;
+    }
+
+    const anEl = e.target.closest(".an");
+
+    if (ed.tool === "select") {
+      if (anEl && anEl.dataset.kind !== "watermark") {
+        const id = +anEl.dataset.id;
+        select(id);
+        const a = findAnnot(id).a;
+        const orig = a.kind === "draw" ? { pts: a.pts.map((q) => ({ ...q })) } : { x: a.x, y: a.y };
+        drag = { type: "move", page: i, id, layer, sx: p.x, sy: p.y, orig };
+        e.preventDefault();
+      } else {
+        deselect();
+      }
+      return;
+    }
+
+    if (ed.tool === "text") {
+      openTextEditor(layer, i, p, null);
+      return;
+    }
+
+    if (ed.tool === "image") {
+      if (!ed.pendingImage) {
+        toast("Bấm lại công cụ Ảnh để chọn tệp ảnh trước.", "bad");
+        return;
+      }
+      placeImage(i, p);
+      return;
+    }
+
+    if (ed.tool === "highlight" || ed.tool === "redact") {
+      const a = { id: ed.seq++, kind: ed.tool, x: p.x, y: p.y, w: 1, h: 1, color: ed.color };
+      annotsFor(i).push(a);
+      ed.sel = a.id;
+      drag = { type: "rect", page: i, id: a.id, layer, sx: p.x, sy: p.y };
+      e.preventDefault();
+      return;
+    }
+
+    if (ed.tool === "draw") {
+      const a = { id: ed.seq++, kind: "draw", pts: [p], color: ed.color, width: ed.penWidth };
+      annotsFor(i).push(a);
+      ed.sel = a.id;
+      drag = { type: "draw", page: i, id: a.id, layer };
+      e.preventDefault();
+      return;
+    }
+  }
+
+  function onMove(e) {
+    if (!drag) return;
+    const p = layerPoint(drag.layer, e);
+    const hit = findAnnot(drag.id);
+    if (!hit) {
+      drag = null;
+      return;
+    }
+    const a = hit.a;
+
+    if (drag.type === "move") {
+      const dx = p.x - drag.sx;
+      const dy = p.y - drag.sy;
+      if (a.kind === "draw") {
+        a.pts = drag.orig.pts.map((q) => ({ x: q.x + dx, y: q.y + dy }));
+      } else {
+        a.x = drag.orig.x + dx;
+        a.y = drag.orig.y + dy;
+      }
+    } else if (drag.type === "resize") {
+      a.w = Math.max(4, drag.orig.w + (p.x - drag.sx));
+      a.h = Math.max(4, drag.orig.h + (p.y - drag.sy));
+    } else if (drag.type === "rect") {
+      a.x = Math.min(drag.sx, p.x);
+      a.y = Math.min(drag.sy, p.y);
+      a.w = Math.abs(p.x - drag.sx);
+      a.h = Math.abs(p.y - drag.sy);
+    } else if (drag.type === "draw") {
+      a.pts.push(p);
+    }
+    renderLayer(drag.layer, drag.page);
+  }
+
+  function onUp() {
+    if (!drag) return;
+    const hit = findAnnot(drag.id);
+    if (hit) {
+      const a = hit.a;
+      // Discard accidental zero-size rectangles / single-point scribbles.
+      if ((drag.type === "rect" && (a.w < 4 || a.h < 4)) || (drag.type === "draw" && a.pts.length < 2)) {
+        ed.annots[drag.page] = ed.annots[drag.page].filter((x) => x.id !== drag.id);
+        ed.sel = null;
+      }
+    }
+    const layer = drag.layer;
+    const page = drag.page;
+    drag = null;
+    renderLayer(layer, page);
+  }
+
+  function onDblClick(e) {
+    if (!ed.active) return;
+    const anEl = e.target.closest(".an-text");
+    if (!anEl) return;
+    const layer = e.target.closest(".annot-layer");
+    const i = +layer.dataset.index;
+    const a = findAnnot(+anEl.dataset.id).a;
+    openTextEditor(layer, i, { x: a.x, y: a.y }, a);
+  }
+
+  // ---- text editor (inline textarea; Electron has no window.prompt) --------
+
+  function openTextEditor(layer, i, p, existing) {
+    const ta = document.createElement("textarea");
+    ta.className = "annot-text-edit";
+    const fs = existing ? existing.fontSize : ed.fontSize;
+    ta.style.left = p.x * state.scale + "px";
+    ta.style.top = p.y * state.scale + "px";
+    ta.style.fontSize = fs * state.scale + "px";
+    ta.style.color = existing ? existing.color : ed.color;
+    ta.value = existing ? existing.text : "";
+    layer.appendChild(ta);
+    ta.focus();
+
+    let done = false;
+    const commit = () => {
+      if (done) return;
+      done = true;
+      const text = ta.value.replace(/\s+$/, "");
+      ta.remove();
+      if (existing) {
+        if (text) {
+          existing.text = text;
+          const m = measureText(text, existing.fontSize);
+          existing.w = m.w;
+          existing.h = m.h;
+        }
+      } else if (text) {
+        const m = measureText(text, ed.fontSize);
+        annotsFor(i).push({
+          id: ed.seq++,
+          kind: "text",
+          x: p.x,
+          y: p.y,
+          w: m.w,
+          h: m.h,
+          text,
+          fontSize: ed.fontSize,
+          color: ed.color,
+        });
+      }
+      renderLayer(layer, i);
+    };
+    ta.addEventListener("blur", commit);
+    ta.addEventListener("keydown", (e) => {
+      e.stopPropagation();
+      if (e.key === "Escape") {
+        done = true;
+        ta.remove();
+      } else if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+        commit();
+      }
+    });
+  }
+
+  // ---- image placement -----------------------------------------------------
+
+  function chooseImage() {
+    const inp = $("ed-file");
+    inp.value = "";
+    inp.onchange = () => {
+      const f = inp.files && inp.files[0];
+      if (!f) return;
+      const reader = new FileReader();
+      reader.onload = () => {
+        ed.pendingImage = { dataUrl: reader.result, mime: f.type };
+        toast("Đã chọn ảnh — bấm lên trang để đặt.", "good");
+      };
+      reader.readAsDataURL(f);
+    };
+    inp.click();
+  }
+
+  function placeImage(i, p) {
+    const img = new Image();
+    img.onload = () => {
+      const maxW = 240; // points
+      const ratio = img.naturalHeight / img.naturalWidth || 1;
+      const w = Math.min(img.naturalWidth, maxW);
+      const a = {
+        id: ed.seq++,
+        kind: "image",
+        x: p.x,
+        y: p.y,
+        w,
+        h: w * ratio,
+        dataUrl: ed.pendingImage.dataUrl,
+        mime: ed.pendingImage.mime,
+      };
+      annotsFor(i).push(a);
+      ed.sel = a.id;
+      setTool("select");
+      syncOverlays();
+    };
+    img.src = ed.pendingImage.dataUrl;
+  }
+
+  // ---- PNG rasterisation for baking ---------------------------------------
+
+  function renderTextPng(text, fontSizePt, colorHex) {
+    const RS = 3; // supersample for crisp text
+    const lines = (text || "").split("\n");
+    const ctx = measureCtx();
+    const fpx = fontSizePt * RS;
+    ctx.font = textFont(fpx);
+    let maxW = 1;
+    for (const ln of lines) maxW = Math.max(maxW, ctx.measureText(ln || " ").width);
+    const lh = fpx * 1.3;
+    const pad = Math.ceil(fpx * 0.15);
+    const cw = Math.ceil(maxW) + pad * 2;
+    const chh = Math.ceil(lh * lines.length) + pad * 2;
+    const c = document.createElement("canvas");
+    c.width = cw;
+    c.height = chh;
+    const cx = c.getContext("2d");
+    cx.font = textFont(fpx);
+    cx.fillStyle = colorHex;
+    cx.textBaseline = "top";
+    lines.forEach((ln, k) => cx.fillText(ln, pad, pad + k * lh));
+    return { bytes: dataUrlToBytes(c.toDataURL("image/png")), wPt: cw / RS, hPt: chh / RS };
+  }
+
+  function renderWatermarkPng(wm) {
+    const RS = 2;
+    const ctx = measureCtx();
+    const fpx = wm.size * RS;
+    ctx.font = textFont(fpx);
+    const tw = Math.max(1, ctx.measureText(wm.text || " ").width);
+    const th = fpx * 1.25;
+    const ang = (-wm.angle * Math.PI) / 180;
+    const cos = Math.abs(Math.cos(ang));
+    const sin = Math.abs(Math.sin(ang));
+    const bw = Math.ceil(tw * cos + th * sin) + 4;
+    const bh = Math.ceil(tw * sin + th * cos) + 4;
+    const c = document.createElement("canvas");
+    c.width = bw;
+    c.height = bh;
+    const cx = c.getContext("2d");
+    cx.translate(bw / 2, bh / 2);
+    cx.rotate(ang);
+    cx.font = textFont(fpx);
+    cx.fillStyle = wm.color;
+    cx.textAlign = "center";
+    cx.textBaseline = "middle";
+    cx.fillText(wm.text, 0, 0);
+    return { bytes: dataUrlToBytes(c.toDataURL("image/png")), wPt: bw / RS, hPt: bh / RS };
+  }
+
+  async function rasterRedacted(i, redacts, vp1) {
+    const page = await state.pdf.getPage(i + 1);
+    const RS = 2; // ~144 dpi
+    const vp = page.getViewport({ scale: RS });
+    const c = document.createElement("canvas");
+    c.width = Math.floor(vp.width);
+    c.height = Math.floor(vp.height);
+    const cx = c.getContext("2d");
+    await page.render({ canvasContext: cx, viewport: vp }).promise;
+    cx.fillStyle = "#000";
+    for (const r of redacts) cx.fillRect(r.x * RS, r.y * RS, r.w * RS, r.h * RS);
+    return dataUrlToBytes(c.toDataURL("image/png"));
+  }
+
+  // ---- baking --------------------------------------------------------------
+
+  function makeMap(vp1, mode) {
+    if (mode === "image") return (x, y) => [x, vp1.height - y];
+    return (x, y) => {
+      const r = vp1.convertToPdfPoint(x, y);
+      return [r[0], r[1]];
+    };
+  }
+
+  async function drawAnnots(doc, page, anns, vp1, mode) {
+    const map = makeMap(vp1, mode);
+    for (const a of anns) {
+      if (a.kind === "highlight") {
+        const [x1, y1] = map(a.x, a.y);
+        const [x2, y2] = map(a.x + a.w, a.y + a.h);
+        page.drawRectangle({
+          x: Math.min(x1, x2),
+          y: Math.min(y1, y2),
+          width: Math.abs(x2 - x1),
+          height: Math.abs(y2 - y1),
+          color: hexRgb(a.color),
+          opacity: 0.35,
+        });
+      } else if (a.kind === "draw") {
+        const c = hexRgb(a.color);
+        for (let k = 1; k < a.pts.length; k++) {
+          const [sx, sy] = map(a.pts[k - 1].x, a.pts[k - 1].y);
+          const [ex, ey] = map(a.pts[k].x, a.pts[k].y);
+          page.drawLine({ start: { x: sx, y: sy }, end: { x: ex, y: ey }, thickness: a.width, color: c });
+        }
+      } else if (a.kind === "text") {
+        const { bytes, wPt, hPt } = renderTextPng(a.text, a.fontSize, a.color);
+        const img = await doc.embedPng(bytes);
+        // The PNG carries ~0.15em padding; offset so the glyphs line up with
+        // where the overlay (zero-padding) showed them.
+        const padPt = a.fontSize * 0.15;
+        const [bx, by] = map(a.x - padPt, a.y - padPt + hPt);
+        page.drawImage(img, { x: bx, y: by, width: wPt, height: hPt });
+      } else if (a.kind === "image") {
+        const bytes = dataUrlToBytes(a.dataUrl);
+        const img = a.mime === "image/png" ? await doc.embedPng(bytes) : await doc.embedJpg(bytes);
+        const [bx, by] = map(a.x, a.y + a.h);
+        page.drawImage(img, { x: bx, y: by, width: a.w, height: a.h });
+      }
+    }
+  }
+
+  async function drawWatermark(doc, page, vp1, mode) {
+    const { bytes, wPt, hPt } = renderWatermarkPng(ed.watermark);
+    const img = await doc.embedPng(bytes);
+    const map = makeMap(vp1, mode);
+    const cx = (vp1.width - wPt) / 2;
+    const cy = (vp1.height - hPt) / 2;
+    const [bx, by] = map(cx, cy + hPt);
+    page.drawImage(img, { x: bx, y: by, width: wPt, height: hPt, opacity: ed.watermark.opacity });
+  }
+
+  async function bakeInPlace() {
+    const doc = await PDFDocument.load(state.bytes);
+    const pages = doc.getPages();
+    for (let i = 0; i < pages.length; i++) {
+      const anns = annotsFor(i);
+      if (!anns.length && !ed.watermark) continue;
+      const vp1 = (await state.pdf.getPage(i + 1)).getViewport({ scale: 1 });
+      await drawAnnots(doc, pages[i], anns, vp1, "orig");
+      if (ed.watermark) await drawWatermark(doc, pages[i], vp1, "orig");
+    }
+    return await doc.save();
+  }
+
+  async function bakeWithRedaction() {
+    const src = await PDFDocument.load(state.bytes);
+    const out = await PDFDocument.create();
+    const n = state.numPages;
+    for (let i = 0; i < n; i++) {
+      const anns = annotsFor(i);
+      const redacts = anns.filter((a) => a.kind === "redact");
+      const others = anns.filter((a) => a.kind !== "redact");
+      const vp1 = (await state.pdf.getPage(i + 1)).getViewport({ scale: 1 });
+      let page;
+      let mode;
+      if (redacts.length) {
+        const png = await rasterRedacted(i, redacts, vp1);
+        const img = await out.embedPng(png);
+        page = out.addPage([vp1.width, vp1.height]);
+        page.drawImage(img, { x: 0, y: 0, width: vp1.width, height: vp1.height });
+        mode = "image";
+      } else {
+        const [cp] = await out.copyPages(src, [i]);
+        out.addPage(cp);
+        page = cp;
+        mode = "orig";
+      }
+      if (others.length) await drawAnnots(out, page, others, vp1, mode);
+      if (ed.watermark) await drawWatermark(out, page, vp1, mode);
+    }
+    return await out.save();
+  }
+
+  // Bake all pending overlay edits into state.bytes and re-render. Returns
+  // whether anything was applied. Called by Save and on exit.
+  async function bakePending() {
+    if (!hasAny()) return false;
+    showOverlay("Đang áp dụng chỉnh sửa…");
+    try {
+      const anyRedact = Object.values(ed.annots).some((a) => a.some((x) => x.kind === "redact"));
+      const bytes = anyRedact ? await bakeWithRedaction() : await bakeInPlace();
+      state.bytes = bytes;
+      ed.annots = {};
+      ed.watermark = null;
+      ed.sel = null;
+      await renderAll();
+      toast("Đã áp dụng chỉnh sửa.", "good");
+      return true;
+    } catch (err) {
+      toast("Lỗi áp dụng: " + (err.message || err), "bad");
+      throw err;
+    } finally {
+      hideOverlay();
+    }
+  }
+
+  // ---- watermark dialog ----------------------------------------------------
+
+  function openWatermark() {
+    $("wm-modal").hidden = false;
+  }
+  function applyWatermark() {
+    const text = $("wm-text").value.trim();
+    if (!text) {
+      toast("Nhập nội dung watermark.", "bad");
+      return;
+    }
+    ed.watermark = {
+      text,
+      size: Math.max(8, +$("wm-size").value || 56),
+      angle: +$("wm-angle").value || 0,
+      opacity: Math.min(1, Math.max(0.05, +$("wm-opacity").value || 0.22)),
+      color: $("wm-color").value || "#888888",
+    };
+    $("wm-modal").hidden = true;
+    syncOverlays();
+    toast("Đã thêm watermark — bấm Áp dụng để ghi vào PDF.", "good");
+  }
+
+  // ---- form fill -----------------------------------------------------------
+
+  async function openForm() {
+    showOverlay("Đang đọc biểu mẫu…");
+    let doc;
+    let fields;
+    try {
+      doc = await PDFDocument.load(state.bytes);
+      fields = doc.getForm().getFields();
+    } catch (e) {
+      hideOverlay();
+      toast("Không đọc được biểu mẫu: " + e.message, "bad");
+      return;
+    }
+    hideOverlay();
+    if (!fields.length) {
+      toast("PDF này không có trường biểu mẫu (AcroForm).", "bad");
+      return;
+    }
+    ed._formDoc = doc;
+    buildFormUI(fields);
+    $("form-modal").hidden = false;
+  }
+
+  function buildFormUI(fields) {
+    const box = $("form-fields");
+    box.innerHTML = "";
+    ed._form = [];
+    for (const f of fields) {
+      const row = document.createElement("div");
+      row.className = "form-row";
+      const lab = document.createElement("label");
+      lab.textContent = f.getName();
+      let input;
+      let kind;
+      if (f instanceof PDFLib.PDFTextField) {
+        kind = "text";
+        input = document.createElement("input");
+        input.type = "text";
+        try {
+          input.value = f.getText() || "";
+        } catch (_) {}
+      } else if (f instanceof PDFLib.PDFCheckBox) {
+        kind = "check";
+        input = document.createElement("input");
+        input.type = "checkbox";
+        input.checked = f.isChecked();
+      } else if (f instanceof PDFLib.PDFDropdown) {
+        kind = "dropdown";
+        input = makeSelect(f.getOptions(), (f.getSelected() || [])[0]);
+      } else if (f instanceof PDFLib.PDFRadioGroup) {
+        kind = "radio";
+        input = makeSelect(f.getOptions(), f.getSelected(), true);
+      } else {
+        kind = "skip";
+        input = document.createElement("input");
+        input.type = "text";
+        input.disabled = true;
+        input.placeholder = "(loại trường không hỗ trợ)";
+      }
+      row.appendChild(lab);
+      row.appendChild(input);
+      box.appendChild(row);
+      ed._form.push({ f, kind, input });
+    }
+  }
+  function makeSelect(options, selected, blank) {
+    const sel = document.createElement("select");
+    if (blank) {
+      const o = document.createElement("option");
+      o.value = "";
+      o.textContent = "—";
+      sel.appendChild(o);
+    }
+    for (const opt of options) {
+      const o = document.createElement("option");
+      o.value = o.textContent = opt;
+      sel.appendChild(o);
+    }
+    if (selected) sel.value = selected;
+    return sel;
+  }
+
+  async function applyForm() {
+    showOverlay("Đang điền biểu mẫu…");
+    try {
+      for (const { f, kind, input } of ed._form) {
+        if (kind === "text") f.setText(input.value);
+        else if (kind === "check") input.checked ? f.check() : f.uncheck();
+        else if (kind === "dropdown" && input.value) f.select(input.value);
+        else if (kind === "radio" && input.value) f.select(input.value);
+      }
+      if ($("form-flatten").checked) ed._formDoc.getForm().flatten();
+      state.bytes = await ed._formDoc.save();
+      ed._form = null;
+      ed._formDoc = null;
+      $("form-modal").hidden = true;
+      await renderAll();
+      toast("Đã điền biểu mẫu.", "good");
+    } catch (e) {
+      toast("Lỗi điền biểu mẫu: " + e.message, "bad");
+    } finally {
+      hideOverlay();
+    }
+  }
+
+  // ---- mode + palette wiring ----------------------------------------------
+
+  function setTool(tool) {
+    ed.tool = tool;
+    document.querySelectorAll("#ed-tools .tool").forEach((b) => b.classList.toggle("active", b.dataset.tool === tool));
+    const hints = {
+      select: "Kéo để di chuyển; góc để đổi cỡ; Delete để xoá.",
+      text: "Bấm lên trang để thêm hộp văn bản (Ctrl+Enter để xong).",
+      highlight: "Kéo để tô sáng vùng.",
+      draw: "Giữ chuột và kéo để vẽ.",
+      image: "Bấm lên trang để đặt ảnh đã chọn.",
+      redact: "Kéo để che — nội dung gốc sẽ bị xoá khi áp dụng.",
+    };
+    $("ed-hint").textContent = hints[tool] || "";
+  }
+
+  function enter() {
+    if (!state.bytes) return;
+    ed.active = true;
+    $("edit-bar").hidden = false;
+    $("btn-edit").classList.add("active");
+    setTool("select");
+    updateToolbar();
+    syncOverlays();
+  }
+  async function exit() {
+    if (hasAny()) await bakePending();
+    ed.active = false;
+    ed.sel = null;
+    $("edit-bar").hidden = true;
+    $("btn-edit").classList.remove("active");
+    updateToolbar();
+    syncOverlays();
+  }
+
+  function reset() {
+    ed.annots = {};
+    ed.watermark = null;
+    ed.sel = null;
+    ed.pendingImage = null;
+  }
+
+  // ---- listeners -----------------------------------------------------------
+
+  const viewer = $("viewer");
+  viewer.addEventListener("mousedown", onDown);
+  window.addEventListener("mousemove", onMove);
+  window.addEventListener("mouseup", onUp);
+  viewer.addEventListener("dblclick", onDblClick);
+
+  $("btn-edit").onclick = () => (ed.active ? exit() : enter());
+  $("ed-exit").onclick = exit;
+  $("ed-apply").onclick = bakePending;
+  $("ed-delete").onclick = deleteSelected;
+  $("ed-watermark").onclick = openWatermark;
+  $("ed-form").onclick = openForm;
+
+  document.querySelectorAll("#ed-tools .tool").forEach((b) => {
+    b.onclick = () => {
+      const t = b.dataset.tool;
+      setTool(t);
+      if (t === "image") chooseImage();
+    };
+  });
+
+  $("ed-color").oninput = (e) => {
+    ed.color = e.target.value;
+    if (ed.sel != null) {
+      const hit = findAnnot(ed.sel);
+      if (hit && hit.a.color !== undefined) {
+        hit.a.color = ed.color;
+        syncOverlays();
+      }
+    }
+  };
+  $("ed-fontsize").oninput = (e) => {
+    ed.fontSize = Math.max(6, +e.target.value || 16);
+    if (ed.sel != null) {
+      const hit = findAnnot(ed.sel);
+      if (hit && hit.a.kind === "text") {
+        hit.a.fontSize = ed.fontSize;
+        const m = measureText(hit.a.text, ed.fontSize);
+        hit.a.w = m.w;
+        hit.a.h = m.h;
+        syncOverlays();
+      }
+    }
+  };
+  $("ed-penwidth").oninput = (e) => {
+    ed.penWidth = Math.max(1, +e.target.value || 2);
+    if (ed.sel != null) {
+      const hit = findAnnot(ed.sel);
+      if (hit && hit.a.kind === "draw") {
+        hit.a.width = ed.penWidth;
+        syncOverlays();
+      }
+    }
+  };
+
+  $("wm-cancel").onclick = () => ($("wm-modal").hidden = true);
+  $("wm-ok").onclick = applyWatermark;
+  $("form-cancel").onclick = () => {
+    ed._form = null;
+    ed._formDoc = null;
+    $("form-modal").hidden = true;
+  };
+  $("form-ok").onclick = applyForm;
+
+  window.addEventListener("keydown", (e) => {
+    if (!ed.active) return;
+    const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement && document.activeElement.tagName);
+    if ((e.key === "Delete" || e.key === "Backspace") && !typing && ed.sel != null) {
+      e.preventDefault();
+      deleteSelected();
+    }
+  });
+
+  // ---- public surface (consumed by app.js) ---------------------------------
+
+  window.Editor = {
+    get active() {
+      return ed.active;
+    },
+    syncOverlays,
+    bakePending,
+    reset,
+  };
+})();

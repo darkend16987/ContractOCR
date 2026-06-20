@@ -348,6 +348,234 @@ async def export(req: ExportRequest):
     )
 
 
+# Cache the resolved Unicode font path (Vietnamese-capable) across requests.
+_FONT_PATH: str | None = None
+
+
+def _vietnamese_font() -> str | None:
+    """Find a TTF that covers Vietnamese diacritics for the invisible text layer.
+
+    Prefers DejaVu Sans (full Vietnamese coverage), which ships with matplotlib —
+    already a transitive dependency. P5 packaging should bundle this TTF explicitly.
+    """
+    global _FONT_PATH
+    if _FONT_PATH is not None:
+        return _FONT_PATH or None
+    candidates: list[str] = []
+    try:
+        # NB: use the data path (a real str), not font_manager.findfont(), which
+        # returns a FontPath object that PyMuPDF rejects as "bad fontfile".
+        import matplotlib
+        candidates.append(str(Path(matplotlib.get_data_path()) / "fonts" / "ttf" / "DejaVuSans.ttf"))
+    except Exception:  # pragma: no cover - matplotlib always present via deps
+        pass
+    try:
+        for site in __import__("site").getsitepackages():
+            candidates.append(str(Path(site) / "imgaug" / "DejaVuSans.ttf"))
+    except Exception:
+        pass
+    for c in candidates:
+        if c and Path(c).is_file():
+            _FONT_PATH = c
+            return c
+    _FONT_PATH = ""  # cache "not found" to avoid re-searching
+    return None
+
+
+class SearchableRequest(BaseModel):
+    """Request body for building a searchable PDF (invisible OCR text layer)."""
+    pdf_b64: str  # the source PDF, base64 (no data URL prefix)
+    dpi: int = 200  # rasterisation DPI for OCR
+
+
+class SearchableResponse(BaseModel):
+    success: bool
+    filename: str = ""
+    data_b64: str = ""
+    pages: int = 0
+    words: int = 0
+    error: str | None = None
+
+
+@app.post("/searchable", response_model=SearchableResponse)
+async def searchable(req: SearchableRequest):
+    """OCR a (scanned) PDF and return a copy with a selectable, invisible text layer.
+
+    The original page content is preserved; OCR text is laid over each word's box
+    with render mode 3 (invisible) so the output looks identical but is searchable.
+    """
+    if not ocr_engine:
+        raise HTTPException(status_code=503, detail="OCR engine not loaded")
+
+    try:
+        import fitz  # PyMuPDF
+    except ImportError:
+        raise HTTPException(status_code=503, detail="PyMuPDF (fitz) chưa cài — không tạo được searchable PDF.")
+
+    font_path = _vietnamese_font()
+    if not font_path:
+        raise HTTPException(status_code=503, detail="Không tìm thấy font Unicode (DejaVu Sans) để nhúng lớp text.")
+
+    try:
+        pdf_bytes = base64.b64decode(req.pdf_b64)
+    except Exception:
+        raise HTTPException(status_code=400, detail="pdf_b64 không hợp lệ")
+
+    dpi = max(72, min(400, req.dpi))
+    scale = 72.0 / dpi  # pixmap pixel -> PDF point
+
+    try:
+        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Không mở được PDF: {e}")
+
+    if doc.page_count > 100:
+        doc.close()
+        raise HTTPException(status_code=400, detail="PDF quá nhiều trang (tối đa 100).")
+
+    total_words = 0
+    try:
+        for page in doc:
+            page.insert_font(fontname="vnocr", fontfile=font_path)
+            pix = page.get_pixmap(dpi=dpi, alpha=False)
+            image = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
+            try:
+                boxes = ocr_engine.recognize_boxes(image)
+            except NotImplementedError:
+                doc.close()
+                raise HTTPException(status_code=503, detail="Engine OCR hiện tại không hỗ trợ định vị (cần Hybrid/Paddle).")
+
+            for text, (x0, y0, x1, y1) in boxes:
+                t = (text or "").strip()
+                if not t:
+                    continue
+                # Box in PDF points; baseline near the box bottom.
+                bx0, by1 = x0 * scale, y1 * scale
+                box_h = (y1 - y0) * scale
+                fontsize = max(2.0, box_h * 0.8)
+                try:
+                    page.insert_text(
+                        (bx0, by1 - box_h * 0.15),
+                        t,
+                        fontname="vnocr",
+                        fontsize=fontsize,
+                        render_mode=3,  # invisible
+                    )
+                    total_words += 1
+                except Exception as e:
+                    logger.debug("skip text box: %s", e)
+
+        out_bytes = doc.tobytes(deflate=True, garbage=3)
+        page_count = doc.page_count
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Searchable PDF error")
+        return SearchableResponse(success=False, error=str(e))
+    finally:
+        doc.close()
+
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    return SearchableResponse(
+        success=True,
+        filename=f"searchable_{ts}.pdf",
+        data_b64=base64.b64encode(out_bytes).decode("ascii"),
+        pages=page_count,
+        words=total_words,
+    )
+
+
+class CompressRequest(BaseModel):
+    """Request body for PDF compression."""
+    pdf_b64: str  # source PDF, base64 (no data URL prefix)
+    preset: str = "ebook"  # screen | ebook | printer | lossless
+
+
+class CompressResponse(BaseModel):
+    success: bool
+    filename: str = ""
+    data_b64: str = ""
+    original_size: int = 0
+    compressed_size: int = 0
+    error: str | None = None
+
+
+# Image downsample/recompress targets per preset (PyMuPDF rewrite_images).
+# "lossless" skips image rewriting (only deflate + garbage-collect + font subset).
+_COMPRESS_PRESETS = {
+    "screen": dict(dpi_threshold=110, dpi_target=96, quality=45),
+    "ebook": dict(dpi_threshold=170, dpi_target=150, quality=65),
+    "printer": dict(dpi_threshold=320, dpi_target=300, quality=85),
+}
+
+
+@app.post("/compress", response_model=CompressResponse)
+async def compress(req: CompressRequest):
+    """Shrink a PDF: downsample/recompress high-DPI images + strip redundant objects.
+
+    Native (no Ghostscript binary) — uses PyMuPDF. Text and vector content are
+    preserved; only over-sized embedded images are reduced (per preset). "lossless"
+    leaves images untouched and just garbage-collects/deflates the file.
+    """
+    try:
+        import fitz  # PyMuPDF
+    except ImportError:
+        raise HTTPException(status_code=503, detail="PyMuPDF (fitz) chưa cài — không nén được.")
+
+    if req.preset != "lossless" and req.preset not in _COMPRESS_PRESETS:
+        raise HTTPException(status_code=400, detail="preset phải là screen|ebook|printer|lossless")
+
+    try:
+        pdf_bytes = base64.b64decode(req.pdf_b64)
+    except Exception:
+        raise HTTPException(status_code=400, detail="pdf_b64 không hợp lệ")
+
+    try:
+        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Không mở được PDF: {e}")
+
+    if doc.page_count > 500:
+        doc.close()
+        raise HTTPException(status_code=400, detail="PDF quá nhiều trang (tối đa 500).")
+
+    try:
+        if req.preset != "lossless":
+            p = _COMPRESS_PRESETS[req.preset]
+            doc.rewrite_images(
+                dpi_threshold=p["dpi_threshold"],
+                dpi_target=p["dpi_target"],
+                quality=p["quality"],
+                lossy=True,
+                lossless=True,
+            )
+        try:
+            doc.subset_fonts()
+        except Exception as e:  # font subsetting is best-effort
+            logger.debug("subset_fonts skipped: %s", e)
+        out_bytes = doc.tobytes(
+            deflate=True, garbage=4, clean=True, deflate_images=True, deflate_fonts=True
+        )
+    except Exception as e:
+        logger.exception("Compress error")
+        return CompressResponse(success=False, error=str(e))
+    finally:
+        doc.close()
+
+    # If compression somehow grew the file, hand back the original instead.
+    if len(out_bytes) >= len(pdf_bytes):
+        out_bytes = pdf_bytes
+
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    return CompressResponse(
+        success=True,
+        filename=f"compressed_{ts}.pdf",
+        data_b64=base64.b64encode(out_bytes).decode("ascii"),
+        original_size=len(pdf_bytes),
+        compressed_size=len(out_bytes),
+    )
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)

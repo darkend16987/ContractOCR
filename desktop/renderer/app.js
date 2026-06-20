@@ -68,6 +68,7 @@ async function loadBytes(bytes, name) {
   if (name) state.name = name;
   state.selected.clear();
   state.lastClicked = null;
+  if (window.Editor) window.Editor.reset(); // drop annotations from any previous doc
   await renderAll();
   toast("Đã mở: " + state.name, "good");
 }
@@ -166,6 +167,8 @@ async function renderViewer() {
     wrap.appendChild(canvas);
     v.appendChild(wrap);
   }
+  // Let the overlay editor (P4) re-attach its annotation layers, if loaded.
+  if (window.Editor) window.Editor.syncOverlays();
 }
 
 function scrollToPage(i) {
@@ -365,6 +368,8 @@ async function extractSelected() {
 
 async function saveDoc() {
   if (!state.bytes) return;
+  // Bake any unapplied overlay edits into the bytes first (P4).
+  if (window.Editor) await window.Editor.bakePending();
   const res = await window.desktop.savePdf(state.bytes, state.name);
   if (res.saved) toast("Đã lưu: " + res.path, "good");
 }
@@ -550,6 +555,104 @@ async function runExport(fmt) {
   }
 }
 
+// ---- searchable PDF (sidecar; P3) ----------------------------------------
+
+// Encode a Uint8Array to base64 without blowing the call stack on big PDFs.
+function u8ToB64(u8) {
+  let s = "";
+  const chunk = 0x8000;
+  for (let i = 0; i < u8.length; i += chunk) {
+    s += String.fromCharCode.apply(null, u8.subarray(i, i + chunk));
+  }
+  return btoa(s);
+}
+
+async function makeSearchable() {
+  if (sidecar.state !== "ready" || !sidecar.base) {
+    toast("Engine OCR chưa sẵn sàng.", "bad");
+    return;
+  }
+  if (!state.bytes) {
+    toast("Mở PDF trước.", "bad");
+    return;
+  }
+  if (window.Editor) await window.Editor.bakePending();
+  showOverlay("Đang OCR tạo lớp text tìm kiếm… (tài liệu nhiều trang sẽ lâu)");
+  try {
+    const res = await fetch(sidecar.base + "/searchable", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ pdf_b64: u8ToB64(state.bytes) }),
+    });
+    const data = await res.json();
+    if (!data.success) {
+      toast("Tạo searchable lỗi: " + (data.error || data.detail || "không rõ"), "bad");
+      return;
+    }
+    const bytes = Uint8Array.from(atob(data.data_b64), (ch) => ch.charCodeAt(0));
+    const name = `${baseName(state.name)}-searchable.pdf`;
+    const r = await window.desktop.savePdf(bytes, name);
+    if (r.saved) toast(`Đã lưu PDF tìm-kiếm-được (${data.words} cụm text): ` + r.path, "good");
+  } catch (err) {
+    toast("Lỗi tạo searchable: " + err.message, "bad");
+  } finally {
+    hideOverlay();
+  }
+}
+
+// ---- compress PDF (sidecar; P3) ------------------------------------------
+
+function fmtBytes(n) {
+  if (n < 1024) return n + " B";
+  if (n < 1024 * 1024) return (n / 1024).toFixed(0) + " KB";
+  return (n / 1024 / 1024).toFixed(2) + " MB";
+}
+
+function openCompress() {
+  if (sidecar.state !== "ready" || !sidecar.base) {
+    toast("Engine chưa sẵn sàng.", "bad");
+    return;
+  }
+  if (!state.bytes) {
+    toast("Mở PDF trước.", "bad");
+    return;
+  }
+  $("cmp-modal").hidden = false;
+}
+
+async function runCompress() {
+  $("cmp-modal").hidden = true;
+  if (window.Editor) await window.Editor.bakePending();
+  const preset = $("cmp-preset").value || "ebook";
+  showOverlay("Đang nén PDF…");
+  try {
+    const res = await fetch(sidecar.base + "/compress", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ pdf_b64: u8ToB64(state.bytes), preset }),
+    });
+    const data = await res.json();
+    if (!data.success) {
+      toast("Nén lỗi: " + (data.error || data.detail || "không rõ"), "bad");
+      return;
+    }
+    const pct = data.original_size
+      ? Math.round((100 * data.compressed_size) / data.original_size)
+      : 100;
+    const bytes = Uint8Array.from(atob(data.data_b64), (ch) => ch.charCodeAt(0));
+    const name = `${baseName(state.name)}-nen.pdf`;
+    const r = await window.desktop.savePdf(bytes, name);
+    if (r.saved) {
+      const msg = `Đã nén: ${fmtBytes(data.original_size)} → ${fmtBytes(data.compressed_size)} (${pct}%)`;
+      toast(pct >= 100 ? "Không giảm thêm được — đã lưu bản gốc tối ưu." : msg, "good");
+    }
+  } catch (err) {
+    toast("Lỗi nén: " + err.message, "bad");
+  } finally {
+    hideOverlay();
+  }
+}
+
 // ---- sidecar status ------------------------------------------------------
 
 function applySidecar(s) {
@@ -568,10 +671,21 @@ function applySidecar(s) {
 
 function updateToolbar() {
   const has = !!state.bytes && state.numPages > 0;
+  // While editing (P4), page-structure ops are locked to keep page indices
+  // stable under the annotation overlay; Save/zoom stay available.
+  const editing = !!(window.Editor && window.Editor.active);
   $("btn-save").disabled = !has;
-  document.querySelectorAll("[data-needs-doc] button").forEach((b) => (b.disabled = !has));
-  $("btn-select-all").disabled = !has;
-  $("btn-ocr").disabled = !(sidecar.state === "ready" && has);
+  document
+    .querySelectorAll("[data-needs-doc] button")
+    .forEach((b) => (b.disabled = !has || editing));
+  $("btn-select-all").disabled = !has || editing;
+  $("btn-ocr").disabled = !(sidecar.state === "ready" && has) || editing;
+  const bs = $("btn-searchable");
+  if (bs) bs.disabled = !(sidecar.state === "ready" && has) || editing;
+  const bc = $("btn-compress");
+  if (bc) bc.disabled = !(sidecar.state === "ready" && has) || editing;
+  const be = $("btn-edit");
+  if (be) be.disabled = !has;
   $("zoom-label").textContent = Math.round(state.scale * 100) + "%";
 }
 
@@ -594,6 +708,10 @@ $("btn-delete").onclick = deleteSelected;
 $("btn-zoom-in").onclick = () => zoom(0.2);
 $("btn-zoom-out").onclick = () => zoom(-0.2);
 $("btn-ocr").onclick = openExtractPanel;
+$("btn-searchable").onclick = makeSearchable;
+$("btn-compress").onclick = openCompress;
+$("cmp-cancel").onclick = () => ($("cmp-modal").hidden = true);
+$("cmp-ok").onclick = runCompress;
 $("ext-close").onclick = () => ($("ext-panel").hidden = true);
 $("ext-run").onclick = runExtract;
 $("ext-export").addEventListener("click", (e) => {

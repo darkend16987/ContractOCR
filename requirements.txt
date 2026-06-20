@@ -13,6 +13,11 @@ Pillow>=10.0.0
 pdf2image>=1.16.0
 opencv-python-headless==4.10.0.84  # 4.10 = numpy-2 ABI compatible; matches paddlex's opencv pin
 
+# PDF (sidecar): searchable-PDF text layer in /searchable.
+# Font for the invisible text layer = DejaVuSans.ttf from matplotlib (a transitive
+# dep via paddlex/imgaug). P5 packaging must bundle this TTF explicitly.
+pymupdf>=1.24.0
+
 # AI Agent - Gemini (new unified SDK)
 google-genai>=1.0.0
 
