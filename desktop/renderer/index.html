@@ -40,7 +40,7 @@
 
       <div class="spacer"></div>
 
-      <button id="btn-ocr" class="ghost" disabled title="OCR trang hiện tại">OCR</button>
+      <button id="btn-ocr" class="ghost" disabled title="OCR + bóc tách field bằng AI">Bóc tách</button>
       <span id="sidecar-badge" class="badge starting" title="Trạng thái engine OCR">OCR: …</span>
     </header>
 
@@ -63,12 +63,35 @@
       </section>
     </main>
 
-    <div class="ocr-panel" id="ocr-panel" hidden>
-      <div class="ocr-head">
-        <b>Kết quả OCR</b>
-        <button id="ocr-close" class="link">Đóng</button>
+    <div class="ext-panel" id="ext-panel" hidden>
+      <div class="ext-head">
+        <b>Bóc tách hợp đồng</b>
+        <button id="ext-close" class="link">Đóng</button>
       </div>
-      <pre id="ocr-out"></pre>
+      <div class="ext-controls">
+        <label>Mẫu trường
+          <select id="ext-template"></select>
+        </label>
+        <label>Phạm vi
+          <select id="ext-scope">
+            <option value="all">Tất cả trang</option>
+            <option value="selected">Trang đang chọn</option>
+          </select>
+        </label>
+        <button id="ext-run" class="primary">Bóc tách (OCR + AI)</button>
+      </div>
+      <div class="ext-class" id="ext-class"></div>
+      <div class="ext-fields" id="ext-fields"></div>
+      <div class="ext-export" id="ext-export" hidden>
+        <span>Xuất:</span>
+        <button data-fmt="excel">Excel</button>
+        <button data-fmt="csv">CSV</button>
+        <button data-fmt="json">JSON</button>
+      </div>
+      <details class="ext-raw">
+        <summary>Văn bản OCR thô</summary>
+        <pre id="ext-raw-out"></pre>
+      </details>
     </div>
 
     <div class="toast" id="toast" hidden></div>

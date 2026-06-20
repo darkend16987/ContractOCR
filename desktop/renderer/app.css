@@ -14,7 +14,7 @@
 
 * { box-sizing: border-box; }
 /* The `hidden` attribute must win over the `display:flex` rules below
-   (.overlay / .ocr-panel), otherwise they show at startup and block clicks. */
+   (.overlay / .ext-panel), otherwise they show at startup and block clicks. */
 [hidden] { display: none !important; }
 html, body { height: 100%; }
 body {
@@ -140,11 +140,11 @@ button.ghost { background: transparent; }
 .empty h2 { color: var(--fg); font-weight: 600; }
 .empty .hint { font-size: 13px; opacity: 0.8; }
 
-/* ---- ocr panel ---- */
-.ocr-panel {
+/* ---- extraction panel ---- */
+.ext-panel {
   position: fixed;
   right: 0; top: 49px; bottom: 0;
-  width: 380px;
+  width: 420px;
   background: var(--bg-2);
   border-left: 1px solid var(--line);
   display: flex;
@@ -152,8 +152,31 @@ button.ghost { background: transparent; }
   box-shadow: -8px 0 24px rgba(0,0,0,0.3);
   z-index: 20;
 }
-.ocr-head { padding: 10px 12px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--line); }
-.ocr-panel pre { flex: 1; margin: 0; padding: 14px; overflow: auto; white-space: pre-wrap; font-size: 13px; line-height: 1.5; }
+.ext-head { padding: 10px 12px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--line); }
+.ext-controls { padding: 12px; display: flex; flex-direction: column; gap: 10px; border-bottom: 1px solid var(--line); }
+.ext-controls label { font-size: 12px; color: var(--muted); display: flex; flex-direction: column; gap: 4px; }
+.ext-controls select {
+  font: inherit; font-size: 13px; padding: 7px 8px;
+  background: var(--bg-3); color: var(--fg);
+  border: 1px solid var(--bg-3); border-radius: 8px;
+}
+.ext-controls #ext-run { margin-top: 2px; }
+.ext-class { padding: 8px 12px; font-size: 12px; color: var(--accent); min-height: 0; }
+.ext-class:empty { display: none; }
+.ext-fields { flex: 1; overflow: auto; padding: 4px 12px 12px; display: flex; flex-direction: column; gap: 8px; }
+.ext-row { display: flex; flex-direction: column; gap: 3px; }
+.ext-row label { font-size: 11px; color: var(--muted); }
+.ext-row input {
+  font: inherit; font-size: 13px; padding: 6px 8px;
+  background: var(--bg); color: var(--fg);
+  border: 1px solid var(--line); border-radius: 6px;
+}
+.ext-row input:focus { outline: none; border-color: var(--accent); }
+.ext-export { padding: 10px 12px; display: flex; align-items: center; gap: 8px; border-top: 1px solid var(--line); font-size: 12px; color: var(--muted); }
+.ext-export button { padding: 6px 12px; }
+.ext-raw { border-top: 1px solid var(--line); }
+.ext-raw summary { padding: 8px 12px; cursor: pointer; font-size: 12px; color: var(--muted); }
+.ext-raw pre { margin: 0; padding: 12px; max-height: 180px; overflow: auto; white-space: pre-wrap; font-size: 12px; line-height: 1.5; }
 
 /* ---- toast + overlay ---- */
 .toast {

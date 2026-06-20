@@ -386,35 +386,165 @@ async function zoom(delta) {
   }
 }
 
-// ---- OCR (sidecar; P2 seed) ----------------------------------------------
+// ---- OCR + field extraction (sidecar; P2) --------------------------------
 
-async function runOcr() {
+let templatesLoaded = false;
+let lastLabels = {}; // field key -> header, from the last extraction
+
+// Rasterize the given page indices to base64 PNGs for the OCR backend.
+async function rasterize(indices, scale = 2) {
+  const imgs = [];
+  const nums = [];
+  for (const i of indices) {
+    const page = await state.pdf.getPage(i + 1);
+    const vp = page.getViewport({ scale });
+    const c = document.createElement("canvas");
+    c.width = Math.floor(vp.width);
+    c.height = Math.floor(vp.height);
+    await page.render({ canvasContext: c.getContext("2d"), viewport: vp }).promise;
+    imgs.push(c.toDataURL("image/png").split(",")[1]);
+    nums.push(i + 1);
+  }
+  return { imgs, nums };
+}
+
+async function loadTemplates() {
+  if (templatesLoaded || sidecar.state !== "ready" || !sidecar.base) return;
+  try {
+    const res = await fetch(sidecar.base + "/templates");
+    const data = await res.json();
+    const sel = $("ext-template");
+    sel.innerHTML = "";
+    (data.templates || []).forEach((t) => {
+      const o = document.createElement("option");
+      o.value = t.name;
+      o.textContent = t.label;
+      sel.appendChild(o);
+    });
+    templatesLoaded = true;
+  } catch (_) {
+    /* sidecar may not be ready; retry on next open */
+  }
+}
+
+function openExtractPanel() {
+  $("ext-panel").hidden = false;
+  loadTemplates();
+}
+
+async function runExtract() {
   if (sidecar.state !== "ready" || !sidecar.base) {
     toast("Engine OCR chưa sẵn sàng.", "bad");
     return;
   }
-  const i = state.selected.size ? Math.min(...state.selected) : 0;
-  showOverlay(`Đang OCR trang ${i + 1}…`);
+  if (!state.bytes) {
+    toast("Mở PDF trước.", "bad");
+    return;
+  }
+  const scope = $("ext-scope").value;
+  let indices;
+  if (scope === "selected") {
+    indices = [...state.selected].sort((a, b) => a - b);
+    if (!indices.length) {
+      toast("Chưa tick chọn trang nào.", "bad");
+      return;
+    }
+  } else {
+    indices = [...Array(state.numPages).keys()];
+  }
+  if (indices.length > 50) {
+    toast("Tối đa 50 trang mỗi lần bóc tách.", "bad");
+    return;
+  }
+  const template = $("ext-template").value || "default";
+  showOverlay(`Đang OCR + bóc tách ${indices.length} trang…`);
   try {
-    const page = await state.pdf.getPage(i + 1);
-    const vp = page.getViewport({ scale: 2 });
-    const canvas = document.createElement("canvas");
-    canvas.width = Math.floor(vp.width);
-    canvas.height = Math.floor(vp.height);
-    await page.render({ canvasContext: canvas.getContext("2d"), viewport: vp }).promise;
-    const b64 = canvas.toDataURL("image/png").split(",")[1];
-    const res = await fetch(sidecar.base + "/ocr", {
+    const { imgs, nums } = await rasterize(indices);
+    const res = await fetch(sidecar.base + "/extract", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ images: [b64], page_numbers: [i + 1] }),
+      body: JSON.stringify({ images: imgs, page_numbers: nums, template }),
     });
     const data = await res.json();
-    $("ocr-out").textContent = data.success
-      ? data.full_text || "(không trích được text)"
-      : "Lỗi: " + data.error;
-    $("ocr-panel").hidden = false;
+    if (!data.success) {
+      $("ext-raw-out").textContent = data.full_text || "";
+      toast("Bóc tách lỗi: " + data.error, "bad");
+      return;
+    }
+    renderExtract(data);
+    toast("Bóc tách xong.", "good");
   } catch (err) {
-    toast("OCR lỗi: " + err.message, "bad");
+    toast("Lỗi bóc tách: " + err.message, "bad");
+  } finally {
+    hideOverlay();
+  }
+}
+
+function renderExtract(data) {
+  lastLabels = data.field_labels || {};
+  const cl = data.classification || {};
+  $("ext-class").textContent = cl.loai_van_ban
+    ? `Loại: ${cl.loai_van_ban}${cl.do_tin_cay ? " · tin cậy: " + cl.do_tin_cay : ""}`
+    : "";
+
+  const box = $("ext-fields");
+  box.innerHTML = "";
+  const fields = data.fields || {};
+  const keys = [
+    ...Object.keys(lastLabels),
+    ...Object.keys(fields).filter((k) => !(k in lastLabels)),
+  ];
+  for (const k of keys) {
+    const row = document.createElement("div");
+    row.className = "ext-row";
+    const lab = document.createElement("label");
+    lab.textContent = lastLabels[k] || k;
+    const inp = document.createElement("input");
+    inp.type = "text";
+    inp.dataset.key = k;
+    const v = fields[k];
+    inp.value = v == null ? "" : String(v);
+    row.appendChild(lab);
+    row.appendChild(inp);
+    box.appendChild(row);
+  }
+  $("ext-raw-out").textContent = data.full_text || "";
+  $("ext-export").hidden = keys.length === 0;
+}
+
+async function runExport(fmt) {
+  const inputs = [...document.querySelectorAll("#ext-fields input")];
+  if (!inputs.length) {
+    toast("Chưa có dữ liệu để xuất.", "bad");
+    return;
+  }
+  const record = {};
+  inputs.forEach((i) => (record[i.dataset.key] = i.value));
+  showOverlay("Đang xuất…");
+  try {
+    const res = await fetch(sidecar.base + "/export", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        records: [record],
+        field_labels: lastLabels,
+        format: fmt,
+        source_file: state.name,
+      }),
+    });
+    const data = await res.json();
+    if (!data.success) {
+      toast("Xuất lỗi: " + data.error, "bad");
+      return;
+    }
+    const bytes = Uint8Array.from(atob(data.data_b64), (ch) => ch.charCodeAt(0));
+    const ext = fmt === "excel" ? "xlsx" : fmt;
+    const r = await window.desktop.saveFile(bytes, data.filename, [
+      { name: fmt.toUpperCase(), extensions: [ext] },
+    ]);
+    if (r.saved) toast("Đã lưu: " + r.path, "good");
+  } catch (err) {
+    toast("Lỗi xuất: " + err.message, "bad");
   } finally {
     hideOverlay();
   }
@@ -430,6 +560,7 @@ function applySidecar(s) {
   b.textContent =
     s.state === "ready" ? "OCR: sẵn sàng" : s.state === "error" ? "OCR: lỗi" : "OCR: đang tải…";
   b.title = s.state === "error" ? s.error || "" : "Trạng thái engine OCR";
+  if (s.state === "ready") loadTemplates();
   updateToolbar();
 }
 
@@ -462,8 +593,13 @@ $("btn-rotate-r").onclick = () => rotateSelected(90);
 $("btn-delete").onclick = deleteSelected;
 $("btn-zoom-in").onclick = () => zoom(0.2);
 $("btn-zoom-out").onclick = () => zoom(-0.2);
-$("btn-ocr").onclick = runOcr;
-$("ocr-close").onclick = () => ($("ocr-panel").hidden = true);
+$("btn-ocr").onclick = openExtractPanel;
+$("ext-close").onclick = () => ($("ext-panel").hidden = true);
+$("ext-run").onclick = runExtract;
+$("ext-export").addEventListener("click", (e) => {
+  const b = e.target.closest("button[data-fmt]");
+  if (b) runExport(b.dataset.fmt);
+});
 
 $("btn-select-all").onclick = () => {
   if (state.selected.size === state.numPages) {

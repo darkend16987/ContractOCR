@@ -20,4 +20,7 @@ contextBridge.exposeInMainWorld("desktop", {
   // data: Uint8Array | ArrayBuffer. Returns { saved, path? }.
   savePdf: (data, defaultName) =>
     ipcRenderer.invoke("dialog:save-pdf", { data, defaultName }),
+  // Generic save for exports. filters: [{ name, extensions: [...] }].
+  saveFile: (data, defaultName, filters) =>
+    ipcRenderer.invoke("dialog:save-file", { data, defaultName, filters }),
 });

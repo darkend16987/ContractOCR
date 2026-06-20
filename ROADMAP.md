@@ -55,12 +55,21 @@ Tài liệu canonical = `state.bytes` (Uint8Array); mỗi thao tác dựng lại
 - [ ] **T1.6** ▶️ **(bạn chạy GUI)** `cd desktop && pnpm start` — xác nhận viewer render + các thao tác trên file thật.
 - [ ] **T1.7** Refactor renderer sang module/React khi UI phình (hiện tại vanilla JS, đủ dùng).
 
-## Phase 2 — Tích hợp OCR (seed đã có)
+## Phase 2 — Tích hợp OCR (code xong, chờ test runtime)
 
-- [x] **T2.0** Nút OCR trong UI: rasterize trang hiện tại → POST `/ocr` sidecar → panel kết quả
-  (bật khi badge = ready). Mới ở mức 1 trang.
-- [ ] **T2.1** Upload PDF scan nhiều trang → chọn template field → bóc tách (gemini_agent) → panel.
-- [ ] **T2.2** Xuất kết quả bóc tách → Excel/CSV/JSON (nối `src/output/writer.py` đã có).
+Tận dụng backend sẵn có (OCR engine + gemini_agent + writers). Code xong cả backend + UI.
+**Test runtime cần venv Python 3.12 + deps + `GEMINI_API_KEY`** (máy hiện tại chưa có).
+
+- [x] **T2.0** Backend endpoints mới trong `api.py`:
+  - `GET /templates` → 5 mẫu field (default/mua_ban/lao_dong/dich_vu/generic).
+  - `POST /extract` → images→OCR từng trang→ghép text→Gemini classify+extract→record field.
+  - `POST /export` → records→xlsx/csv/json (writers cũ)→trả base64 cho app lưu.
+  - CORS mở `allow_methods=["*"]` (cần GET); Gemini agent tạo lazy (cần key).
+- [x] **T2.1** UI panel bóc tách: chọn mẫu field + phạm vi (tất cả/đang chọn) → rasterize trang →
+  `/extract` → bảng field **sửa được** + loại văn bản + text OCR thô (collapsible).
+- [x] **T2.2** Xuất: nút Excel/CSV/JSON → `/export` → lưu qua dialog native (IPC `dialog:save-file`).
+- [ ] **T2.3** ▶️ **(cần venv)** Test end-to-end: PDF scan thật → bóc field → xuất Excel mở được.
+- [ ] **T2.4** (tùy chọn) Bóc tách nhiều hợp đồng/1 lần → nhiều record → 1 Excel nhiều dòng.
 
 ## Ghi chú thực thi
 

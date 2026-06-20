@@ -108,6 +108,19 @@ ipcMain.handle("dialog:save-pdf", async (_e, { data, defaultName }) => {
   return { saved: true, path: res.filePath };
 });
 
+// Generic save for non-PDF exports (xlsx/csv/json). `filters` is an array of
+// { name, extensions } passed straight to the native dialog.
+ipcMain.handle("dialog:save-file", async (_e, { data, defaultName, filters }) => {
+  const res = await dialog.showSaveDialog(mainWindow, {
+    title: "Lưu file",
+    defaultPath: defaultName || "export.txt",
+    filters: filters && filters.length ? filters : [{ name: "Tất cả", extensions: ["*"] }],
+  });
+  if (res.canceled || !res.filePath) return { saved: false };
+  fs.writeFileSync(res.filePath, Buffer.from(data));
+  return { saved: true, path: res.filePath };
+});
+
 // ---- shutdown ------------------------------------------------------------
 
 app.on("window-all-closed", () => {
