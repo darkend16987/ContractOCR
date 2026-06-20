@@ -68,7 +68,11 @@ Tận dụng backend sẵn có (OCR engine + gemini_agent + writers). Code xong 
 - [x] **T2.1** UI panel bóc tách: chọn mẫu field + phạm vi (tất cả/đang chọn) → rasterize trang →
   `/extract` → bảng field **sửa được** + loại văn bản + text OCR thô (collapsible).
 - [x] **T2.2** Xuất: nút Excel/CSV/JSON → `/export` → lưu qua dialog native (IPC `dialog:save-file`).
-- [ ] **T2.3** ▶️ **(cần venv)** Test end-to-end: PDF scan thật → bóc field → xuất Excel mở được.
+- [x] **T2.3a** Venv 3.12 dựng xong trên máy này (winget Python 3.12.10 + deps ~3GB).
+- [x] **T2.3b** Test headless backend OK: `/health`, `/templates` (5 mẫu), `/extract` (ảnh HĐ
+  tiếng Việt synthetic → OCR đọc đúng dấu → Gemini phân loại "Hợp đồng mua bán" + bóc đủ field,
+  ngày chuẩn hóa DD/MM/YYYY), `/export` excel/csv/json (openpyxl mở được, header đúng nhãn VN).
+- [ ] **T2.3c** ▶️ **(bạn chạy GUI)** Test end-to-end trong app: mở PDF scan → Bóc tách → sửa field → xuất Excel.
 - [ ] **T2.4** (tùy chọn) Bóc tách nhiều hợp đồng/1 lần → nhiều record → 1 Excel nhiều dòng.
 
 ## Ghi chú thực thi
