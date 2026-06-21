@@ -839,3 +839,33 @@ window.addEventListener("drop", async (e) => {
 window.desktop.onSidecarStatus(applySidecar);
 window.desktop.getSidecarStatus().then(applySidecar);
 updateToolbar();
+
+// ---- auto-update status --------------------------------------------------
+// Only fires for the installed (NSIS) build; portable/dev stay silent. The
+// badge appears only during update activity; "downloaded" pairs with the native
+// restart dialog raised by the main process (src/updater.js).
+function applyUpdate(s) {
+  const b = $("update-badge");
+  if (!b) return;
+  const show = (text, cls, title) => {
+    b.hidden = false;
+    b.className = "badge " + cls;
+    b.textContent = text;
+    b.title = title || "Trạng thái cập nhật";
+  };
+  switch (s.state) {
+    case "available":
+      show("Cập nhật: đang tải…", "update", "Đã có bản " + (s.version || "mới"));
+      toast("Đang tải bản cập nhật" + (s.version ? " " + s.version : "") + "…");
+      break;
+    case "downloading":
+      show("Cập nhật: " + (s.percent != null ? s.percent : 0) + "%", "update");
+      break;
+    case "downloaded":
+      show("Đã tải bản mới ✓", "done", "Khởi động lại để cài (xem hộp thoại)");
+      break;
+    default: // checking / current / error: nothing to show
+      b.hidden = true;
+  }
+}
+if (window.desktop.onUpdateStatus) window.desktop.onUpdateStatus(applyUpdate);

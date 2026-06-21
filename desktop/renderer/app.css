@@ -86,6 +86,8 @@ button.ghost { background: transparent; }
 .badge.starting { color: var(--warn); }
 .badge.ready { color: var(--ok); }
 .badge.error { color: var(--danger); }
+.badge.update { color: var(--accent); }
+.badge.done { color: var(--ok); cursor: default; }
 
 /* ---- workspace ---- */
 .workspace { flex: 1; display: flex; min-height: 0; }
