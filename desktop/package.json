@@ -12,8 +12,7 @@
     "build:sidecar": "cd .. && .venv\\Scripts\\python -m PyInstaller sidecar.spec --noconfirm",
     "build": "electron-builder --config electron-builder.yml",
     "checksums": "node scripts/checksums.js",
-    "license:keygen": "node scripts/license-keygen.js",
-    "license:sign": "node scripts/license-sign.js",
+    "license": "node scripts/license-cli.js",
     "release": "electron-builder --config electron-builder.yml --publish always"
   },
   "dependencies": {
