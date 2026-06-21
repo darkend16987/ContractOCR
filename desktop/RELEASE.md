@@ -20,8 +20,7 @@ trên Release mới nhất. Mỗi Release **phải** có đủ:
 - `NabuPDF-<ver>-x64.exe.blockmap` (electron-builder sinh kèm — cho update vi sai)
 - `latest.yml` (manifest electron-updater đọc)
 
-> `publish` trong `electron-builder.yml` đã trỏ `darkend16987/ContractOCR` (slug repo
-> GitHub vẫn là ContractOCR dù sản phẩm đổi tên Nabu PDF — đổi repo thì sửa lại đây).
+> `publish` trong `electron-builder.yml` đã trỏ `darkend16987/NabuPDF`.
 
 ## Quy trình cắt một bản phát hành
 

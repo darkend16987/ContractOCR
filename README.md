@@ -31,8 +31,8 @@ Image/PDF → OCR (VietOCR/PaddleOCR) → AI Agent (Gemini) → Structured Outpu
 
 ```bash
 # Clone repo
-git clone <repo-url>
-cd ContractOCR
+git clone https://github.com/darkend16987/NabuPDF.git
+cd NabuPDF
 
 # Tạo virtual environment
 python -m venv venv

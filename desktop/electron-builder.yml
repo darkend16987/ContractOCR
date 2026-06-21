@@ -20,12 +20,10 @@ extraResources:
 
 # Auto-update feed (electron-updater). Releases are published to GitHub
 # Releases; the NSIS installer self-updates from there. See RELEASE.md.
-# NOTE: `repo` is the actual GitHub repo slug — still "ContractOCR" even though
-# the product is now "Nabu PDF". If the repo is renamed on GitHub, update this.
 publish:
   provider: github
   owner: darkend16987
-  repo: ContractOCR
+  repo: NabuPDF
 
 win:
   icon: build/icon.ico
