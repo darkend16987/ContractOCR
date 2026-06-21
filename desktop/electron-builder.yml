@@ -1,6 +1,6 @@
-appId: com.contractocr.desktop
-productName: ContractOCR
-copyright: ContractOCR
+appId: com.nabupdf.app
+productName: Nabu PDF
+copyright: © 2026 Nabu PDF
 
 directories:
   output: dist-app
@@ -18,15 +18,45 @@ extraResources:
   - from: ../dist/sidecar
     to: sidecar
 
+# Auto-update feed (electron-updater). Releases are published to GitHub
+# Releases; the NSIS installer self-updates from there. See RELEASE.md.
+# NOTE: `repo` is the actual GitHub repo slug — still "ContractOCR" even though
+# the product is now "Nabu PDF". If the repo is renamed on GitHub, update this.
+publish:
+  provider: github
+  owner: darkend16987
+  repo: ContractOCR
+
 win:
+  icon: build/icon.ico
+  # --- Code signing (currently OFF — see SIGNING.md) -----------------------
+  # Until a certificate is wired up, builds are UNSIGNED and Windows SmartScreen
+  # will warn on first run. To enable later, uncomment ONE of the blocks below.
+  #
+  # (A) Traditional cert (.pfx file or token) — set via env vars at build time:
+  #   CSC_LINK=path\to\cert.pfx   CSC_KEY_PASSWORD=...   then:
+  # signtoolOptions:
+  #   sign: null   # electron-builder auto-signs from CSC_LINK; no block needed
+  #
+  # (B) Azure Trusted Signing (~$10/mo, removes SmartScreen fast):
+  # azureSignOptions:
+  #   publisherName: "Your Verified Name"
+  #   endpoint: https://eus.codesigning.azure.net
+  #   certificateProfileName: <profile>
+  #   codeSigningAccountName: <account>
   target:
     - target: portable   # single .exe, run from USB, no install
     - target: nsis       # standard installer
-  artifactName: ${productName}-${version}-${arch}.${ext}
+  # Space-free file names (productName has a space) for clean download/OTA URLs.
+  artifactName: NabuPDF-${version}-${arch}.${ext}
 
 portable:
-  artifactName: ${productName}-${version}-portable.exe
+  artifactName: NabuPDF-${version}-portable.exe
 
 nsis:
   oneClick: false
   allowToChangeInstallationDirectory: true
+  installerIcon: build/icon.ico
+  uninstallerIcon: build/icon.ico
+  installerHeaderIcon: build/icon.ico
+  shortcutName: Nabu PDF

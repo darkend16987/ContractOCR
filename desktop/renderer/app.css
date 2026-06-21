@@ -37,7 +37,21 @@ body {
   border-bottom: 1px solid var(--line);
   flex: 0 0 auto;
 }
-.brand { font-weight: 700; font-size: 15px; margin-right: 6px; white-space: nowrap; }
+.brand { font-weight: 700; font-size: 15px; margin-right: 6px; white-space: nowrap; display: inline-flex; align-items: center; gap: 7px; }
+.brand .ic { width: 20px; height: 20px; color: var(--accent); }
+
+/* Inline line-icons: inherit text color, sit on the text baseline. */
+.ic { width: 17px; height: 17px; stroke: currentColor; fill: none;
+      stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round;
+      flex: 0 0 auto; vertical-align: -3px; }
+/* Buttons that pair an icon with a label. */
+button .ic { margin-right: 6px; }
+/* Icon-only buttons (rotate/zoom/delete/tools): center the glyph, drop the gap. */
+button.icon-only { display: inline-flex; align-items: center; justify-content: center; }
+button.icon-only .ic { margin: 0; }
+.tool .ic { width: 18px; height: 18px; vertical-align: middle; }
+/* Redact tool uses a solid fill to read as a black-out box. */
+.ic.fill { fill: currentColor; stroke: none; }
 .group { display: flex; align-items: center; gap: 6px; }
 .sep { width: 1px; height: 24px; background: var(--line); }
 .spacer { flex: 1; }
@@ -136,7 +150,8 @@ button.ghost { background: transparent; }
 .viewer canvas { display: block; }
 
 .empty { margin: auto; text-align: center; color: var(--muted); max-width: 420px; }
-.empty-icon { font-size: 52px; }
+.empty-icon { color: var(--accent); opacity: 0.85; }
+.empty-icon .ic { width: 56px; height: 56px; stroke-width: 1.4; }
 .empty h2 { color: var(--fg); font-weight: 600; }
 .empty .hint { font-size: 13px; opacity: 0.8; }
 

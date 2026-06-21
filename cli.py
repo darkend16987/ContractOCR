@@ -1,4 +1,4 @@
-"""CLI entry point for ContractOCR Pipeline."""
+"""CLI entry point for Nabu PDF Pipeline."""
 
 import argparse
 import json
@@ -18,7 +18,7 @@ from src.utils.config import (
 
 def main():
     parser = argparse.ArgumentParser(
-        description="ContractOCR - Trích xuất thông tin hợp đồng tiếng Việt",
+        description="Nabu PDF - Trích xuất thông tin hợp đồng tiếng Việt",
     )
     parser.add_argument(
         "files",

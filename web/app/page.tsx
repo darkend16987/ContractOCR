@@ -998,7 +998,7 @@ export default function HomePage() {
             </div>
             <div>
               <h1 className="text-lg font-bold gradient-text leading-tight">
-                ContractOCR
+                Nabu PDF
               </h1>
               <p className="text-[10px] text-gray-400 -mt-0.5 hidden sm:block">
                 AI Contract Extraction
@@ -1070,7 +1070,7 @@ export default function HomePage() {
                       API Key lưu trong <strong>localStorage trình duyệt</strong> của bạn — không gửi đến server nào ngoài Gemini.
                     </li>
                     <li>
-                      <strong>Không có dữ liệu nào</strong> (ảnh, kết quả, API key) được lưu trữ trên server ContractOCR.
+                      <strong>Không có dữ liệu nào</strong> (ảnh, kết quả, API key) được lưu trữ trên server Nabu PDF.
                     </li>
                     <li>
                       Toàn bộ xử lý PDF → ảnh diễn ra <strong>trong trình duyệt</strong> (client-side).
@@ -1903,7 +1903,7 @@ export default function HomePage() {
 
       {/* Footer */}
       <footer className="text-center py-6 text-xs text-gray-400">
-        ContractOCR &mdash; Powered by Google Gemini Vision AI
+        Nabu PDF &mdash; Powered by Google Gemini Vision AI
       </footer>
     </div>
   );

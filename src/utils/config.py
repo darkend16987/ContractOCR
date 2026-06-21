@@ -23,7 +23,7 @@ def _data_root() -> Path:
     """
     if _is_frozen():
         local = os.getenv("LOCALAPPDATA")  # Windows
-        return Path(local) / "ContractOCR" if local else Path.home() / ".contractocr"
+        return Path(local) / "Nabu PDF" if local else Path.home() / ".nabupdf"
     return Path(__file__).resolve().parent.parent.parent
 
 
@@ -55,7 +55,7 @@ GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3-flash-preview")
 
 # ---- User settings (persisted, editable from the app's Settings UI) ----------
 # Stored in a writable per-user file so the packaged app needs no .env / env var.
-# Dev: repo root; frozen: %LOCALAPPDATA%\ContractOCR (see _data_root()).
+# Dev: repo root; frozen: %LOCALAPPDATA%\Nabu PDF (see _data_root()).
 SETTINGS_FILE = BASE_DIR / "settings.json"
 
 

@@ -1,6 +1,7 @@
 # pnpm 11 reads build-script approvals from here (not from package.json).
 # Without this, pnpm blocks Electron's postinstall and the binary never downloads.
 allowBuilds:
+  canvas: false
   electron: true
   electron-builder: true
   esbuild: true

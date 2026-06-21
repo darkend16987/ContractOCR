@@ -14,6 +14,13 @@ contextBridge.exposeInMainWorld("desktop", {
     return () => ipcRenderer.removeListener("sidecar:status", handler);
   },
 
+  // --- auto-update status (NSIS install only; no-op for portable/dev) ---
+  onUpdateStatus: (cb) => {
+    const handler = (_e, status) => cb(status);
+    ipcRenderer.on("update:status", handler);
+    return () => ipcRenderer.removeListener("update:status", handler);
+  },
+
   // --- native file dialogs ---
   // Returns [{ path, name, data: Uint8Array }, ...] (empty if cancelled).
   openPdf: (opts) => ipcRenderer.invoke("dialog:open-pdf", opts || {}),

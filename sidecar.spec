@@ -1,4 +1,4 @@
-# PyInstaller build spec for the ContractOCR desktop sidecar.
+# PyInstaller build spec for the Nabu PDF desktop sidecar.
 #
 # Build:  pyinstaller sidecar.spec --noconfirm
 # Output: dist/sidecar/sidecar.exe  (onedir — bundled by electron-builder)

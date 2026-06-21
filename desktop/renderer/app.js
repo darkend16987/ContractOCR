@@ -1,7 +1,7 @@
 "use strict";
 
 /**
- * ContractOCR — PDF Suite renderer (Phase 1: PDF core).
+ * Nabu PDF — renderer (Phase 1: PDF core).
  *
  * Pure renderer-side PDF work (DESIGN D5): pdf.js renders, pdf-lib edits. The
  * canonical document is `state.bytes` (Uint8Array); every structural op rebuilds

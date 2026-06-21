@@ -1,5 +1,5 @@
 """
-FastAPI OCR Server for ContractOCR.
+FastAPI OCR Server for Nabu PDF.
 
 Exposes a /ocr endpoint that accepts base64 images,
 runs PaddleOCR detection + VietOCR recognition,
@@ -63,7 +63,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="ContractOCR API",
+    title="Nabu PDF API",
     description="Vietnamese OCR API using PaddleOCR + VietOCR",
     lifespan=lifespan,
 )

@@ -1,6 +1,13 @@
-# ContractOCR
+# Nabu PDF
 
-Pipeline OCR + AI để trích xuất thông tin từ hợp đồng tiếng Việt.
+Bộ công cụ **PDF desktop** (Electron) cho tiếng Việt: xem · ghép · tách · xoay ·
+chú thích · watermark · redact · sửa chữ · nén · tạo PDF tìm-kiếm-được, kèm
+**OCR + bóc tách hợp đồng** bằng AI. Chạy hoàn toàn trên máy (local-first).
+
+> **Ứng dụng desktop** nằm trong [`desktop/`](desktop/) — xem
+> [desktop/README.md](desktop/README.md) để build bản `.exe` / portable.
+> Phần dưới mô tả **pipeline OCR + AI** (engine Python dùng chung, cũng chạy được
+> độc lập qua Web UI Streamlit / CLI).
 
 ## Tổng quan
 
@@ -93,8 +100,9 @@ Có thể tùy chỉnh trường qua Web UI hoặc truyền JSON custom.
 ## Kiến trúc
 
 ```
-ContractOCR/
+Nabu-PDF/
 ├── app.py                    # Streamlit Web UI
+├── desktop/                  # Electron desktop app (Nabu PDF)
 ├── cli.py                    # CLI entry point
 ├── src/
 │   ├── pipeline.py           # Pipeline orchestrator
@@ -137,15 +145,15 @@ Tự động chọn PaddleOCR (full document). Fallback sang VietOCR nếu Paddl
 ### Docker
 
 ```bash
-docker build -t contract-ocr .
-docker run -p 8501:8501 -e GEMINI_API_KEY=your_key contract-ocr
+docker build -t nabu-pdf .
+docker run -p 8501:8501 -e GEMINI_API_KEY=your_key nabu-pdf
 ```
 
 ### Cloud (Google Cloud Run / AWS)
 
 ```bash
 # Google Cloud Run
-gcloud run deploy contract-ocr \
+gcloud run deploy nabu-pdf \
   --source . \
   --port 8501 \
   --set-env-vars GEMINI_API_KEY=your_key

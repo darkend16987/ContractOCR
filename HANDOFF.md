@@ -1,4 +1,4 @@
-# Handoff — ContractOCR → PDF Suite
+# Handoff — Nabu PDF
 
 > Bàn giao trạng thái để tiếp tục ở session/máy khác. Đọc kèm:
 > [DESIGN.md](DESIGN.md) (kiến trúc), [ROADMAP.md](ROADMAP.md) (tiến độ chi tiết),
@@ -17,7 +17,7 @@ _Cập nhật: 2026-06-21 · branch `claude/vietnamese-ocr-ai-iSvwV`_
 | P4 — Overlay edit (annotate/watermark/form/redact) | ✅ Code xong (`editor.js`). Chờ test GUI (T4.6). |
 | P6 — **Sửa chữ gốc** (native text edit, span-replace) | ✅ Code + test backend xong (`/text-spans`,`/edit-text` + `text-edit.js`). Chờ test GUI. |
 | **Security** — token sidecar + size guard + sandbox | ✅ Code + test backend xong (token gate 401/200 qua TestClient). |
-| P5 — Đóng gói portable .exe | ✅ Build xong: `sidecar.exe` (PyInstaller) + `ContractOCR-0.0.1-portable.exe` / `-x64.exe` (NSIS) ở `desktop/dist-app/`. Còn: auto-update + chốt bundle weights + test máy sạch. |
+| P5 — Đóng gói portable .exe | ✅ Build xong: `sidecar.exe` (PyInstaller) + `NabuPDF-0.0.1-portable.exe` / `-x64.exe` (NSIS) ở `desktop/dist-app/`. Còn: auto-update + chốt bundle weights + test máy sạch. |
 
 ## Chạy app (dev)
 
@@ -62,7 +62,7 @@ OCR cần `.venv` Python 3.12 ở gốc repo + `GEMINI_API_KEY` trong `.env`. Xe
   `/export`, **`/searchable`** + **`/compress`** (P3), **`/text-spans`** + **`/edit-text`** (P6).
   Middleware token bắt buộc header `X-Sidecar-Token` (trừ `/health`) khi env `SIDECAR_TOKEN` được set.
 - `src/utils/config.py` — `get_gemini_key()`/`set_gemini_key()` đọc/ghi `settings.json` ở `_data_root()`
-  (frozen = `%LOCALAPPDATA%\ContractOCR`). Key người dùng nhập trong app **thắng** env `GEMINI_API_KEY`.
+  (frozen = `%LOCALAPPDATA%\Nabu PDF`). Key người dùng nhập trong app **thắng** env `GEMINI_API_KEY`.
   Nhờ vậy bản đóng gói không cần `.env`/biến môi trường — người dùng dán key qua nút ⚙ trong UI.
 - `src/ocr/engine.py` — Hybrid PaddleOCR detect + VietOCR recognize (paddle 3.x). **`recognize_boxes()`**
   trả `(text, [x0,y0,x1,y1])` cho lớp text searchable.
@@ -102,8 +102,8 @@ OCR cần `.venv` Python 3.12 ở gốc repo + `GEMINI_API_KEY` trong `.env`. Xe
   (`signtool.exe`) đã extract đủ. **Cách vá KHÔNG cần quyền**: copy 1 thư mục tạm đã extract hoàn
   chỉnh thành `…\Cache\winCodeSign\winCodeSign-2.6.0` (tên thư mục "finalized" mà electron-builder
   tìm) → nó bỏ qua bước extract. (Cách khác: bật Windows Developer Mode hoặc chạy terminal admin.)
-- **Lock `dist-app` khi build lại**: nếu app `win-unpacked\ContractOCR.exe` còn chạy (kèm `sidecar.exe`
-  con) → electron-builder lỗi `EBUSY`/`Access denied`. Kill `ContractOCR`+`sidecar` trước khi build.
+- **Lock `dist-app` khi build lại**: nếu app `win-unpacked\Nabu PDF.exe` còn chạy (kèm `sidecar.exe`
+  con) → electron-builder lỗi `EBUSY`/`Access denied`. Kill process `Nabu PDF`+`sidecar` trước khi build.
 
 ## Bước tiếp theo (gợi ý)
 
@@ -115,12 +115,12 @@ OCR cần `.venv` Python 3.12 ở gốc repo + `GEMINI_API_KEY` trong `.env`. Xe
 3b. **▶️ Test GUI P6 (sửa chữ gốc)**: mở PDF xuất từ Word (chữ thật) → "Sửa chữ" → ô chữ hiện viền
    → sửa 1 đoạn có dấu → Áp dụng → Lưu → mở lại copy/search đoạn cũ không ra, đoạn mới đúng. Mở PDF
    scan → "Sửa chữ" → kỳ vọng toast "ảnh scan, không có chữ để sửa".
-4. ~~**P5 — Đóng gói**~~ ✅ **XONG**: `sidecar.exe` (PyInstaller) + `ContractOCR-0.0.1-portable.exe`
+4. ~~**P5 — Đóng gói**~~ ✅ **XONG**: `sidecar.exe` (PyInstaller) + `NabuPDF-0.0.1-portable.exe`
    / `-x64.exe` (NSIS) ở `desktop/dist-app/`. Đã smoke-test bản đóng gói: app mở, sidecar boot,
    `/health` 200, token gate 401, `/config` (nhập API key) 200. Xem [HUONG-DAN-SU-DUNG.md](HUONG-DAN-SU-DUNG.md).
 
 ### Còn lại cho phiên sau
-- **▶️ Test máy Windows sạch** (chưa cài Python): copy `ContractOCR-0.0.1-portable.exe` sang →
+- **▶️ Test máy Windows sạch** (chưa cài Python): copy `NabuPDF-0.0.1-portable.exe` sang →
   xác minh self-contained; lần OCR đầu cần mạng tải weights PaddleOCR/VietOCR (~vài trăm MB vào
   cache user). Đây là phép thử quan trọng nhất chưa làm được (cần máy thứ 2).
 - **▶️ Các test GUI** P3/P4/P6 ở trên (1–3b) — làm trên bản dev hoặc bản đóng gói.

@@ -1,4 +1,4 @@
-"""Streamlit Web UI for ContractOCR Pipeline."""
+"""Streamlit Web UI for Nabu PDF Pipeline."""
 
 import streamlit as st
 import logging
@@ -19,12 +19,12 @@ logger = logging.getLogger(__name__)
 
 # Page config
 st.set_page_config(
-    page_title="ContractOCR - Trích xuất hợp đồng tiếng Việt",
+    page_title="Nabu PDF - Trích xuất hợp đồng tiếng Việt",
     page_icon="📄",
     layout="wide",
 )
 
-st.title("ContractOCR")
+st.title("Nabu PDF")
 st.markdown("**Pipeline OCR + AI** để trích xuất thông tin từ hợp đồng tiếng Việt")
 
 # Sidebar - Configuration

@@ -1,4 +1,4 @@
-# ContractOCR Desktop (Phase 0)
+# Nabu PDF Desktop
 
 Vỏ Electron + Python sidecar (FastAPI OCR). Xem [../DESIGN.md](../DESIGN.md) và
 [../ROADMAP.md](../ROADMAP.md).
@@ -33,7 +33,7 @@ npm run build:sidecar
 #    thì thêm module vào `extra_hiddenimports` trong ../sidecar.spec rồi build lại.
 
 # 2) Đóng Electron + bundle sidecar → desktop/dist-app/
-npm run build    # tạo ContractOCR-<ver>-portable.exe và bản nsis
+npm run build    # tạo NabuPDF-<ver>-portable.exe và bản nsis
 
 # 3) Test bản portable trên MÁY WINDOWS SẠCH (không cài Python).
 ```

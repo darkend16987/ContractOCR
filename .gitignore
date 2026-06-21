@@ -1,9 +1,9 @@
-# Python
+# Python (anchored to repo root so desktop/build app-icons aren't ignored)
 __pycache__/
 *.py[cod]
 *.egg-info/
-dist/
-build/
+/dist/
+/build/
 .eggs/
 venv/
 .venv/

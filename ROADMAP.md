@@ -1,4 +1,4 @@
-# ContractOCR Desktop — Roadmap
+# Nabu PDF — Roadmap
 
 Xem kiến trúc & quyết định ở [DESIGN.md](DESIGN.md). Dựng môi trường máy mới: [SETUP.md](SETUP.md).
 
@@ -25,7 +25,7 @@ Xem kiến trúc & quyết định ở [DESIGN.md](DESIGN.md). Dựng môi trư�
 - [x] **T0.4** PyInstaller spec `sidecar.spec` (collect_all torch/paddle/vietocr/paddleocr)
 - [x] **T0.5** `electron-builder.yml` → target portable + nsis, bundle `dist/sidecar` vào extraResources
 - [x] **T0.6** Renderer P0 tối giản: ping `/health` + test OCR 1 ảnh
-- [x] **T0.6b** Fix `src/utils/config.py` cho frozen mode (ghi uploads/results vào `%LOCALAPPDATA%\ContractOCR` thay vì cạnh exe)
+- [x] **T0.6b** Fix `src/utils/config.py` cho frozen mode (ghi uploads/results vào `%LOCALAPPDATA%\Nabu PDF` thay vì cạnh exe)
 - [x] **T0.7** Cài deps: venv **Python 3.12** (`.venv/`) + `requirements.txt` + `requirements-build.txt`; `desktop/` qua pnpm (electron binary OK). Quyết định D6: dùng 3.12 vì vietocr không tương thích 3.13.
 - [x] **T0.8a** Migrate `src/ocr/engine.py` sang **paddleocr 3.x** API (`predict()`, `dt_polys`, `use_textline_orientation`, `enable_mkldnn=False`) + import torch trước paddle (DLL order Windows). Pin `requirements.txt`.
 - [x] **T0.8b** Validate sidecar: `sidecar.py --port` → `/health` = `{ok, hybrid}`, `/ocr` đọc đúng tiếng Việt có dấu ("Biên bản nghiệm thu"). Hybrid OCR end-to-end OK.

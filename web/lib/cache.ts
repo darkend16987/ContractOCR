@@ -1,5 +1,5 @@
 /**
- * Semantic Cache for ContractOCR
+ * Semantic Cache for Nabu PDF
  *
  * Fingerprint = SHA-256(first page image + fileName + fileSize + pageCount)
  * Storage = IndexedDB (much larger than localStorage)

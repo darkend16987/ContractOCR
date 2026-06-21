@@ -5,6 +5,7 @@ const fs = require("fs");
 const crypto = require("crypto");
 const { app, BrowserWindow, ipcMain, dialog } = require("electron");
 const { startSidecar, stopSidecar } = require("./sidecar");
+const { initAutoUpdate } = require("./updater");
 
 let mainWindow = null;
 let sidecar = null;
@@ -33,7 +34,8 @@ function createWindow() {
     height: 880,
     minWidth: 900,
     minHeight: 600,
-    title: "ContractOCR — PDF Suite",
+    title: "Nabu PDF",
+    icon: path.join(__dirname, "..", "build", "icon.png"),
     backgroundColor: "#0f172a",
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
@@ -69,6 +71,7 @@ function bootSidecar() {
 app.whenReady().then(() => {
   createWindow();
   bootSidecar();
+  initAutoUpdate(mainWindow);
 
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();

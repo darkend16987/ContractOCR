@@ -1,6 +1,6 @@
-# ContractOCR → PDF Suite — Thiết kế hệ thống
+# Nabu PDF — Thiết kế hệ thống
 
-> Tài liệu thiết kế cho việc mở rộng ContractOCR (OCR + bóc tách hợp đồng) thành
+> Tài liệu thiết kế cho Nabu PDF — mở rộng từ engine OCR + bóc tách hợp đồng thành
 > một phần mềm PDF native chạy local. Cập nhật khi quyết định kiến trúc thay đổi.
 
 ## 1. Bối cảnh & xuất phát điểm

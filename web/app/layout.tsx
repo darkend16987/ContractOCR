@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "ContractOCR - Trích xuất hợp đồng tiếng Việt",
+  title: "Nabu PDF - Trích xuất hợp đồng tiếng Việt",
   description:
     "Tự động trích xuất thông tin từ hợp đồng tiếng Việt bằng AI (Gemini Vision)",
 };

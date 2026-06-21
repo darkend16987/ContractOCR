@@ -1,7 +1,7 @@
 "use strict";
 
 /**
- * ContractOCR — PDF Suite renderer (Phase 4: overlay editor).
+ * Nabu PDF — renderer (Phase 4: overlay editor).
  *
  * Adds annotation / watermark / redaction / form-fill on top of the P1 viewer.
  * Design notes:

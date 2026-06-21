@@ -1,7 +1,7 @@
 "use strict";
 
 /**
- * ContractOCR — PDF Suite renderer (Phase 6: native text editing).
+ * Nabu PDF — renderer (Phase 6: native text editing).
  *
  * Unlike the P4 overlay editor (which draws *on top* of the page), this edits the
  * page's real text: it asks the sidecar for the text spans on the current page,

@@ -1,4 +1,4 @@
-# ContractOCR — Hướng dẫn sử dụng
+# Nabu PDF — Hướng dẫn sử dụng
 
 Bộ công cụ PDF chạy trên máy (xem · ghép · tách · xoay · khoanh vùng · ghi chú · watermark ·
 redact · **sửa chữ gốc** · nén · tạo PDF tìm-kiếm-được · OCR + bóc tách hợp đồng). Toàn bộ xử lý
@@ -12,8 +12,8 @@ Chỉ cần **một file duy nhất**, chọn 1 trong 2 kiểu:
 
 | Kiểu | File copy vào USB | Dùng khi |
 |------|-------------------|----------|
-| **Bản chạy thẳng (khuyên dùng)** | `ContractOCR-0.0.1-portable.exe` (~407 MB) | Cắm USB, chạy luôn, không cài. Tiện mang đi nhiều máy. |
-| **Bản cài đặt** | `ContractOCR-0.0.1-x64.exe` (~407 MB) | Cài cố định vào 1 máy (tạo shortcut, gỡ qua Control Panel). |
+| **Bản chạy thẳng (khuyên dùng)** | `NabuPDF-0.0.1-portable.exe` (~407 MB) | Cắm USB, chạy luôn, không cài. Tiện mang đi nhiều máy. |
+| **Bản cài đặt** | `NabuPDF-0.0.1-x64.exe` (~407 MB) | Cài cố định vào 1 máy (tạo shortcut, gỡ qua Control Panel). |
 
 Hai file này nằm ở: `D:\GitHub\ContractOCR\desktop\dist-app\`
 
@@ -25,12 +25,12 @@ Hai file này nằm ở: `D:\GitHub\ContractOCR\desktop\dist-app\`
 ## 2. Cách chạy
 
 ### Cách A — Bản chạy thẳng (portable)
-1. Copy `ContractOCR-0.0.1-portable.exe` vào USB (hoặc ổ cứng máy đích).
+1. Copy `NabuPDF-0.0.1-portable.exe` vào USB (hoặc ổ cứng máy đích).
 2. Nháy đúp để chạy. Lần đầu nó tự giải nén ra thư mục tạm (mất ~10–20 giây) rồi mở cửa sổ app.
 3. Xong. Không để lại gì trên máy (ngoài cache model, xem mục 4).
 
 ### Cách B — Bản cài đặt (installer)
-1. Copy `ContractOCR-0.0.1-x64.exe` vào máy đích.
+1. Copy `NabuPDF-0.0.1-x64.exe` vào máy đích.
 2. Nháy đúp → chọn thư mục cài → Next → Install.
 3. Chạy từ Start Menu / shortcut desktop. Gỡ qua **Settings → Apps** như phần mềm thường.
 
@@ -91,7 +91,7 @@ Nhập key **ngay trong app**, không cần đụng tới file hay biến môi t
 
 1. Mở app → bấm nút **⚙** (góc phải, cạnh badge OCR).
 2. **Dán** API key vào ô → bấm **Lưu**.
-3. Xong. Key được lưu an toàn trên máy này (`%LOCALAPPDATA%\ContractOCR\settings.json`), **lần sau
+3. Xong. Key được lưu an toàn trên máy này (`%LOCALAPPDATA%\Nabu PDF\settings.json`), **lần sau
    không phải nhập lại**. Đổi key thì mở lại ⚙ và dán key mới.
 
 > Chưa có key? Lấy miễn phí tại **aistudio.google.com/apikey**.

@@ -1,15 +1,21 @@
 {
-  "name": "contractocr-desktop",
+  "name": "nabu-pdf-desktop",
   "version": "0.0.1",
   "private": true,
-  "description": "ContractOCR desktop shell (Electron + Python sidecar)",
+  "description": "Nabu PDF — desktop PDF suite (Electron + Python sidecar)",
+  "author": "darkend16987 <hoangnam.mng@gmail.com>",
   "main": "src/main.js",
   "scripts": {
     "start": "electron .",
     "vendor": "node scripts/vendor-libs.js",
     "postinstall": "node scripts/vendor-libs.js",
     "build:sidecar": "cd .. && .venv\\Scripts\\python -m PyInstaller sidecar.spec --noconfirm",
-    "build": "electron-builder --config electron-builder.yml"
+    "build": "electron-builder --config electron-builder.yml",
+    "checksums": "node scripts/checksums.js",
+    "release": "electron-builder --config electron-builder.yml --publish always"
+  },
+  "dependencies": {
+    "electron-updater": "^6.8.9"
   },
   "devDependencies": {
     "electron": "^33.0.0",
