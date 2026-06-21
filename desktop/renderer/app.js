@@ -78,8 +78,81 @@ async function loadBytes(bytes, name) {
   state.lastClicked = null;
   if (window.Editor) window.Editor.reset(); // drop annotations from any previous doc
   if (window.TextEdit) window.TextEdit.reset(); // drop any in-progress text edits
-  await renderAll();
+  try {
+    await renderAll();
+  } catch (err) {
+    if (err && err.code === "NEEDS_PASSWORD") {
+      const decrypted = await unlockEncrypted(state.bytes);
+      if (!decrypted) return; // user cancelled or unlock failed (already toasted)
+      state.bytes = decrypted;
+      await renderAll();
+    } else {
+      return; // renderAll already toasted the failure
+    }
+  }
   toast("Đã mở: " + state.name, "good");
+}
+
+// Decrypt a password-protected PDF into plaintext bytes the rest of the app can
+// edit. Needs the sidecar (PyMuPDF); re-prompts on a wrong password. Returns the
+// decrypted Uint8Array, or null on cancel/failure.
+async function unlockEncrypted(u8) {
+  for (;;) {
+    const pw = await promptPassword();
+    if (pw == null) return null; // cancelled
+    if (sidecar.state !== "ready" || !sidecar.base) {
+      toast("Cần engine để mở PDF có mật khẩu — chờ badge 'OCR: sẵn sàng' rồi mở lại.", "bad");
+      return null;
+    }
+    showOverlay("Đang mở khoá PDF…");
+    try {
+      const res = await sidecarFetch("/decrypt", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pdf_b64: u8ToB64(u8), password: pw }),
+      });
+      if (res.status === 401) {
+        toast("Sai mật khẩu — thử lại.", "bad");
+        continue;
+      }
+      const data = await res.json();
+      if (!data.success) {
+        toast("Không mở khoá được: " + (data.error || data.detail || "không rõ"), "bad");
+        return null;
+      }
+      return Uint8Array.from(atob(data.data_b64), (ch) => ch.charCodeAt(0));
+    } catch (err) {
+      toast("Lỗi mở khoá: " + err.message, "bad");
+      return null;
+    } finally {
+      hideOverlay();
+    }
+  }
+}
+
+// Modal password prompt. Resolves to the entered string, or null if cancelled.
+function promptPassword() {
+  return new Promise((resolve) => {
+    const modal = $("pw-modal");
+    const input = $("pw-input");
+    input.value = "";
+    input.type = "password";
+    modal.hidden = false;
+    input.focus();
+    const done = (val) => {
+      modal.hidden = true;
+      $("pw-ok").onclick = null;
+      $("pw-cancel").onclick = null;
+      input.onkeydown = null;
+      resolve(val);
+    };
+    $("pw-ok").onclick = () => done(input.value);
+    $("pw-cancel").onclick = () => done(null);
+    input.onkeydown = (e) => {
+      if (e.key === "Enter") done(input.value);
+      else if (e.key === "Escape") done(null);
+    };
+  });
 }
 
 async function renderAll() {
@@ -106,6 +179,12 @@ async function renderAll() {
     $("empty-state").style.display = "none";
     updateToolbar();
   } catch (err) {
+    // Encrypted PDF: let loadBytes prompt for a password + decrypt, then retry.
+    if (err && err.name === "PasswordException") {
+      const e = new Error("PDF có mật khẩu");
+      e.code = "NEEDS_PASSWORD";
+      throw e;
+    }
     toast("Không mở được PDF: " + err.message, "bad");
     throw err;
   } finally {
@@ -153,36 +232,87 @@ function updatePageCount() {
     state.numPages + " trang" + (sel ? ` · ${sel} chọn` : "");
 }
 
+let pageObserver = null;
+
 async function renderViewer() {
   const v = $("viewer");
   v.querySelectorAll(".page-wrap").forEach((e) => e.remove());
+  if (pageObserver) {
+    pageObserver.disconnect();
+    pageObserver = null;
+  }
   const dpr = window.devicePixelRatio || 1;
+
+  // Lazy render: create every page's wrapper + canvas at the correct CSS size up
+  // front (cheap — the bitmap stays tiny until drawn), but defer the expensive
+  // rasterisation until the page nears the viewport. Overlay editors read
+  // canvas.style.* so they keep working before any pixels are drawn.
+  const metas = [];
   for (let i = 0; i < state.numPages; i++) {
     const page = await state.pdf.getPage(i + 1);
     const vp = page.getViewport({ scale: state.scale });
+    const cw = Math.floor(vp.width);
+    const ch = Math.floor(vp.height);
     const canvas = document.createElement("canvas");
-    canvas.width = Math.floor(vp.width * dpr);
-    canvas.height = Math.floor(vp.height * dpr);
-    canvas.style.width = Math.floor(vp.width) + "px";
-    canvas.style.height = Math.floor(vp.height) + "px";
-    await page.render({
-      canvasContext: canvas.getContext("2d"),
-      viewport: vp,
-      transform: dpr !== 1 ? [dpr, 0, 0, dpr, 0, 0] : undefined,
-    }).promise;
+    canvas.style.width = cw + "px";
+    canvas.style.height = ch + "px";
     const wrap = document.createElement("div");
     wrap.className = "page-wrap";
     wrap.dataset.index = String(i);
+    wrap.dataset.rendered = "0";
     wrap.appendChild(canvas);
     v.appendChild(wrap);
+    metas[i] = { page, vp, cw, ch, canvas, wrap, dpr };
   }
+  state.pageMetas = metas;
+
+  // Start rendering ~500px before a page scrolls into view so it's usually ready
+  // by the time it's visible.
+  pageObserver = new IntersectionObserver(
+    (entries) => {
+      for (const e of entries) {
+        if (!e.isIntersecting) continue;
+        renderPageCanvas(+e.target.dataset.index);
+        pageObserver.unobserve(e.target);
+      }
+    },
+    { root: v, rootMargin: "500px 0px" }
+  );
+  metas.forEach((m) => pageObserver.observe(m.wrap));
+
+  // Draw the first page(s) immediately so the viewer is never blank on open.
+  for (let i = 0; i < Math.min(2, metas.length); i++) await renderPageCanvas(i);
+
   // Let the overlay editor (P4) re-attach its annotation layers, if loaded.
   if (window.Editor) window.Editor.syncOverlays();
   // Let the native text editor (P6) re-place its span boxes, if active.
   if (window.TextEdit) window.TextEdit.syncOverlays();
 }
 
+// Rasterise one page into its (already-placed) canvas. Idempotent: the
+// data-rendered guard stops the observer + sidebar-jump from double-drawing.
+async function renderPageCanvas(i) {
+  const m = state.pageMetas && state.pageMetas[i];
+  if (!m || m.wrap.dataset.rendered === "1") return;
+  m.wrap.dataset.rendered = "1";
+  const { page, vp, cw, ch, canvas, dpr } = m;
+  canvas.width = Math.floor(cw * dpr);
+  canvas.height = Math.floor(ch * dpr);
+  try {
+    await page.render({
+      canvasContext: canvas.getContext("2d"),
+      viewport: vp,
+      transform: dpr !== 1 ? [dpr, 0, 0, dpr, 0, 0] : undefined,
+    }).promise;
+  } catch (_) {
+    m.wrap.dataset.rendered = "0"; // let it retry on the next intersection
+  }
+}
+
 function scrollToPage(i) {
+  // Eager-render the jump target so a sidebar click feels instant instead of
+  // waiting for the observer to catch up.
+  renderPageCanvas(i);
   const el = $("viewer").querySelector(`.page-wrap[data-index="${i}"]`);
   if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
 }
@@ -667,16 +797,35 @@ async function runCompress() {
 // ---- settings (API key) --------------------------------------------------
 
 async function openSettings() {
-  if (sidecar.state !== "ready" || !sidecar.base) {
-    toast("Engine đang khởi động — chờ badge 'OCR: sẵn sàng' rồi mở lại.", "bad");
-    return;
+  // The dialog opens regardless of engine state: the license + update sections
+  // never need the OCR sidecar, and only the API-key part waits for it.
+  $("set-modal").hidden = false;
+  $("set-update-status").textContent = "";
+  $("set-theme").value =
+    document.documentElement.getAttribute("data-theme") === "light" ? "light" : "dark";
+  loadLicense();
+  if (window.desktop.appInfo) {
+    window.desktop
+      .appInfo()
+      .then((info) => ($("set-version").textContent = "Phiên bản " + info.version))
+      .catch(() => {});
   }
+
   const input = $("set-gemini-key");
   const status = $("set-status");
+  const ok = $("set-ok");
   input.value = "";
   input.type = "password";
+
+  if (sidecar.state !== "ready" || !sidecar.base) {
+    status.textContent = "Engine đang khởi động — phần nhập API key sẽ sẵn sàng khi badge hiện 'OCR: sẵn sàng'.";
+    input.disabled = true;
+    ok.disabled = true;
+    return;
+  }
+  input.disabled = false;
+  ok.disabled = false;
   status.textContent = "Đang tải…";
-  $("set-modal").hidden = false;
   input.focus();
   try {
     const res = await sidecarFetch("/config");
@@ -710,6 +859,62 @@ async function saveSettings() {
     }
   } catch (err) {
     toast("Lỗi lưu cài đặt: " + err.message, "bad");
+  }
+}
+
+// ---- license (offline Ed25519) -------------------------------------------
+
+async function loadLicense() {
+  if (!window.desktop.license) return;
+  try {
+    renderLicense(await window.desktop.license.get());
+  } catch (err) {
+    $("lic-status").textContent = "Không đọc được trạng thái bản quyền.";
+  }
+}
+
+function licReason(r) {
+  return (
+    {
+      format: "sai định dạng key",
+      signature: "chữ ký không hợp lệ",
+      expired: "key đã hết hạn",
+      payload: "dữ liệu key hỏng",
+      store: "không lưu được key",
+    }[r] || "không rõ"
+  );
+}
+
+function renderLicense(s) {
+  const badge = $("lic-badge");
+  const status = $("lic-status");
+  const inputRow = $("lic-input-row");
+  const remove = $("lic-remove");
+  const licensed = s.state === "licensed";
+  badge.className =
+    "badge " + (licensed ? "ready" : s.state === "unlicensed" ? "starting" : "error");
+  badge.textContent = licensed
+    ? "Đã kích hoạt"
+    : s.state === "expired"
+      ? "Hết hạn"
+      : s.state === "invalid"
+        ? "Không hợp lệ"
+        : "Chưa kích hoạt";
+  if (licensed) {
+    const exp = s.exp ? "hạn " + new Date(s.exp * 1000).toLocaleDateString("vi-VN") : "vĩnh viễn";
+    const who = s.name || s.email || "—";
+    status.textContent = `${who} · gói ${s.plan || "—"} · ${exp}`;
+    inputRow.hidden = true;
+    remove.hidden = false;
+  } else {
+    status.textContent =
+      s.state === "expired"
+        ? "Key đã hết hạn — nhập key mới."
+        : s.state === "invalid"
+          ? "Key không hợp lệ — nhập lại key."
+          : "Chưa kích hoạt bản quyền. Dán key để kích hoạt.";
+    inputRow.hidden = false;
+    remove.hidden = true;
   }
 }
 
@@ -786,9 +991,63 @@ $("set-key-toggle").onclick = () => {
   const i = $("set-gemini-key");
   i.type = i.type === "password" ? "text" : "password";
 };
+$("pw-toggle").onclick = () => {
+  const i = $("pw-input");
+  i.type = i.type === "password" ? "text" : "password";
+};
+// Theme (light/dark) — persisted in localStorage, applied early in <head> too.
+function applyTheme(t) {
+  const theme = t === "light" ? "light" : "dark";
+  document.documentElement.setAttribute("data-theme", theme);
+  try {
+    localStorage.setItem("nabu-theme", theme);
+  } catch (_) {}
+}
+$("set-theme").onchange = (e) => applyTheme(e.target.value);
 $("set-gemini-key").addEventListener("keydown", (e) => {
   if (e.key === "Enter") saveSettings();
 });
+$("lic-activate").onclick = async () => {
+  const key = $("lic-key").value.trim();
+  if (!key) {
+    toast("Dán license key trước khi kích hoạt.", "bad");
+    return;
+  }
+  try {
+    const res = await window.desktop.license.activate(key);
+    if (res.ok) {
+      toast("Kích hoạt bản quyền thành công.", "good");
+      $("lic-key").value = "";
+    } else {
+      toast("Kích hoạt thất bại: " + licReason(res.reason), "bad");
+    }
+    renderLicense(res);
+  } catch (err) {
+    toast("Lỗi kích hoạt: " + err.message, "bad");
+  }
+};
+$("lic-key").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") $("lic-activate").click();
+});
+$("lic-remove").onclick = async () => {
+  try {
+    renderLicense(await window.desktop.license.deactivate());
+    toast("Đã gỡ bản quyền khỏi máy này.");
+  } catch (err) {
+    toast("Lỗi gỡ bản quyền: " + err.message, "bad");
+  }
+};
+$("set-check-update").onclick = async () => {
+  if (!window.desktop.checkUpdate) return;
+  manualUpdateCheck = true;
+  $("set-check-update").disabled = true;
+  $("set-update-status").textContent = "Đang kiểm tra…";
+  try {
+    setUpdateStatusText(await window.desktop.checkUpdate());
+  } catch (err) {
+    setUpdateStatusText({ state: "error", error: err.message });
+  }
+};
 $("ext-close").onclick = () => ($("ext-panel").hidden = true);
 $("ext-run").onclick = runExtract;
 $("ext-export").addEventListener("click", (e) => {
@@ -844,7 +1103,57 @@ updateToolbar();
 // Only fires for the installed (NSIS) build; portable/dev stay silent. The
 // badge appears only during update activity; "downloaded" pairs with the native
 // restart dialog raised by the main process (src/updater.js).
+// Set true while a manual "Kiểm tra cập nhật" is in flight so streamed results
+// (checking → current/available/error) get echoed into the Settings dialog.
+let manualUpdateCheck = false;
+
+// Human-readable line for the Settings update section. Terminal states clear the
+// manual-check flag and re-enable the button.
+function setUpdateStatusText(s) {
+  const el = $("set-update-status");
+  const btn = $("set-check-update");
+  let text = "";
+  let done = true;
+  switch (s.state) {
+    case "checking":
+      text = "Đang kiểm tra…";
+      done = false;
+      break;
+    case "available":
+      text = "Đã có bản mới" + (s.version ? " " + s.version : "") + " — đang tải…";
+      done = false;
+      break;
+    case "downloading":
+      text = "Đang tải bản mới: " + (s.percent != null ? s.percent : 0) + "%";
+      done = false;
+      break;
+    case "downloaded":
+      text = "Đã tải xong — khởi động lại để cài (xem hộp thoại).";
+      break;
+    case "current":
+      text = "Bạn đang dùng bản mới nhất" + (s.version ? " (" + s.version + ")" : "") + ".";
+      break;
+    case "portable":
+      text = "Bản portable không tự cập nhật. Tải bản mới thủ công từ trang Releases trên GitHub.";
+      break;
+    case "dev":
+      text = "Bản chạy thử (dev) không hỗ trợ tự cập nhật.";
+      break;
+    case "error":
+      text = "Lỗi kiểm tra cập nhật: " + (s.error || "không rõ") + ".";
+      break;
+    default: // unsupported and anything else
+      text = "Bản này không hỗ trợ tự cập nhật.";
+  }
+  if (el) el.textContent = text;
+  if (done) {
+    manualUpdateCheck = false;
+    if (btn) btn.disabled = false;
+  }
+}
+
 function applyUpdate(s) {
+  if (manualUpdateCheck) setUpdateStatusText(s);
   const b = $("update-badge");
   if (!b) return;
   const show = (text, cls, title) => {

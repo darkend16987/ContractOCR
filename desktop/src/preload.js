@@ -20,6 +20,18 @@ contextBridge.exposeInMainWorld("desktop", {
     ipcRenderer.on("update:status", handler);
     return () => ipcRenderer.removeListener("update:status", handler);
   },
+  // Manual "Kiểm tra cập nhật". Resolves to an immediate { state, version };
+  // a real check streams further results through onUpdateStatus.
+  checkUpdate: () => ipcRenderer.invoke("update:check"),
+  // App version + build channel for the Settings dialog.
+  appInfo: () => ipcRenderer.invoke("app:info"),
+
+  // --- license (offline Ed25519; see src/license.js) ---
+  license: {
+    get: () => ipcRenderer.invoke("license:get"),
+    activate: (key) => ipcRenderer.invoke("license:activate", key),
+    deactivate: () => ipcRenderer.invoke("license:deactivate"),
+  },
 
   // --- native file dialogs ---
   // Returns [{ path, name, data: Uint8Array }, ...] (empty if cancelled).

@@ -3,6 +3,8 @@
   <head>
     <meta charset="utf-8" />
     <title>Nabu PDF</title>
+    <!-- Apply the saved theme before first paint to avoid a dark→light flash. -->
+    <script>try{var t=localStorage.getItem('nabu-theme');if(t)document.documentElement.setAttribute('data-theme',t);}catch(e){}</script>
     <link rel="stylesheet" href="app.css" />
   </head>
   <body>
@@ -204,6 +206,24 @@
       </div>
     </div>
 
+    <!-- Password prompt (encrypted PDF) -->
+    <div class="modal" id="pw-modal" hidden>
+      <div class="modal-card">
+        <h3>PDF có mật khẩu</h3>
+        <p class="cmp-note">File này được bảo vệ bằng mật khẩu. Nhập mật khẩu để mở.</p>
+        <label>Mật khẩu
+          <span class="key-row">
+            <input id="pw-input" type="password" placeholder="Nhập mật khẩu mở file…" autocomplete="off" spellcheck="false" />
+            <button id="pw-toggle" type="button" class="ghost" title="Hiện / ẩn mật khẩu">👁</button>
+          </span>
+        </label>
+        <div class="modal-actions">
+          <button id="pw-cancel">Hủy</button>
+          <button id="pw-ok" class="primary">Mở khoá</button>
+        </div>
+      </div>
+    </div>
+
     <!-- Compress dialog -->
     <div class="modal" id="cmp-modal" hidden>
       <div class="modal-card">
@@ -228,6 +248,21 @@
     <div class="modal" id="set-modal" hidden>
       <div class="modal-card">
         <h3>Cài đặt</h3>
+
+        <div class="set-row-between">
+          <div>
+            <b>Bản quyền</b>
+            <p class="cmp-note" id="lic-status" style="margin:2px 0 0">Đang kiểm tra…</p>
+          </div>
+          <span id="lic-badge" class="badge"></span>
+        </div>
+        <div class="key-row" id="lic-input-row">
+          <input id="lic-key" type="text" placeholder="Dán license key (NABU1…)" autocomplete="off" spellcheck="false" />
+          <button id="lic-activate" class="primary">Kích hoạt</button>
+        </div>
+        <button id="lic-remove" class="ghost" hidden style="margin-top:8px">Gỡ bản quyền</button>
+        <hr class="set-div" />
+
         <p class="cmp-note">
           Tính năng <b>Bóc tách</b> dùng AI Google Gemini để đọc hợp đồng nên cần API key.
           Dán key vào đây, bấm Lưu — key được lưu an toàn trên máy này, lần sau không phải nhập lại.
@@ -243,6 +278,29 @@
           Chưa có key? Lấy miễn phí tại <b>aistudio.google.com/apikey</b>.
           Không nhập key thì các tính năng PDF + OCR + Searchable vẫn dùng bình thường.
         </p>
+
+        <hr class="set-div" />
+        <div class="set-row-between">
+          <div>
+            <b>Giao diện</b>
+            <p class="cmp-note" style="margin:2px 0 0">Chế độ sáng / tối</p>
+          </div>
+          <select id="set-theme">
+            <option value="dark">Tối</option>
+            <option value="light">Sáng</option>
+          </select>
+        </div>
+
+        <hr class="set-div" />
+        <div class="set-row-between">
+          <div>
+            <b>Cập nhật phần mềm</b>
+            <p class="cmp-note" id="set-version" style="margin:2px 0 0">Phiên bản …</p>
+          </div>
+          <button id="set-check-update" class="ghost">Kiểm tra cập nhật</button>
+        </div>
+        <p class="set-status" id="set-update-status"></p>
+
         <div class="modal-actions">
           <button id="set-cancel">Đóng</button>
           <button id="set-ok" class="primary">Lưu</button>

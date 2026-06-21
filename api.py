@@ -641,6 +641,67 @@ async def compress(req: CompressRequest):
     )
 
 
+# ---- decrypt a password-protected PDF -------------------------------------
+
+
+class DecryptRequest(BaseModel):
+    """Request body for unlocking a password-protected PDF."""
+    pdf_b64: str  # source (encrypted) PDF, base64
+    password: str = ""  # the user/open password
+
+
+class DecryptResponse(BaseModel):
+    success: bool
+    filename: str = ""
+    data_b64: str = ""
+    pages: int = 0
+    error: str | None = None
+
+
+@app.post("/decrypt", response_model=DecryptResponse)
+async def decrypt(req: DecryptRequest):
+    """Open a password-protected PDF and return a decrypted (unprotected) copy.
+
+    The user supplied the password, so producing an unencrypted working copy is
+    the expected behaviour for an editor — pdf-lib/pdf.js can then edit it like any
+    other file. Uses PyMuPDF only; the OCR engine is not required. Wrong password
+    returns 401 so the UI can re-prompt.
+    """
+    try:
+        import fitz  # PyMuPDF
+    except ImportError:
+        raise HTTPException(status_code=503, detail="PyMuPDF (fitz) chưa cài — không mở khoá được.")
+
+    if len(req.pdf_b64) > _MAX_PDF_B64:
+        raise HTTPException(status_code=400, detail="PDF quá lớn (tối đa ~200MB).")
+    try:
+        pdf_bytes = base64.b64decode(req.pdf_b64)
+    except Exception:
+        raise HTTPException(status_code=400, detail="pdf_b64 không hợp lệ")
+
+    try:
+        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Không mở được PDF: {e}")
+
+    try:
+        if doc.needs_pass and not doc.authenticate(req.password or ""):
+            raise HTTPException(status_code=401, detail="Sai mật khẩu")
+        # Save an unencrypted copy (strip any user/owner password).
+        out_bytes = doc.tobytes(encryption=fitz.PDF_ENCRYPT_NONE, deflate=True, garbage=3)
+        pages = doc.page_count
+    finally:
+        doc.close()
+
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    return DecryptResponse(
+        success=True,
+        filename=f"unlocked_{ts}.pdf",
+        data_b64=base64.b64encode(out_bytes).decode("ascii"),
+        pages=pages,
+    )
+
+
 # ---- P6: native text editing (span-level replace via PyMuPDF) -------------
 #
 # "Edit the real characters" (like Foxit) only works on PDFs that carry an actual

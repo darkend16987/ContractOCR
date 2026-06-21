@@ -6,6 +6,7 @@ const crypto = require("crypto");
 const { app, BrowserWindow, ipcMain, dialog } = require("electron");
 const { startSidecar, stopSidecar } = require("./sidecar");
 const { initAutoUpdate } = require("./updater");
+const { initLicense } = require("./license");
 
 let mainWindow = null;
 let sidecar = null;
@@ -72,6 +73,7 @@ app.whenReady().then(() => {
   createWindow();
   bootSidecar();
   initAutoUpdate(mainWindow);
+  initLicense();
 
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
@@ -88,6 +90,13 @@ ipcMain.handle("sidecar:restart", () => {
   bootSidecar();
   return sidecarState;
 });
+
+// App version + build channel, for the Settings "Cập nhật" section.
+ipcMain.handle("app:info", () => ({
+  version: app.getVersion(),
+  packaged: app.isPackaged,
+  portable: !!process.env.PORTABLE_EXECUTABLE_DIR,
+}));
 
 // ---- IPC: file dialogs ---------------------------------------------------
 

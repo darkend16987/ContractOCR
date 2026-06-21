@@ -10,6 +10,26 @@
   --ok: #4ade80;
   --warn: #fbbf24;
   --line: #243049;
+  --bg-hover: #3f516e;
+  --accent-hover: #5cc8fa;
+}
+
+/* Light theme — opt-in via <html data-theme="light"> (Settings → Giao diện).
+   Tuned for ≥4.5:1 text contrast per the UI checklist. */
+:root[data-theme="light"] {
+  --bg: #f1f5f9;
+  --bg-2: #ffffff;
+  --bg-3: #e2e8f0;
+  --fg: #0f172a;
+  --muted: #475569;
+  --accent: #0284c7;
+  --accent-fg: #ffffff;
+  --danger: #dc2626;
+  --ok: #16a34a;
+  --warn: #b45309;
+  --line: #cbd5e1;
+  --bg-hover: #cbd5e1;
+  --accent-hover: #0369a1;
 }
 
 * { box-sizing: border-box; }
@@ -66,11 +86,15 @@ button {
   color: var(--fg);
   cursor: pointer;
   white-space: nowrap;
+  transition: background-color 0.15s ease, border-color 0.15s ease;
 }
-button:hover:not(:disabled) { background: #3f516e; }
+button:hover:not(:disabled) { background: var(--bg-hover); }
 button:disabled { opacity: 0.4; cursor: not-allowed; }
+/* Keyboard focus ring — visible on Tab, not on mouse click. */
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+button:focus:not(:focus-visible) { outline: none; }
 button.primary { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); font-weight: 600; }
-button.primary:hover:not(:disabled) { background: #5cc8fa; }
+button.primary:hover:not(:disabled) { background: var(--accent-hover); }
 button.ghost { background: transparent; }
 .link { background: none; border: 0; color: var(--accent); padding: 2px 4px; font-size: 12px; cursor: pointer; }
 .link:disabled { color: var(--muted); cursor: not-allowed; }
@@ -373,6 +397,10 @@ body.editing .annot-layer .an { cursor: move; }
 .modal-card .key-row input { flex: 1; }
 .modal-card .key-row button { padding: 0 10px; }
 .set-status { font-size: 12px; color: var(--muted); margin: 2px 0 12px; min-height: 16px; }
+.set-div { border: 0; border-top: 1px solid var(--line); margin: 16px 0 12px; }
+.set-row-between { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.set-row-between b { font-size: 13px; }
+.set-row-between button { flex: 0 0 auto; }
 .modal-card input[type="color"] { width: 100%; height: 32px; padding: 0; background: var(--bg-3); border: 1px solid var(--bg-3); border-radius: 8px; cursor: pointer; }
 .modal-card .chk { flex-direction: row; align-items: center; gap: 8px; color: var(--fg); }
 .modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 8px; }
@@ -381,3 +409,10 @@ body.editing .annot-layer .an { cursor: move; }
 .form-row label { font-size: 11px; color: var(--muted); }
 .form-row input[type="checkbox"] { width: 18px; height: 18px; accent-color: var(--accent); }
 .cmp-note { font-size: 12px; color: var(--muted); margin: 4px 0 12px; line-height: 1.5; }
+
+/* Respect users who ask for less motion (the OCR/processing spinner keeps
+   turning so it still reads as "working", just slower). */
+@media (prefers-reduced-motion: reduce) {
+  * { transition-duration: 0.01ms !important; }
+  .spinner { animation-duration: 2s; }
+}
