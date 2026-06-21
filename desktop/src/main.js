@@ -2,15 +2,21 @@
 
 const path = require("path");
 const fs = require("fs");
+const crypto = require("crypto");
 const { app, BrowserWindow, ipcMain, dialog } = require("electron");
 const { startSidecar, stopSidecar } = require("./sidecar");
 
 let mainWindow = null;
 let sidecar = null;
 
+// Per-launch shared secret. Passed to the sidecar (env) and to the renderer (in
+// the status payload below) so only our renderer can call the loopback OCR server.
+const SIDECAR_TOKEN = crypto.randomBytes(24).toString("hex");
+
 // Sidecar lifecycle state, surfaced to the renderer so OCR features can show a
 // "starting / ready / error" badge without blocking the PDF UI (DESIGN D5).
-let sidecarState = { state: "starting", port: null, error: null };
+// `token` lets the renderer authenticate its sidecar requests.
+let sidecarState = { state: "starting", port: null, error: null, token: SIDECAR_TOKEN };
 
 const RENDERER = path.join(__dirname, "..", "renderer");
 
@@ -33,6 +39,7 @@ function createWindow() {
       preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,
       nodeIntegration: false,
+      sandbox: true,
     },
   });
 
@@ -48,7 +55,7 @@ function createWindow() {
 // until this resolves; the rest of the app works without it.
 function bootSidecar() {
   setSidecarState({ state: "starting", port: null, error: null });
-  startSidecar()
+  startSidecar(SIDECAR_TOKEN)
     .then((sc) => {
       sidecar = sc;
       setSidecarState({ state: "ready", port: sc.port, error: null });

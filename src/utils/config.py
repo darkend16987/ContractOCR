@@ -1,5 +1,6 @@
 """Application configuration loaded from environment variables."""
 
+import json
 import os
 import sys
 from pathlib import Path
@@ -51,6 +52,42 @@ VIETOCR_MODEL = os.getenv("VIETOCR_MODEL", "vgg_transformer")
 # Gemini API
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3-flash-preview")
+
+# ---- User settings (persisted, editable from the app's Settings UI) ----------
+# Stored in a writable per-user file so the packaged app needs no .env / env var.
+# Dev: repo root; frozen: %LOCALAPPDATA%\ContractOCR (see _data_root()).
+SETTINGS_FILE = BASE_DIR / "settings.json"
+
+
+def load_settings() -> dict:
+    """Read the user settings file; return {} if missing or unreadable."""
+    try:
+        if SETTINGS_FILE.exists():
+            return json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
+    except Exception:
+        pass
+    return {}
+
+
+def save_settings(data: dict) -> None:
+    """Persist the user settings dict (atomic-ish write)."""
+    SETTINGS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    tmp = SETTINGS_FILE.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    tmp.replace(SETTINGS_FILE)
+
+
+def get_gemini_key() -> str:
+    """Effective Gemini key: the key entered in the app (settings.json) wins;
+    fall back to the GEMINI_API_KEY env var (dev convenience)."""
+    return (load_settings().get("gemini_api_key") or "").strip() or GEMINI_API_KEY
+
+
+def set_gemini_key(key: str) -> None:
+    """Save the Gemini key entered by the user into settings.json."""
+    data = load_settings()
+    data["gemini_api_key"] = (key or "").strip()
+    save_settings(data)
 
 # Google Sheets (optional)
 GOOGLE_SHEETS_CREDENTIALS_FILE = os.getenv("GOOGLE_SHEETS_CREDENTIALS_FILE", "credentials.json")

@@ -8,7 +8,7 @@
     "start": "electron .",
     "vendor": "node scripts/vendor-libs.js",
     "postinstall": "node scripts/vendor-libs.js",
-    "build:sidecar": "cd .. && pyinstaller sidecar.spec --noconfirm",
+    "build:sidecar": "cd .. && .venv\\Scripts\\python -m PyInstaller sidecar.spec --noconfirm",
     "build": "electron-builder --config electron-builder.yml"
   },
   "devDependencies": {

@@ -31,3 +31,6 @@ Thumbs.db
 # Model cache
 .cache/
 models/
+
+# Per-user app settings (may contain API key)
+settings.json

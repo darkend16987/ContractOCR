@@ -117,6 +117,42 @@ Text/watermark tiếng Việt render qua canvas hệ thống rồi nhúng PNG (t
   Áp dụng → Lưu → mở lại kiểm tra; xác nhận redact xoá được text gốc (copy/search không ra).
 - [ ] **T4.7** (đã biết) Text/ảnh trên trang **đã xoay** đặt đúng vị trí (anchor qua `convertToPdfPoint`)
   nhưng có thể lệch hướng; redact/highlight/draw đúng mọi góc xoay. Khuyến nghị annotate trước khi xoay.
+- [x] **T4.8** Khoanh vùng + ghi chú: thêm công cụ **box** (khung chữ nhật), **ellipse** (elip/tròn),
+  **arrow** (mũi tên), **note** (ghi chú). box/ellipse/arrow bake bằng pdf-lib (`drawRectangle` viền
+  / `drawEllipse` / `drawLine` + đầu mũi tên). **note** = bake **PDF Text annotation thật** (sticky note,
+  `/Contents` UTF-16 tiếng Việt qua `PDFHexString.fromText`, đọc/sửa được trong Acrobat/Foxit) **kèm**
+  1 marker 💬 vẽ lên trang để vẫn thấy trong mọi trình xem. Validate headless trên pdf-lib vendored — PASS.
+- [ ] **T4.9** ▶️ Test GUI: vẽ box/elip/mũi tên/ghi chú → Áp dụng → Lưu → mở trong Acrobat/Foxit kiểm
+  tra comment (note) bấm đọc được + nội dung tiếng Việt đúng.
+
+## Phase 6 — Sửa chữ gốc (native text edit, ✅ code + test backend xong)
+
+Câu hỏi "sửa chữ như Foxit": chỉ làm được trên PDF **có text thật** (xuất từ Word/Excel/print-to-PDF),
+không phải scan/flat (chỉ là ảnh, không có ký tự). Cách làm = **span-level replace** bằng PyMuPDF
+(đã có sẵn): đọc span → xoá thật chữ cũ (redaction) → ghi chữ mới đúng baseline. Không reflow.
+
+- [x] **T6.0** Backend `POST /text-spans` (api.py): đọc `page.get_text("dict")` → trả từng span
+  `{id,text,bbox,origin,size,font,color,flags}` + `has_text`/`width`/`height`/`rotation`. Scan → `has_text:false`.
+- [x] **T6.1** Backend `POST /edit-text`: gom edit theo trang → `add_redact_annot(fill trắng)+apply_redactions()`
+  (xoá thật) → `insert_text` tại `origin` bằng font `vnedit`=DejaVuSans (tiếng Việt). Trả PDF base64.
+- [x] **T6.2** Renderer `text-edit.js`: nút "Sửa chữ" → `/text-spans` trang đang xem → ô bấm
+  (`bbox*scale`) → sửa inline (textarea) → "Áp dụng" → `/edit-text` → thay `state.bytes` → re-render.
+  Khoá thao tác cấu trúc khi đang sửa; loại trừ lẫn nhau với overlay editor.
+- [x] **T6.3** Test backend (`.venv` + TestClient): xoá đúng span cũ, ghi span mới (dấu nguyên vẹn),
+  span khác giữ nguyên; `pages_changed` đúng. PASS.
+- [ ] **T6.4** ▶️ Test GUI: PDF Word → Sửa chữ → sửa đoạn có dấu → Áp dụng → Lưu → mở lại
+  copy/search không ra đoạn cũ; PDF scan → toast "không có chữ để sửa".
+- [ ] **T6.5** (đã biết) Không reflow (sửa trong 1 span); font subset thiếu glyph → fallback DejaVu
+  (kiểu chữ hơi khác); nền màu redact để lại ô trắng; trang đã xoay ô có thể lệch (sửa trước khi xoay).
+
+## Phase S — Bảo mật sidecar (✅ code + test backend xong)
+
+- [x] **TS.0** Token mỗi lần chạy: `main.js` sinh `crypto.randomBytes(24)` → env `SIDECAR_TOKEN` (sidecar)
+  + field `token` trong `sidecar:status` (renderer). Middleware api.py bắt buộc header `X-Sidecar-Token`
+  cho mọi endpoint trừ `/health`; env không set thì bỏ qua (dev). `sidecarFetch()` tự gắn header.
+- [x] **TS.1** Guard kích thước `pdf_b64` (~200MB) cho `/searchable`,`/compress`,`/text-spans`,`/edit-text`.
+- [x] **TS.2** `BrowserWindow` thêm `sandbox:true`; `api.py __main__` bind `127.0.0.1` (không `0.0.0.0`).
+- [ ] **TS.3** ▶️ Test GUI: DevTools `fetch` không token → 401; thao tác trong app vẫn chạy.
 
 ## Ghi chú thực thi
 

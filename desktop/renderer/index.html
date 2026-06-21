@@ -41,9 +41,11 @@
       <div class="spacer"></div>
 
       <button id="btn-edit" class="ghost" disabled title="Chỉnh sửa: chú thích, watermark, redact, điền form">Chỉnh sửa</button>
+      <button id="btn-text-edit" class="ghost" disabled title="Sửa trực tiếp chữ gốc của PDF (chỉ PDF có text thật, không phải scan)">Sửa chữ</button>
       <button id="btn-searchable" class="ghost" disabled title="Tạo PDF tìm-kiếm-được (OCR thêm lớp text vô hình)">Searchable</button>
       <button id="btn-compress" class="ghost" disabled title="Nén PDF (giảm dung lượng ảnh)">Nén</button>
       <button id="btn-ocr" class="ghost" disabled title="OCR + bóc tách field bằng AI">Bóc tách</button>
+      <button id="btn-settings" class="ghost" title="Cài đặt — API key cho Bóc tách">⚙</button>
       <span id="sidecar-badge" class="badge starting" title="Trạng thái engine OCR">OCR: …</span>
     </header>
 
@@ -54,6 +56,10 @@
         <button class="tool" data-tool="text" title="Hộp văn bản">T</button>
         <button class="tool" data-tool="highlight" title="Tô sáng">▭</button>
         <button class="tool" data-tool="draw" title="Vẽ tay">✎</button>
+        <button class="tool" data-tool="box" title="Khoanh vùng — khung chữ nhật">▭</button>
+        <button class="tool" data-tool="ellipse" title="Khoanh vùng — elip / tròn">◯</button>
+        <button class="tool" data-tool="arrow" title="Mũi tên chỉ dẫn">↗</button>
+        <button class="tool" data-tool="note" title="Ghi chú (comment) gắn vào một điểm">💬</button>
         <button class="tool" data-tool="image" title="Chèn ảnh / chữ ký">🖼</button>
         <button class="tool" data-tool="redact" title="Che thông tin (an toàn — xoá nội dung gốc)">⬛</button>
       </div>
@@ -73,6 +79,15 @@
     </div>
     <input type="file" id="ed-file" accept="image/png,image/jpeg" hidden />
 
+    <!-- P6 native text-edit toolbar (hidden until "Sửa chữ" is on) -->
+    <div class="edit-bar" id="tedit-bar" hidden>
+      <b class="tedit-title">Sửa chữ gốc</b>
+      <span id="te-hint" class="readout"></span>
+      <div class="spacer"></div>
+      <button id="te-apply" class="primary" disabled title="Ghi các sửa đổi vào tài liệu">Áp dụng</button>
+      <button id="te-exit" title="Thoát chế độ sửa chữ">Thoát</button>
+    </div>
+
     <main class="workspace">
       <aside class="sidebar" id="sidebar">
         <div class="sidebar-head">
@@ -87,7 +102,7 @@
           <div class="empty-icon">📄</div>
           <h2>Mở một file PDF để bắt đầu</h2>
           <p>Kéo–thả file vào đây, hoặc bấm <b>Mở</b>.</p>
-          <p class="hint">Xem · ghép · tách · chèn · xoay · xóa · sắp xếp · chú thích · watermark · redact · OCR — chạy hoàn toàn trên máy.</p>
+          <p class="hint">Xem · ghép · tách · chèn · xoay · xóa · sắp xếp · chú thích · khoanh vùng · ghi chú · watermark · redact · sửa chữ · OCR — chạy hoàn toàn trên máy.</p>
         </div>
       </section>
     </main>
@@ -176,6 +191,32 @@
       </div>
     </div>
 
+    <!-- Settings dialog (API key for AI extraction) -->
+    <div class="modal" id="set-modal" hidden>
+      <div class="modal-card">
+        <h3>Cài đặt</h3>
+        <p class="cmp-note">
+          Tính năng <b>Bóc tách</b> dùng AI Google Gemini để đọc hợp đồng nên cần API key.
+          Dán key vào đây, bấm Lưu — key được lưu an toàn trên máy này, lần sau không phải nhập lại.
+        </p>
+        <label>Gemini API key
+          <span class="key-row">
+            <input id="set-gemini-key" type="password" placeholder="Dán API key vào đây…" autocomplete="off" spellcheck="false" />
+            <button id="set-key-toggle" type="button" class="ghost" title="Hiện / ẩn key">👁</button>
+          </span>
+        </label>
+        <p class="set-status" id="set-status"></p>
+        <p class="cmp-note">
+          Chưa có key? Lấy miễn phí tại <b>aistudio.google.com/apikey</b>.
+          Không nhập key thì các tính năng PDF + OCR + Searchable vẫn dùng bình thường.
+        </p>
+        <div class="modal-actions">
+          <button id="set-cancel">Đóng</button>
+          <button id="set-ok" class="primary">Lưu</button>
+        </div>
+      </div>
+    </div>
+
     <div class="toast" id="toast" hidden></div>
     <div class="overlay" id="overlay" hidden><div class="spinner"></div><span id="overlay-msg"></span></div>
 
@@ -184,5 +225,6 @@
     <script src="vendor/pdf.min.js"></script>
     <script src="app.js"></script>
     <script src="editor.js"></script>
+    <script src="text-edit.js"></script>
   </body>
 </html>

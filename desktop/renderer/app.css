@@ -256,6 +256,14 @@ body.editing .annot-layer .an { cursor: move; }
 .an-redact { background: #000; }
 .an-image img { width: 100%; height: 100%; display: block; }
 .an-draw svg { display: block; overflow: visible; }
+.an-arrow svg { display: block; overflow: visible; }
+.an-box, .an-ellipse { background: transparent; }
+.an-note {
+  display: flex; align-items: center; justify-content: center;
+  font-size: 12px; line-height: 1; border-radius: 4px 4px 4px 0;
+  border: 1px solid rgba(0,0,0,0.45); cursor: pointer;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.4); user-select: none;
+}
 .an-watermark {
   position: absolute; left: 50%; top: 50%;
   white-space: nowrap; font-weight: 700; pointer-events: none;
@@ -282,6 +290,42 @@ body.editing .annot-layer .an { cursor: move; }
   z-index: 30;
 }
 
+/* ---- P6 native text editing (span boxes over the real text) ---- */
+.tedit-layer {
+  position: absolute;
+  left: 0; top: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+.tedit-bar .tedit-title { font-size: 13px; }
+.span-box {
+  position: absolute;
+  box-sizing: border-box;
+  pointer-events: auto;
+  cursor: text;
+  border: 1px solid transparent;
+  border-radius: 2px;
+  background: rgba(56, 189, 248, 0.10);
+  transition: background 0.1s, border-color 0.1s;
+}
+.span-box:hover { background: rgba(56, 189, 248, 0.22); border-color: var(--accent); }
+.span-box.edited { background: rgba(74, 222, 128, 0.22); border-color: #4ade80; }
+.span-input {
+  position: absolute;
+  box-sizing: border-box;
+  min-height: 18px;
+  background: rgba(255, 255, 255, 0.97);
+  color: #000;
+  border: 1px solid var(--accent);
+  border-radius: 3px;
+  padding: 1px 3px;
+  font-family: system-ui, "Segoe UI", sans-serif;
+  line-height: 1.25;
+  resize: both;
+  pointer-events: auto;
+  z-index: 30;
+}
+
 /* ---- modal dialogs (watermark / form) ---- */
 .modal {
   position: fixed; inset: 0;
@@ -303,11 +347,15 @@ body.editing .annot-layer .an { cursor: move; }
 .modal-card label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); margin-bottom: 10px; }
 .modal-card .modal-row { display: flex; gap: 12px; }
 .modal-card .modal-row label { flex: 1; }
-.modal-card input[type="text"], .modal-card input[type="number"], .modal-card select {
+.modal-card input[type="text"], .modal-card input[type="number"], .modal-card input[type="password"], .modal-card select {
   font: inherit; font-size: 13px; padding: 7px 8px;
   background: var(--bg-3); color: var(--fg);
   border: 1px solid var(--bg-3); border-radius: 8px;
 }
+.modal-card .key-row { display: flex; gap: 6px; align-items: stretch; }
+.modal-card .key-row input { flex: 1; }
+.modal-card .key-row button { padding: 0 10px; }
+.set-status { font-size: 12px; color: var(--muted); margin: 2px 0 12px; min-height: 16px; }
 .modal-card input[type="color"] { width: 100%; height: 32px; padding: 0; background: var(--bg-3); border: 1px solid var(--bg-3); border-radius: 8px; cursor: pointer; }
 .modal-card .chk { flex-direction: row; align-items: center; gap: 8px; color: var(--fg); }
 .modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 8px; }

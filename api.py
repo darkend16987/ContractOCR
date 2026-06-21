@@ -9,14 +9,16 @@ and returns extracted Vietnamese text.
 import base64
 import io
 import logging
+import os
 import tempfile
 from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from PIL import Image
 
@@ -24,7 +26,7 @@ from src.ocr.engine import create_engine, BaseOCREngine
 from src.agents.gemini_agent import GeminiAgent, DEFAULT_CONTRACT_FIELDS
 from src.agents.field_templates import TEMPLATES
 from src.output.writer import JSONWriter, ExcelWriter, CSVWriter
-from src.utils.config import GEMINI_API_KEY, GEMINI_MODEL
+from src.utils.config import GEMINI_MODEL, get_gemini_key, set_gemini_key
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
@@ -74,16 +76,39 @@ app.add_middleware(
 )
 
 
+# Per-launch shared secret. The desktop app (main.js) generates a random token and
+# passes it to the sidecar via the SIDECAR_TOKEN env var + to the renderer, which
+# echoes it back in the X-Sidecar-Token header. This stops other local processes /
+# browser pages from hitting the loopback OCR server (DoS, or running up the user's
+# Gemini bill). If SIDECAR_TOKEN is unset (running api.py/app.py directly in dev),
+# the check is skipped for backwards compatibility.
+_SIDECAR_TOKEN = os.environ.get("SIDECAR_TOKEN") or None
+
+# Reject oversized payloads before decoding to avoid blowing up memory.
+# ~200 MB of binary => ~280 MB of base64 text.
+_MAX_PDF_B64 = 280_000_000
+
+
+@app.middleware("http")
+async def _require_token(request: Request, call_next):
+    """Gate every endpoint (except /health) behind the per-launch token."""
+    if _SIDECAR_TOKEN and request.url.path != "/health" and request.method != "OPTIONS":
+        if request.headers.get("x-sidecar-token") != _SIDECAR_TOKEN:
+            return JSONResponse(status_code=401, content={"detail": "Token không hợp lệ"})
+    return await call_next(request)
+
+
 def _get_gemini() -> GeminiAgent:
     """Lazily build the Gemini agent; raise 503 if no API key is configured."""
     global gemini_agent
     if gemini_agent is None:
-        if not GEMINI_API_KEY:
+        key = get_gemini_key()
+        if not key:
             raise HTTPException(
                 status_code=503,
-                detail="GEMINI_API_KEY chưa cấu hình (.env). Bóc tách field cần Gemini.",
+                detail="Chưa cấu hình Gemini API key. Mở ⚙ Cài đặt trong app để nhập key.",
             )
-        gemini_agent = GeminiAgent(api_key=GEMINI_API_KEY, model_name=GEMINI_MODEL)
+        gemini_agent = GeminiAgent(api_key=key, model_name=GEMINI_MODEL)
     return gemini_agent
 
 
@@ -119,6 +144,42 @@ class OCRResponse(BaseModel):
 @app.get("/health")
 async def health():
     return {"status": "ok", "engine": "hybrid" if ocr_engine else "not_loaded"}
+
+
+def _mask_key(key: str) -> str:
+    """Show only the last 4 chars so the UI can confirm a key without leaking it."""
+    key = (key or "").strip()
+    if not key:
+        return ""
+    return ("•" * max(4, len(key) - 4)) + key[-4:]
+
+
+class ConfigUpdate(BaseModel):
+    """Body for POST /config — settings entered in the app's ⚙ UI."""
+    gemini_api_key: str | None = None
+
+
+@app.get("/config")
+async def get_config():
+    """Report current settings state (key never returned in full — masked only)."""
+    key = get_gemini_key()
+    return {"gemini_configured": bool(key), "gemini_key_masked": _mask_key(key)}
+
+
+@app.post("/config")
+async def update_config(req: ConfigUpdate):
+    """Save the Gemini API key entered by the user, persist it, and rebuild the
+    agent so the next /extract uses it — no sidecar restart needed."""
+    global gemini_agent
+    if req.gemini_api_key is not None:
+        set_gemini_key(req.gemini_api_key)
+        gemini_agent = None  # force rebuild with the new key on next use
+    key = get_gemini_key()
+    return {
+        "success": True,
+        "gemini_configured": bool(key),
+        "gemini_key_masked": _mask_key(key),
+    }
 
 
 @app.post("/ocr", response_model=OCRResponse)
@@ -416,6 +477,8 @@ async def searchable(req: SearchableRequest):
     if not font_path:
         raise HTTPException(status_code=503, detail="Không tìm thấy font Unicode (DejaVu Sans) để nhúng lớp text.")
 
+    if len(req.pdf_b64) > _MAX_PDF_B64:
+        raise HTTPException(status_code=400, detail="PDF quá lớn (tối đa ~200MB).")
     try:
         pdf_bytes = base64.b64decode(req.pdf_b64)
     except Exception:
@@ -525,6 +588,8 @@ async def compress(req: CompressRequest):
     if req.preset != "lossless" and req.preset not in _COMPRESS_PRESETS:
         raise HTTPException(status_code=400, detail="preset phải là screen|ebook|printer|lossless")
 
+    if len(req.pdf_b64) > _MAX_PDF_B64:
+        raise HTTPException(status_code=400, detail="PDF quá lớn (tối đa ~200MB).")
     try:
         pdf_bytes = base64.b64decode(req.pdf_b64)
     except Exception:
@@ -576,6 +641,239 @@ async def compress(req: CompressRequest):
     )
 
 
+# ---- P6: native text editing (span-level replace via PyMuPDF) -------------
+#
+# "Edit the real characters" (like Foxit) only works on PDFs that carry an actual
+# text layer (exported from Word/Excel/print-to-PDF), not on scans/flattened images.
+# We do span-level replace: read each text span's box/font/size, then on edit we
+# physically remove the old glyphs (redaction) and re-draw the new text in place.
+# No reflow — one span at a time. Vietnamese glyphs the original font can't encode
+# fall back to the bundled DejaVu Sans (same font used for the searchable layer).
+
+
+def _norm_color(c) -> tuple[float, float, float]:
+    """Normalise a colour to an (r,g,b) 0..1 tuple.
+
+    Accepts a packed sRGB int (PyMuPDF span colour), a [r,g,b] list/tuple in
+    0..1 or 0..255, or None (-> black).
+    """
+    if c is None:
+        return (0.0, 0.0, 0.0)
+    if isinstance(c, int):
+        return (((c >> 16) & 255) / 255.0, ((c >> 8) & 255) / 255.0, (c & 255) / 255.0)
+    if isinstance(c, (list, tuple)) and len(c) == 3:
+        vals = [float(v) for v in c]
+        if any(v > 1.0 for v in vals):
+            vals = [v / 255.0 for v in vals]
+        return (vals[0], vals[1], vals[2])
+    return (0.0, 0.0, 0.0)
+
+
+class TextSpansRequest(BaseModel):
+    """Request body for reading a page's editable text spans."""
+    pdf_b64: str
+    page: int = 0  # 0-based page index
+
+
+class TextSpan(BaseModel):
+    id: int
+    text: str
+    bbox: list[float]  # [x0, y0, x1, y1] in PDF points, top-left origin
+    origin: list[float]  # [x, y] text baseline origin (for faithful re-drawing)
+    size: float
+    font: str
+    color: int  # packed sRGB
+    flags: int  # PyMuPDF span flags (bold/italic/etc.)
+
+
+class TextSpansResponse(BaseModel):
+    success: bool
+    has_text: bool = False
+    spans: list[TextSpan] = []
+    width: float = 0.0
+    height: float = 0.0
+    rotation: int = 0
+    error: str | None = None
+
+
+@app.post("/text-spans", response_model=TextSpansResponse)
+async def text_spans(req: TextSpansRequest):
+    """Return the editable text spans on one page (empty if the page is a scan)."""
+    try:
+        import fitz  # PyMuPDF
+    except ImportError:
+        raise HTTPException(status_code=503, detail="PyMuPDF (fitz) chưa cài — không đọc được text.")
+
+    if len(req.pdf_b64) > _MAX_PDF_B64:
+        raise HTTPException(status_code=400, detail="PDF quá lớn (tối đa ~200MB).")
+    try:
+        pdf_bytes = base64.b64decode(req.pdf_b64)
+    except Exception:
+        raise HTTPException(status_code=400, detail="pdf_b64 không hợp lệ")
+
+    try:
+        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Không mở được PDF: {e}")
+
+    try:
+        if req.page < 0 or req.page >= doc.page_count:
+            raise HTTPException(status_code=400, detail="Số trang không hợp lệ")
+        page = doc[req.page]
+        spans: list[TextSpan] = []
+        sid = 0
+        data = page.get_text("dict")
+        for block in data.get("blocks", []):
+            for line in block.get("lines", []):
+                for sp in line.get("spans", []):
+                    txt = sp.get("text", "")
+                    if not txt.strip():
+                        continue
+                    x0, y0, x1, y1 = sp["bbox"]
+                    ox, oy = sp.get("origin", (x0, y1))
+                    spans.append(
+                        TextSpan(
+                            id=sid,
+                            text=txt,
+                            bbox=[x0, y0, x1, y1],
+                            origin=[ox, oy],
+                            size=float(sp.get("size", 11.0)),
+                            font=str(sp.get("font", "")),
+                            color=int(sp.get("color", 0)),
+                            flags=int(sp.get("flags", 0)),
+                        )
+                    )
+                    sid += 1
+        rect = page.rect
+        return TextSpansResponse(
+            success=True,
+            has_text=bool(spans),
+            spans=spans,
+            width=rect.width,
+            height=rect.height,
+            rotation=int(page.rotation),
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("text-spans error")
+        return TextSpansResponse(success=False, error=str(e))
+    finally:
+        doc.close()
+
+
+class TextEdit(BaseModel):
+    page: int
+    bbox: list[float]  # [x0, y0, x1, y1] in PDF points, top-left origin (the span box)
+    new_text: str
+    origin: list[float] | None = None  # baseline [x, y]; falls back to bbox bottom-left
+    size: float | None = None
+    color: Any | None = None  # packed int / [r,g,b]; defaults to black
+    fill: Any | None = None  # redaction fill (page background); defaults to white
+
+
+class EditTextRequest(BaseModel):
+    pdf_b64: str
+    edits: list[TextEdit]
+
+
+class EditTextResponse(BaseModel):
+    success: bool
+    data_b64: str = ""
+    filename: str = ""
+    pages_changed: int = 0
+    error: str | None = None
+
+
+@app.post("/edit-text", response_model=EditTextResponse)
+async def edit_text(req: EditTextRequest):
+    """Apply span-level text replacements: remove old glyphs, redraw new text in place."""
+    try:
+        import fitz  # PyMuPDF
+    except ImportError:
+        raise HTTPException(status_code=503, detail="PyMuPDF (fitz) chưa cài — không sửa được text.")
+
+    if not req.edits:
+        raise HTTPException(status_code=400, detail="Không có chỉnh sửa nào")
+    if len(req.pdf_b64) > _MAX_PDF_B64:
+        raise HTTPException(status_code=400, detail="PDF quá lớn (tối đa ~200MB).")
+    try:
+        pdf_bytes = base64.b64decode(req.pdf_b64)
+    except Exception:
+        raise HTTPException(status_code=400, detail="pdf_b64 không hợp lệ")
+
+    font_path = _vietnamese_font()  # Unicode fallback for diacritics
+
+    try:
+        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Không mở được PDF: {e}")
+
+    # Group edits per page so redactions are applied once per page.
+    by_page: dict[int, list[TextEdit]] = {}
+    for e in req.edits:
+        if e.page < 0 or e.page >= doc.page_count:
+            doc.close()
+            raise HTTPException(status_code=400, detail=f"Trang {e.page} không hợp lệ")
+        by_page.setdefault(e.page, []).append(e)
+
+    try:
+        for pno, edits in by_page.items():
+            page = doc[pno]
+            # 1. Physically remove the old glyphs under each box.
+            for e in edits:
+                page.add_redact_annot(fitz.Rect(*e.bbox), fill=_norm_color(e.fill) if e.fill is not None else (1, 1, 1))
+            page.apply_redactions()
+
+            # 2. Redraw the new text in the same box. Embed the Unicode fallback
+            #    font once per page (only if we have it).
+            have_font = False
+            if font_path:
+                try:
+                    page.insert_font(fontname="vnedit", fontfile=font_path)
+                    have_font = True
+                except Exception as fe:
+                    logger.debug("insert_font failed: %s", fe)
+
+            for e in edits:
+                txt = e.new_text or ""
+                if not txt.strip():
+                    continue  # empty edit = delete the span (redaction already did it)
+                x0, y0, x1, y1 = e.bbox
+                color = _norm_color(e.color)
+                size = float(e.size) if e.size else max(6.0, (y1 - y0) * 0.8)
+                # Redraw on the original baseline so the new text sits exactly where the
+                # old text was. insert_text (point/baseline) is more faithful than
+                # insert_textbox for a single span — no box-fit failure if the new text
+                # is a bit longer (it flows right, just like the original line did).
+                ox, oy = e.origin if e.origin else (x0, y1)
+                fontname = "vnedit" if have_font else "helv"
+                try:
+                    page.insert_text(
+                        (ox, oy), txt, fontname=fontname, fontsize=size, color=color
+                    )
+                except Exception as ie:
+                    logger.debug("insert_text error: %s", ie)
+
+        out_bytes = doc.tobytes(deflate=True, garbage=3)
+        pages_changed = len(by_page)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("edit-text error")
+        return EditTextResponse(success=False, error=str(e))
+    finally:
+        doc.close()
+
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    return EditTextResponse(
+        success=True,
+        data_b64=base64.b64encode(out_bytes).decode("ascii"),
+        filename=f"edited_{ts}.pdf",
+        pages_changed=pages_changed,
+    )
+
+
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host="127.0.0.1", port=8000)

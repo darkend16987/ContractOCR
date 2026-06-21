@@ -28,7 +28,15 @@ const state = {
   dragSrc: null,
 };
 
-const sidecar = { state: "starting", base: null };
+const sidecar = { state: "starting", base: null, token: null };
+
+// fetch() against the sidecar, carrying the per-launch auth token. Use this for
+// every sidecar call so requests aren't rejected with 401.
+function sidecarFetch(path, opts = {}) {
+  const headers = { ...(opts.headers || {}) };
+  if (sidecar.token) headers["X-Sidecar-Token"] = sidecar.token;
+  return fetch(sidecar.base + path, { ...opts, headers });
+}
 
 // ---- small UI helpers ----------------------------------------------------
 
@@ -69,6 +77,7 @@ async function loadBytes(bytes, name) {
   state.selected.clear();
   state.lastClicked = null;
   if (window.Editor) window.Editor.reset(); // drop annotations from any previous doc
+  if (window.TextEdit) window.TextEdit.reset(); // drop any in-progress text edits
   await renderAll();
   toast("Đã mở: " + state.name, "good");
 }
@@ -169,6 +178,8 @@ async function renderViewer() {
   }
   // Let the overlay editor (P4) re-attach its annotation layers, if loaded.
   if (window.Editor) window.Editor.syncOverlays();
+  // Let the native text editor (P6) re-place its span boxes, if active.
+  if (window.TextEdit) window.TextEdit.syncOverlays();
 }
 
 function scrollToPage(i) {
@@ -416,7 +427,7 @@ async function rasterize(indices, scale = 2) {
 async function loadTemplates() {
   if (templatesLoaded || sidecar.state !== "ready" || !sidecar.base) return;
   try {
-    const res = await fetch(sidecar.base + "/templates");
+    const res = await sidecarFetch("/templates");
     const data = await res.json();
     const sel = $("ext-template");
     sel.innerHTML = "";
@@ -465,7 +476,7 @@ async function runExtract() {
   showOverlay(`Đang OCR + bóc tách ${indices.length} trang…`);
   try {
     const { imgs, nums } = await rasterize(indices);
-    const res = await fetch(sidecar.base + "/extract", {
+    const res = await sidecarFetch("/extract", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ images: imgs, page_numbers: nums, template }),
@@ -527,7 +538,7 @@ async function runExport(fmt) {
   inputs.forEach((i) => (record[i.dataset.key] = i.value));
   showOverlay("Đang xuất…");
   try {
-    const res = await fetch(sidecar.base + "/export", {
+    const res = await sidecarFetch("/export", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -579,7 +590,7 @@ async function makeSearchable() {
   if (window.Editor) await window.Editor.bakePending();
   showOverlay("Đang OCR tạo lớp text tìm kiếm… (tài liệu nhiều trang sẽ lâu)");
   try {
-    const res = await fetch(sidecar.base + "/searchable", {
+    const res = await sidecarFetch("/searchable", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ pdf_b64: u8ToB64(state.bytes) }),
@@ -626,7 +637,7 @@ async function runCompress() {
   const preset = $("cmp-preset").value || "ebook";
   showOverlay("Đang nén PDF…");
   try {
-    const res = await fetch(sidecar.base + "/compress", {
+    const res = await sidecarFetch("/compress", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ pdf_b64: u8ToB64(state.bytes), preset }),
@@ -653,11 +664,61 @@ async function runCompress() {
   }
 }
 
+// ---- settings (API key) --------------------------------------------------
+
+async function openSettings() {
+  if (sidecar.state !== "ready" || !sidecar.base) {
+    toast("Engine đang khởi động — chờ badge 'OCR: sẵn sàng' rồi mở lại.", "bad");
+    return;
+  }
+  const input = $("set-gemini-key");
+  const status = $("set-status");
+  input.value = "";
+  input.type = "password";
+  status.textContent = "Đang tải…";
+  $("set-modal").hidden = false;
+  input.focus();
+  try {
+    const res = await sidecarFetch("/config");
+    const data = await res.json();
+    status.textContent = data.gemini_configured
+      ? `Đã có key: ${data.gemini_key_masked}. Nhập key mới để thay.`
+      : "Chưa có key. Bóc tách sẽ không chạy cho tới khi bạn nhập.";
+  } catch (err) {
+    status.textContent = "Không đọc được cấu hình: " + err.message;
+  }
+}
+
+async function saveSettings() {
+  const key = $("set-gemini-key").value.trim();
+  if (!key) {
+    toast("Hãy dán API key trước khi lưu.", "bad");
+    return;
+  }
+  try {
+    const res = await sidecarFetch("/config", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ gemini_api_key: key }),
+    });
+    const data = await res.json();
+    if (data.success && data.gemini_configured) {
+      $("set-modal").hidden = true;
+      toast("Đã lưu API key.", "good");
+    } else {
+      toast("Lưu không thành công.", "bad");
+    }
+  } catch (err) {
+    toast("Lỗi lưu cài đặt: " + err.message, "bad");
+  }
+}
+
 // ---- sidecar status ------------------------------------------------------
 
 function applySidecar(s) {
   sidecar.state = s.state;
   sidecar.base = s.port ? "http://127.0.0.1:" + s.port : null;
+  sidecar.token = s.token || null;
   const b = $("sidecar-badge");
   b.className = "badge " + s.state;
   b.textContent =
@@ -671,21 +732,27 @@ function applySidecar(s) {
 
 function updateToolbar() {
   const has = !!state.bytes && state.numPages > 0;
-  // While editing (P4), page-structure ops are locked to keep page indices
-  // stable under the annotation overlay; Save/zoom stay available.
-  const editing = !!(window.Editor && window.Editor.active);
+  // While editing (P4 overlay or P6 text-edit), page-structure ops are locked to
+  // keep page indices stable under the overlay; Save/zoom stay available.
+  const overlayEditing = !!(window.Editor && window.Editor.active);
+  const textEditing = !!(window.TextEdit && window.TextEdit.active);
+  const editing = overlayEditing || textEditing;
+  const ready = sidecar.state === "ready";
   $("btn-save").disabled = !has;
   document
     .querySelectorAll("[data-needs-doc] button")
     .forEach((b) => (b.disabled = !has || editing));
   $("btn-select-all").disabled = !has || editing;
-  $("btn-ocr").disabled = !(sidecar.state === "ready" && has) || editing;
+  $("btn-ocr").disabled = !(ready && has) || editing;
   const bs = $("btn-searchable");
-  if (bs) bs.disabled = !(sidecar.state === "ready" && has) || editing;
+  if (bs) bs.disabled = !(ready && has) || editing;
   const bc = $("btn-compress");
-  if (bc) bc.disabled = !(sidecar.state === "ready" && has) || editing;
+  if (bc) bc.disabled = !(ready && has) || editing;
+  // Overlay edit must not run while text-editing, and vice versa.
   const be = $("btn-edit");
-  if (be) be.disabled = !has;
+  if (be) be.disabled = !has || textEditing;
+  const bt = $("btn-text-edit");
+  if (bt) bt.disabled = !(ready && has) || overlayEditing;
   $("zoom-label").textContent = Math.round(state.scale * 100) + "%";
 }
 
@@ -712,6 +779,16 @@ $("btn-searchable").onclick = makeSearchable;
 $("btn-compress").onclick = openCompress;
 $("cmp-cancel").onclick = () => ($("cmp-modal").hidden = true);
 $("cmp-ok").onclick = runCompress;
+$("btn-settings").onclick = openSettings;
+$("set-cancel").onclick = () => ($("set-modal").hidden = true);
+$("set-ok").onclick = saveSettings;
+$("set-key-toggle").onclick = () => {
+  const i = $("set-gemini-key");
+  i.type = i.type === "password" ? "text" : "password";
+};
+$("set-gemini-key").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") saveSettings();
+});
 $("ext-close").onclick = () => ($("ext-panel").hidden = true);
 $("ext-run").onclick = runExtract;
 $("ext-export").addEventListener("click", (e) => {

@@ -77,11 +77,16 @@ function waitForHealth(port, timeoutMs = 180000, intervalMs = 600) {
   });
 }
 
-async function startSidecar() {
+async function startSidecar(token) {
   const port = await findFreePort();
   const { command, args, cwd } = sidecarCommand(port);
 
-  const child = spawn(command, args, { cwd, stdio: ["ignore", "pipe", "pipe"] });
+  // Pass the per-launch token via env so the sidecar can reject any request that
+  // doesn't carry it (other local processes / browser pages on 127.0.0.1).
+  const env = { ...process.env };
+  if (token) env.SIDECAR_TOKEN = token;
+
+  const child = spawn(command, args, { cwd, env, stdio: ["ignore", "pipe", "pipe"] });
   child.stdout.on("data", (d) => process.stdout.write(`[sidecar] ${d}`));
   child.stderr.on("data", (d) => process.stderr.write(`[sidecar] ${d}`));
   child.on("exit", (code) => console.log(`[sidecar] exited with code ${code}`));

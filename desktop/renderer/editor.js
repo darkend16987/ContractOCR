@@ -22,7 +22,7 @@
 
 (function () {
   const PDFLib = window.PDFLib;
-  const { PDFDocument, rgb } = PDFLib;
+  const { PDFDocument, rgb, PDFName, PDFHexString } = PDFLib;
 
   const ed = {
     active: false,
@@ -171,6 +171,47 @@
       return el;
     }
 
+    if (a.kind === "arrow") {
+      // SVG over the arrow's bounding box; line + filled arrowhead.
+      const minX = Math.min(a.x1, a.x2);
+      const minY = Math.min(a.y1, a.y2);
+      const w = Math.max(1, Math.abs(a.x2 - a.x1));
+      const h = Math.max(1, Math.abs(a.y2 - a.y1));
+      const pad = (a.width || 2) * 3 + 6; // room for the head
+      el.style.left = (minX - pad) * s + "px";
+      el.style.top = (minY - pad) * s + "px";
+      el.style.width = (w + 2 * pad) * s + "px";
+      el.style.height = (h + 2 * pad) * s + "px";
+      const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+      svg.setAttribute("viewBox", `0 0 ${w + 2 * pad} ${h + 2 * pad}`);
+      svg.setAttribute("width", "100%");
+      svg.setAttribute("height", "100%");
+      const sx = a.x1 - minX + pad;
+      const sy = a.y1 - minY + pad;
+      const ex = a.x2 - minX + pad;
+      const ey = a.y2 - minY + pad;
+      const ang = Math.atan2(ey - sy, ex - sx);
+      const hl = Math.max(8, (a.width || 2) * 4); // head length
+      const ha = Math.PI / 7; // half-angle
+      const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+      line.setAttribute("x1", sx);
+      line.setAttribute("y1", sy);
+      line.setAttribute("x2", ex);
+      line.setAttribute("y2", ey);
+      line.setAttribute("stroke", a.color);
+      line.setAttribute("stroke-width", String(a.width || 2));
+      line.setAttribute("stroke-linecap", "round");
+      const head = document.createElementNS("http://www.w3.org/2000/svg", "polygon");
+      const p1 = [ex - hl * Math.cos(ang - ha), ey - hl * Math.sin(ang - ha)];
+      const p2 = [ex - hl * Math.cos(ang + ha), ey - hl * Math.sin(ang + ha)];
+      head.setAttribute("points", `${ex},${ey} ${p1[0]},${p1[1]} ${p2[0]},${p2[1]}`);
+      head.setAttribute("fill", a.color);
+      svg.appendChild(line);
+      svg.appendChild(head);
+      el.appendChild(svg);
+      return el;
+    }
+
     el.style.left = a.x * s + "px";
     el.style.top = a.y * s + "px";
     el.style.width = a.w * s + "px";
@@ -182,6 +223,15 @@
       el.textContent = a.text;
     } else if (a.kind === "highlight") {
       el.style.background = a.color;
+    } else if (a.kind === "box") {
+      el.style.border = Math.max(1, (a.width || 2)) * s + "px solid " + a.color;
+    } else if (a.kind === "ellipse") {
+      el.style.border = Math.max(1, (a.width || 2)) * s + "px solid " + a.color;
+      el.style.borderRadius = "50%";
+    } else if (a.kind === "note") {
+      el.style.background = a.color;
+      el.title = a.text || "(ghi chú trống)";
+      el.textContent = "💬";
     } else if (a.kind === "image") {
       const img = document.createElement("img");
       img.src = a.dataUrl;
@@ -190,7 +240,7 @@
     }
     // redact needs no extra content (solid black via CSS)
 
-    if (ed.sel === a.id && (a.kind === "highlight" || a.kind === "redact" || a.kind === "image")) {
+    if (ed.sel === a.id && (a.kind === "highlight" || a.kind === "redact" || a.kind === "image" || a.kind === "box" || a.kind === "ellipse")) {
       const h = document.createElement("div");
       h.className = "handle";
       el.appendChild(h);
@@ -239,7 +289,7 @@
     const a = hit.a;
     if (a.color) $("ed-color").value = toHex(a.color);
     if (a.kind === "text") $("ed-fontsize").value = String(a.fontSize);
-    if (a.kind === "draw") $("ed-penwidth").value = String(a.width);
+    if (["draw", "box", "ellipse", "arrow"].includes(a.kind) && a.width) $("ed-penwidth").value = String(a.width);
   }
   function toHex(c) {
     return /^#/.test(c) ? c : c;
@@ -271,7 +321,12 @@
         const id = +anEl.dataset.id;
         select(id);
         const a = findAnnot(id).a;
-        const orig = a.kind === "draw" ? { pts: a.pts.map((q) => ({ ...q })) } : { x: a.x, y: a.y };
+        const orig =
+          a.kind === "draw"
+            ? { pts: a.pts.map((q) => ({ ...q })) }
+            : a.kind === "arrow"
+            ? { x1: a.x1, y1: a.y1, x2: a.x2, y2: a.y2 }
+            : { x: a.x, y: a.y };
         drag = { type: "move", page: i, id, layer, sx: p.x, sy: p.y, orig };
         e.preventDefault();
       } else {
@@ -294,12 +349,26 @@
       return;
     }
 
-    if (ed.tool === "highlight" || ed.tool === "redact") {
-      const a = { id: ed.seq++, kind: ed.tool, x: p.x, y: p.y, w: 1, h: 1, color: ed.color };
+    if (ed.tool === "highlight" || ed.tool === "redact" || ed.tool === "box" || ed.tool === "ellipse") {
+      const a = { id: ed.seq++, kind: ed.tool, x: p.x, y: p.y, w: 1, h: 1, color: ed.color, width: ed.penWidth };
       annotsFor(i).push(a);
       ed.sel = a.id;
       drag = { type: "rect", page: i, id: a.id, layer, sx: p.x, sy: p.y };
       e.preventDefault();
+      return;
+    }
+
+    if (ed.tool === "arrow") {
+      const a = { id: ed.seq++, kind: "arrow", x1: p.x, y1: p.y, x2: p.x, y2: p.y, color: ed.color, width: ed.penWidth };
+      annotsFor(i).push(a);
+      ed.sel = a.id;
+      drag = { type: "arrow", page: i, id: a.id, layer };
+      e.preventDefault();
+      return;
+    }
+
+    if (ed.tool === "note") {
+      openNoteEditor(layer, i, p, null);
       return;
     }
 
@@ -328,10 +397,18 @@
       const dy = p.y - drag.sy;
       if (a.kind === "draw") {
         a.pts = drag.orig.pts.map((q) => ({ x: q.x + dx, y: q.y + dy }));
+      } else if (a.kind === "arrow") {
+        a.x1 = drag.orig.x1 + dx;
+        a.y1 = drag.orig.y1 + dy;
+        a.x2 = drag.orig.x2 + dx;
+        a.y2 = drag.orig.y2 + dy;
       } else {
         a.x = drag.orig.x + dx;
         a.y = drag.orig.y + dy;
       }
+    } else if (drag.type === "arrow") {
+      a.x2 = p.x;
+      a.y2 = p.y;
     } else if (drag.type === "resize") {
       a.w = Math.max(4, drag.orig.w + (p.x - drag.sx));
       a.h = Math.max(4, drag.orig.h + (p.y - drag.sy));
@@ -352,7 +429,8 @@
     if (hit) {
       const a = hit.a;
       // Discard accidental zero-size rectangles / single-point scribbles.
-      if ((drag.type === "rect" && (a.w < 4 || a.h < 4)) || (drag.type === "draw" && a.pts.length < 2)) {
+      const tinyArrow = drag.type === "arrow" && Math.hypot(a.x2 - a.x1, a.y2 - a.y1) < 6;
+      if ((drag.type === "rect" && (a.w < 4 || a.h < 4)) || (drag.type === "draw" && a.pts.length < 2) || tinyArrow) {
         ed.annots[drag.page] = ed.annots[drag.page].filter((x) => x.id !== drag.id);
         ed.sel = null;
       }
@@ -365,10 +443,17 @@
 
   function onDblClick(e) {
     if (!ed.active) return;
+    const layer = e.target.closest(".annot-layer");
+    if (!layer) return;
+    const i = +layer.dataset.index;
+    const noteEl = e.target.closest(".an-note");
+    if (noteEl) {
+      const a = findAnnot(+noteEl.dataset.id).a;
+      openNoteEditor(layer, i, { x: a.x, y: a.y }, a);
+      return;
+    }
     const anEl = e.target.closest(".an-text");
     if (!anEl) return;
-    const layer = e.target.closest(".annot-layer");
-    const i = +layer.dataset.index;
     const a = findAnnot(+anEl.dataset.id).a;
     openTextEditor(layer, i, { x: a.x, y: a.y }, a);
   }
@@ -413,6 +498,50 @@
           fontSize: ed.fontSize,
           color: ed.color,
         });
+      }
+      renderLayer(layer, i);
+    };
+    ta.addEventListener("blur", commit);
+    ta.addEventListener("keydown", (e) => {
+      e.stopPropagation();
+      if (e.key === "Escape") {
+        done = true;
+        ta.remove();
+      } else if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+        commit();
+      }
+    });
+  }
+
+  // ---- note editor (comment anchored to a point) ---------------------------
+
+  function openNoteEditor(layer, i, p, existing) {
+    const ta = document.createElement("textarea");
+    ta.className = "annot-text-edit annot-note-edit";
+    ta.placeholder = "Nội dung ghi chú…";
+    ta.style.left = (p.x + 20) * state.scale + "px";
+    ta.style.top = p.y * state.scale + "px";
+    ta.value = existing ? existing.text : "";
+    layer.appendChild(ta);
+    ta.focus();
+
+    let done = false;
+    const commit = () => {
+      if (done) return;
+      done = true;
+      const text = ta.value.replace(/\s+$/, "");
+      ta.remove();
+      if (existing) {
+        if (text) existing.text = text;
+        else {
+          // cleared note text -> remove the note
+          ed.annots[i] = annotsFor(i).filter((x) => x.id !== existing.id);
+          ed.sel = null;
+        }
+      } else if (text) {
+        const a = { id: ed.seq++, kind: "note", x: p.x, y: p.y, w: 18, h: 18, text, color: ed.color };
+        annotsFor(i).push(a);
+        ed.sel = a.id;
       }
       renderLayer(layer, i);
     };
@@ -574,6 +703,83 @@
         const padPt = a.fontSize * 0.15;
         const [bx, by] = map(a.x - padPt, a.y - padPt + hPt);
         page.drawImage(img, { x: bx, y: by, width: wPt, height: hPt });
+      } else if (a.kind === "box") {
+        const [x1, y1] = map(a.x, a.y);
+        const [x2, y2] = map(a.x + a.w, a.y + a.h);
+        page.drawRectangle({
+          x: Math.min(x1, x2),
+          y: Math.min(y1, y2),
+          width: Math.abs(x2 - x1),
+          height: Math.abs(y2 - y1),
+          borderColor: hexRgb(a.color),
+          borderWidth: a.width || 2,
+        });
+      } else if (a.kind === "ellipse") {
+        const [x1, y1] = map(a.x, a.y);
+        const [x2, y2] = map(a.x + a.w, a.y + a.h);
+        page.drawEllipse({
+          x: (x1 + x2) / 2,
+          y: (y1 + y2) / 2,
+          xScale: Math.abs(x2 - x1) / 2,
+          yScale: Math.abs(y2 - y1) / 2,
+          borderColor: hexRgb(a.color),
+          borderWidth: a.width || 2,
+        });
+      } else if (a.kind === "arrow") {
+        const c = hexRgb(a.color);
+        const w = a.width || 2;
+        const [sx, sy] = map(a.x1, a.y1);
+        const [ex, ey] = map(a.x2, a.y2);
+        page.drawLine({ start: { x: sx, y: sy }, end: { x: ex, y: ey }, thickness: w, color: c });
+        // arrowhead: two short strokes back from the tip
+        const ang = Math.atan2(ey - sy, ex - sx);
+        const hl = Math.max(8, w * 4);
+        const ha = Math.PI / 7;
+        page.drawLine({
+          start: { x: ex, y: ey },
+          end: { x: ex - hl * Math.cos(ang - ha), y: ey - hl * Math.sin(ang - ha) },
+          thickness: w,
+          color: c,
+        });
+        page.drawLine({
+          start: { x: ex, y: ey },
+          end: { x: ex - hl * Math.cos(ang + ha), y: ey - hl * Math.sin(ang + ha) },
+          thickness: w,
+          color: c,
+        });
+      } else if (a.kind === "note") {
+        // 1. Visible marker square so the note shows in any viewer (incl. ours).
+        const c = hexRgb(a.color);
+        const [mx, my] = map(a.x, a.y + a.h);
+        page.drawRectangle({
+          x: mx,
+          y: my,
+          width: a.w,
+          height: a.h,
+          color: c,
+          borderColor: rgb(0.2, 0.2, 0.2),
+          borderWidth: 0.5,
+        });
+        // 2. Real PDF Text annotation (sticky note) carrying the comment text.
+        const [rx1, ry1] = map(a.x, a.y + a.h);
+        const [rx2, ry2] = map(a.x + a.w, a.y);
+        const ctx = doc.context;
+        const ann = ctx.obj({
+          Type: "Annot",
+          Subtype: "Text",
+          Name: "Comment",
+          Rect: [Math.min(rx1, rx2), Math.min(ry1, ry2), Math.max(rx1, rx2), Math.max(ry1, ry2)],
+          Contents: PDFHexString.fromText(a.text || ""),
+          Open: false,
+          C: [c.red, c.green, c.blue],
+        });
+        const ref = ctx.register(ann);
+        let arr = page.node.Annots();
+        if (!arr) {
+          arr = ctx.obj([]);
+          page.node.set(PDFName.of("Annots"), arr);
+        }
+        arr.push(ref);
       } else if (a.kind === "image") {
         const bytes = dataUrlToBytes(a.dataUrl);
         const img = a.mime === "image/png" ? await doc.embedPng(bytes) : await doc.embedJpg(bytes);
@@ -797,6 +1003,10 @@
       text: "Bấm lên trang để thêm hộp văn bản (Ctrl+Enter để xong).",
       highlight: "Kéo để tô sáng vùng.",
       draw: "Giữ chuột và kéo để vẽ.",
+      box: "Kéo để khoanh một vùng (khung chữ nhật).",
+      ellipse: "Kéo để khoanh vùng bằng elip / hình tròn.",
+      arrow: "Kéo từ gốc tới đích để vẽ mũi tên.",
+      note: "Bấm lên trang để đặt ghi chú; gõ nội dung rồi Ctrl+Enter.",
       image: "Bấm lên trang để đặt ảnh đã chọn.",
       redact: "Kéo để che — nội dung gốc sẽ bị xoá khi áp dụng.",
     };
@@ -879,7 +1089,7 @@
     ed.penWidth = Math.max(1, +e.target.value || 2);
     if (ed.sel != null) {
       const hit = findAnnot(ed.sel);
-      if (hit && hit.a.kind === "draw") {
+      if (hit && ["draw", "box", "ellipse", "arrow"].includes(hit.a.kind)) {
         hit.a.width = ed.penWidth;
         syncOverlays();
       }

@@ -11,6 +11,11 @@
 from PyInstaller.utils.hooks import collect_all
 
 # Heavy packages whose binaries/datas/hidden imports must be collected wholesale.
+# NB: fitz/pymupdf and matplotlib are imported *lazily* (inside functions in api.py)
+# for searchable/compress/text-edit + the Vietnamese DejaVuSans font, so PyInstaller's
+# static analysis misses them — they MUST be collected here or the packaged app fails
+# at runtime on those features. collect_all("matplotlib") bundles mpl-data/fonts/ttf/
+# DejaVuSans.ttf (the font _vietnamese_font() looks up).
 HEAVY_PACKAGES = (
     "torch",
     "torchvision",
@@ -25,6 +30,9 @@ HEAVY_PACKAGES = (
     "scipy",
     "google.genai",
     "openpyxl",
+    "fitz",  # PyMuPDF (import name); lazy-imported in api.py
+    "pymupdf",  # newer PyMuPDF dist name — loop skips whichever isn't present
+    "matplotlib",  # provides DejaVuSans.ttf for the Vietnamese text layer / text-edit
 )
 
 datas, binaries, hiddenimports = [], [], []

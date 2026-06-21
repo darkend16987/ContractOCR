@@ -4,9 +4,9 @@
 > [DESIGN.md](DESIGN.md) (kiến trúc), [ROADMAP.md](ROADMAP.md) (tiến độ chi tiết),
 > [SETUP.md](SETUP.md) (dựng môi trường).
 
-_Cập nhật: 2026-06-20 · branch `claude/vietnamese-ocr-ai-iSvwV`_
+_Cập nhật: 2026-06-21 · branch `claude/vietnamese-ocr-ai-iSvwV`_
 
-## Tình trạng: MVP (P0+P1+P2) xong, đã test GUI
+## Tình trạng: P0–P6 + Security + **đóng gói (P5)** xong; còn test GUI & test máy sạch
 
 | Phase | Trạng thái |
 |-------|-----------|
@@ -15,7 +15,9 @@ _Cập nhật: 2026-06-20 · branch `claude/vietnamese-ocr-ai-iSvwV`_
 | P2 — OCR + bóc tách field + xuất Excel/CSV/JSON | ✅ Xong, GUI tested + backend headless tested. |
 | P3 — Searchable PDF + Nén | ✅ Code + test backend xong (`/searchable`, `/compress` — nén bằng PyMuPDF, không cần Ghostscript). |
 | P4 — Overlay edit (annotate/watermark/form/redact) | ✅ Code xong (`editor.js`). Chờ test GUI (T4.6). |
-| P5 — Đóng gói portable .exe, auto-update, bundle weights | ⬜ Chưa bắt đầu. |
+| P6 — **Sửa chữ gốc** (native text edit, span-replace) | ✅ Code + test backend xong (`/text-spans`,`/edit-text` + `text-edit.js`). Chờ test GUI. |
+| **Security** — token sidecar + size guard + sandbox | ✅ Code + test backend xong (token gate 401/200 qua TestClient). |
+| P5 — Đóng gói portable .exe | ✅ Build xong: `sidecar.exe` (PyInstaller) + `ContractOCR-0.0.1-portable.exe` / `-x64.exe` (NSIS) ở `desktop/dist-app/`. Còn: auto-update + chốt bundle weights + test máy sạch. |
 
 ## Chạy app (dev)
 
@@ -45,10 +47,23 @@ OCR cần `.venv` Python 3.12 ở gốc repo + `GEMINI_API_KEY` trong `.env`. Xe
   dùng chung global của `app.js`; xuất `window.Editor` (`syncOverlays`/`bakePending`/`reset`/`active`).
   `app.js` chỉ móc 4 chỗ: `renderViewer` (sync overlay), `loadBytes` (reset), `saveDoc` (bake trước khi lưu),
   `updateToolbar` (khoá thao tác trang khi đang sửa).
+- `desktop/renderer/editor.js` — P4 overlay editor: select/text/highlight/draw/image/redact/watermark/form
+  + **khoanh vùng & ghi chú** (T4.8): `box` (khung chữ nhật), `ellipse`, `arrow` (mũi tên), `note`.
+  `note` bake thành **PDF Text annotation thật** (`/Contents` UTF-16 tiếng Việt) + marker 💬 nhìn thấy được.
+- `desktop/renderer/text-edit.js` — **P6 sửa chữ gốc**. IIFE dùng chung global `app.js`; xuất
+  `window.TextEdit` (`active`/`syncOverlays`/`reset`). Gọi `/text-spans` (đọc span trang đang xem) →
+  vẽ ô bấm theo `bbox*scale` → sửa inline → `/edit-text` (xoá thật + ghi lại tại `origin`). `app.js`
+  móc 3 chỗ: `renderViewer` (sync), `loadBytes` (reset), `updateToolbar` (khoá khi đang sửa + nút
+  `#btn-text-edit`). Chỉ chạy khi sidecar `ready` (khác overlay editor chạy thuần renderer).
 - `desktop/renderer/vendor/` — pdf-lib UMD + pdfjs-dist **v3** UMD (offline; `scripts/vendor-libs.js`).
 
 **Backend (Python sidecar, FastAPI):**
-- `api.py` — endpoints: `/health`, `/ocr`, `/templates`, `/extract`, `/export`, **`/searchable`** + **`/compress`** (P3).
+- `api.py` — endpoints: `/health`, **`/config`** (GET/POST API key), `/ocr`, `/templates`, `/extract`,
+  `/export`, **`/searchable`** + **`/compress`** (P3), **`/text-spans`** + **`/edit-text`** (P6).
+  Middleware token bắt buộc header `X-Sidecar-Token` (trừ `/health`) khi env `SIDECAR_TOKEN` được set.
+- `src/utils/config.py` — `get_gemini_key()`/`set_gemini_key()` đọc/ghi `settings.json` ở `_data_root()`
+  (frozen = `%LOCALAPPDATA%\ContractOCR`). Key người dùng nhập trong app **thắng** env `GEMINI_API_KEY`.
+  Nhờ vậy bản đóng gói không cần `.env`/biến môi trường — người dùng dán key qua nút ⚙ trong UI.
 - `src/ocr/engine.py` — Hybrid PaddleOCR detect + VietOCR recognize (paddle 3.x). **`recognize_boxes()`**
   trả `(text, [x0,y0,x1,y1])` cho lớp text searchable.
 - `src/agents/gemini_agent.py` + `field_templates.py` — bóc field + 5 mẫu.
@@ -68,6 +83,27 @@ OCR cần `.venv` Python 3.12 ở gốc repo + `GEMINI_API_KEY` trong `.env`. Xe
   encode được dấu; và không muốn vendor font Unicode). Đánh đổi: text baked không search/copy được.
 - **P3 font searchable**: dùng `matplotlib.get_data_path()/fonts/ttf/DejaVuSans.ttf` (str), **KHÔNG**
   `font_manager.findfont()` — nó trả object `FontPath` → PyMuPDF báo "bad fontfile".
+- **P6 sửa chữ gốc**: dùng `insert_text` tại **baseline `span["origin"]`**, **KHÔNG** `insert_textbox`
+  (nó trả số âm = tràn khi text 1 dòng không vừa ô cao bằng cỡ chữ → không ghi được gì). Xoá chữ cũ
+  bằng `add_redact_annot(fill=trắng)+apply_redactions()` (xoá thật, không phải che). Chữ mới ghi bằng
+  font `vnedit`=DejaVuSans (encode được tiếng Việt). Chỉ áp dụng cho PDF có text thật; PDF scan trả
+  `has_text:false` → app báo dùng Searchable/Bóc tách.
+- **Token sidecar**: `main.js` sinh token mỗi lần chạy → truyền cho sidecar qua env `SIDECAR_TOKEN` +
+  cho renderer qua `sidecar:status` (field `token`). Renderer gọi qua `sidecarFetch()` (tự gắn header).
+  Chạy `api.py`/`app.py` thuần (không set env) thì middleware bỏ qua — giữ tương thích dev.
+- **Đóng gói sidecar (PyInstaller)**: `build:sidecar` PHẢI gọi `.venv\Scripts\python -m PyInstaller`
+  (không `pyinstaller` trần — không trên PATH, và phải đúng Python 3.12 của venv). `sidecar.spec` đã
+  thêm `fitz/pymupdf` + `matplotlib` vào `HEAVY_PACKAGES` (lazy-import nên static analysis bỏ sót →
+  thiếu sẽ crash Searchable/Nén/Sửa-chữ + thiếu DejaVuSans.ttf). Các dòng `ERROR: Hidden import
+  'torch.distributed._shard.checkpoint.*' not found` lúc build là **vô hại** (alias torch cũ).
+- **electron-builder + winCodeSign symlink (Windows không admin/Dev Mode)**: build installer tải
+  `winCodeSign-2.6.0.7z` chứa 2 symlink `.dylib` của macOS → 7za báo "Cannot create symbolic link:
+  A required privilege is not held" → exit 2 → electron-builder coi là fail dù file Windows
+  (`signtool.exe`) đã extract đủ. **Cách vá KHÔNG cần quyền**: copy 1 thư mục tạm đã extract hoàn
+  chỉnh thành `…\Cache\winCodeSign\winCodeSign-2.6.0` (tên thư mục "finalized" mà electron-builder
+  tìm) → nó bỏ qua bước extract. (Cách khác: bật Windows Developer Mode hoặc chạy terminal admin.)
+- **Lock `dist-app` khi build lại**: nếu app `win-unpacked\ContractOCR.exe` còn chạy (kèm `sidecar.exe`
+  con) → electron-builder lỗi `EBUSY`/`Access denied`. Kill `ContractOCR`+`sidecar` trước khi build.
 
 ## Bước tiếp theo (gợi ý)
 
@@ -76,8 +112,21 @@ OCR cần `.venv` Python 3.12 ở gốc repo + `GEMINI_API_KEY` trong `.env`. Xe
 2. **▶️ Test GUI P3 (T3.4)**: mở PDF scan → nút "Searchable" → mở file `*-searchable.pdf` ra app
    khác, thử Ctrl+F / bôi-copy chữ.
 3. **▶️ Test GUI nén (T3.5b)**: mở PDF nhiều ảnh → nút "Nén" → thử các mức → kiểm tra size giảm.
-4. **P5 — Đóng gói**: `pnpm run build:sidecar` (PyInstaller, iterate ModuleNotFoundError) →
-   `pnpm run build` (electron-builder portable+nsis). Test máy Windows sạch. Bundle DejaVuSans.ttf +
-   xác minh `pymupdf` collect đủ. Chốt weights (T0.11).
+3b. **▶️ Test GUI P6 (sửa chữ gốc)**: mở PDF xuất từ Word (chữ thật) → "Sửa chữ" → ô chữ hiện viền
+   → sửa 1 đoạn có dấu → Áp dụng → Lưu → mở lại copy/search đoạn cũ không ra, đoạn mới đúng. Mở PDF
+   scan → "Sửa chữ" → kỳ vọng toast "ảnh scan, không có chữ để sửa".
+4. ~~**P5 — Đóng gói**~~ ✅ **XONG**: `sidecar.exe` (PyInstaller) + `ContractOCR-0.0.1-portable.exe`
+   / `-x64.exe` (NSIS) ở `desktop/dist-app/`. Đã smoke-test bản đóng gói: app mở, sidecar boot,
+   `/health` 200, token gate 401, `/config` (nhập API key) 200. Xem [HUONG-DAN-SU-DUNG.md](HUONG-DAN-SU-DUNG.md).
 
-MVP + P4 (editor) + P3 (searchable + nén) đã xong ở mức code/backend. Còn lại P5 (đóng gói/phát hành).
+### Còn lại cho phiên sau
+- **▶️ Test máy Windows sạch** (chưa cài Python): copy `ContractOCR-0.0.1-portable.exe` sang →
+  xác minh self-contained; lần OCR đầu cần mạng tải weights PaddleOCR/VietOCR (~vài trăm MB vào
+  cache user). Đây là phép thử quan trọng nhất chưa làm được (cần máy thứ 2).
+- **▶️ Các test GUI** P3/P4/P6 ở trên (1–3b) — làm trên bản dev hoặc bản đóng gói.
+- **▶️ Bóc tách (P2) trên bản đóng gói**: bấm ⚙ → dán `GEMINI_API_KEY` → Lưu → thử bóc tách.
+- (Tùy chọn) Icon app + ký số (bỏ cảnh báo SmartScreen) + auto-update + chốt chiến lược weights (T0.11).
+
+MVP (P1/P2) + P3 (searchable/nén) + P4 (overlay editor) + P6 (sửa chữ gốc) + Security (token/sandbox)
++ **P5 (đóng gói portable/installer)** + **Settings API key trong app** đã xong ở mức code & build.
+Phần còn lại chủ yếu là **kiểm thử thực tế** (đặc biệt trên máy sạch).
