@@ -329,22 +329,31 @@ async function renderAll() {
   }
 }
 
+let thumbObserver = null;
+
 async function renderThumbs() {
   const wrap = $("thumbs");
   wrap.innerHTML = "";
+  if (thumbObserver) {
+    thumbObserver.disconnect();
+    thumbObserver = null;
+  }
+  // Lazy: size every thumbnail's canvas up front (cheap — getPage only parses the
+  // page dict, no rasterisation) but defer the expensive render until it nears the
+  // sidebar viewport. Re-rendering ALL thumbnails was the main cost on reload after
+  // a structural edit (reorder/insert/merge) on a multi-page doc.
   for (let i = 0; i < state.numPages; i++) {
     const page = await state.pdf.getPage(i + 1);
     const base = page.getViewport({ scale: 1 });
-    const scale = 150 / base.width;
-    const vp = page.getViewport({ scale });
+    const vp = page.getViewport({ scale: 150 / base.width });
     const canvas = document.createElement("canvas");
     canvas.width = Math.floor(vp.width);
-    canvas.height = Math.floor(vp.height);
-    await page.render({ canvasContext: canvas.getContext("2d"), viewport: vp }).promise;
+    canvas.height = Math.floor(vp.height); // reserves layout; stays blank until drawn
 
     const div = document.createElement("div");
     div.className = "thumb" + (state.selected.has(i) ? " selected" : "");
     div.dataset.index = String(i);
+    div.dataset.rendered = "0";
     div.draggable = true;
     div.appendChild(canvas);
     const check = document.createElement("input");
@@ -360,7 +369,39 @@ async function renderThumbs() {
     wireThumb(div);
     wrap.appendChild(div);
   }
+
+  thumbObserver = new IntersectionObserver(
+    (entries) => {
+      for (const e of entries) {
+        if (!e.isIntersecting) continue;
+        renderThumbCanvas(+e.target.dataset.index);
+        thumbObserver.unobserve(e.target);
+      }
+    },
+    { root: wrap, rootMargin: "300px 0px" }
+  );
+  wrap.querySelectorAll(".thumb").forEach((d) => thumbObserver.observe(d));
   updatePageCount();
+}
+
+// Rasterise one thumbnail into its (already-sized) canvas. Idempotent via the
+// data-rendered guard so the observer + refreshThumb don't double-draw.
+async function renderThumbCanvas(i) {
+  const div = $("thumbs").querySelector(`.thumb[data-index="${i}"]`);
+  if (!div || div.dataset.rendered === "1") return;
+  div.dataset.rendered = "1";
+  const canvas = div.querySelector("canvas");
+  if (!canvas) return;
+  try {
+    const page = await state.pdf.getPage(i + 1); // cached by pdf.js after renderThumbs
+    const base = page.getViewport({ scale: 1 });
+    const vp = page.getViewport({ scale: 150 / base.width });
+    canvas.width = Math.floor(vp.width);
+    canvas.height = Math.floor(vp.height);
+    await page.render({ canvasContext: canvas.getContext("2d"), viewport: vp }).promise;
+  } catch (_) {
+    div.dataset.rendered = "0"; // let it retry on the next intersection
+  }
 }
 
 function updatePageCount() {
@@ -544,14 +585,9 @@ async function rerenderChanged(changed) {
 // Repaint a single thumbnail in place (used by the targeted re-render above).
 async function refreshThumb(i) {
   const div = $("thumbs").querySelector(`.thumb[data-index="${i}"]`);
-  const canvas = div && div.querySelector("canvas");
-  if (!canvas) return;
-  const page = state.pageMetas[i].page;
-  const base = page.getViewport({ scale: 1 });
-  const vp = page.getViewport({ scale: 150 / base.width });
-  canvas.width = Math.floor(vp.width);
-  canvas.height = Math.floor(vp.height);
-  await page.render({ canvasContext: canvas.getContext("2d"), viewport: vp }).promise;
+  if (!div) return;
+  div.dataset.rendered = "0"; // force a repaint of the (possibly stale) thumbnail
+  await renderThumbCanvas(i);
 }
 
 function scrollToPage(i) {
@@ -694,23 +730,76 @@ async function deleteSelected() {
   }
 }
 
+// Modal position picker shared by Merge + Insert. Resolves to a 0-based insertion
+// index (0 = before page 1, numPages = after the last page), or null if cancelled.
+function choosePosition(title) {
+  return new Promise((resolve) => {
+    const modal = $("pos-modal");
+    const mode = $("pos-mode");
+    const afterRow = $("pos-after-row");
+    const afterInp = $("pos-after");
+    $("pos-title").textContent = title;
+    afterInp.max = String(state.numPages);
+    // Default to "after the currently-selected page" when a page is selected.
+    if (state.selected.size) {
+      mode.value = "after";
+      afterInp.value = String(Math.max(...state.selected) + 1);
+    } else {
+      mode.value = "end";
+    }
+    const syncRow = () => {
+      afterRow.hidden = mode.value !== "after";
+      $("pos-hint").textContent = `Tài liệu hiện có ${state.numPages} trang.`;
+    };
+    syncRow();
+    mode.onchange = syncRow;
+    modal.hidden = false;
+    const done = (val) => {
+      modal.hidden = true;
+      mode.onchange = null;
+      $("pos-ok").onclick = null;
+      $("pos-cancel").onclick = null;
+      resolve(val);
+    };
+    $("pos-cancel").onclick = () => done(null);
+    $("pos-ok").onclick = () => {
+      if (mode.value === "start") return done(0);
+      if (mode.value === "end") return done(state.numPages);
+      const n = Math.min(state.numPages, Math.max(1, parseInt(afterInp.value, 10) || 1));
+      done(n); // "after page n" (1-based) → insertion index n
+    };
+  });
+}
+
+// Describe an insertion index for toast feedback.
+function posLabel(at) {
+  if (at <= 0) return "vào đầu tài liệu";
+  if (at >= state.numPages) return "vào cuối tài liệu";
+  return "sau trang " + at;
+}
+
 async function mergeFiles() {
   const files = await window.desktop.openPdf({ multi: true });
   if (!files.length) return;
+  const at = await choosePosition("Ghép PDF — chọn vị trí");
+  if (at == null) return; // cancelled
+  const where = posLabel(at);
   showOverlay("Đang ghép…");
   pushUndo();
   try {
     const doc = await PDFDocument.load(state.bytes);
+    let pos = at;
     let added = 0;
     for (const f of files) {
       const other = await PDFDocument.load(toU8(f.data));
       const pages = await doc.copyPages(other, other.getPageIndices());
-      pages.forEach((p) => doc.addPage(p));
+      pages.forEach((p) => doc.insertPage(pos++, p));
       added += pages.length;
     }
     state.bytes = await doc.save();
+    state.selected = new Set([at]); // land on the first merged page
     await renderAll();
-    toast(`Đã ghép ${files.length} file (+${added} trang).`, "good");
+    toast(`Đã ghép ${files.length} file (+${added} trang) ${where}.`, "good");
   } finally {
     hideOverlay();
   }
@@ -719,7 +808,9 @@ async function mergeFiles() {
 async function insertFile() {
   const files = await window.desktop.openPdf({ multi: false });
   if (!files.length) return;
-  const at = state.selected.size ? Math.max(...state.selected) + 1 : state.numPages;
+  const at = await choosePosition("Chèn trang — chọn vị trí");
+  if (at == null) return; // cancelled
+  const where = posLabel(at);
   showOverlay("Đang chèn…");
   pushUndo();
   try {
@@ -728,9 +819,9 @@ async function insertFile() {
     const pages = await doc.copyPages(other, other.getPageIndices());
     pages.forEach((p, k) => doc.insertPage(at + k, p));
     state.bytes = await doc.save();
-    state.selected.clear();
+    state.selected = new Set([at]); // select the first inserted page
     await renderAll();
-    toast(`Đã chèn ${pages.length} trang sau trang ${at}.`, "good");
+    toast(`Đã chèn ${pages.length} trang ${where}.`, "good");
   } finally {
     hideOverlay();
   }

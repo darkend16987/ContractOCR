@@ -60,8 +60,8 @@
       <div class="sep"></div>
 
       <div class="group" data-needs-doc>
-        <button id="btn-merge" disabled title="Ghép thêm PDF vào cuối"><svg class="ic"><use href="#ic-copy"/></svg>Ghép</button>
-        <button id="btn-insert" disabled title="Chèn trang từ PDF khác sau trang đang chọn"><svg class="ic"><use href="#ic-file-plus"/></svg>Chèn</button>
+        <button id="btn-merge" disabled title="Ghép PDF khác vào — chọn vị trí (đầu/cuối/sau trang)"><svg class="ic"><use href="#ic-copy"/></svg>Ghép</button>
+        <button id="btn-insert" disabled title="Chèn trang từ PDF khác — chọn vị trí (đầu/cuối/sau trang)"><svg class="ic"><use href="#ic-file-plus"/></svg>Chèn</button>
         <button id="btn-extract" disabled title="Tách các trang đang chọn ra PDF mới"><svg class="ic"><use href="#ic-scissors"/></svg>Tách</button>
       </div>
 
@@ -218,6 +218,28 @@
         <div class="modal-actions">
           <button id="wm-cancel">Hủy</button>
           <button id="wm-ok" class="primary">Thêm vào mọi trang</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Insert / Merge position picker -->
+    <div class="modal" id="pos-modal" hidden>
+      <div class="modal-card">
+        <h3 id="pos-title">Chọn vị trí</h3>
+        <label>Vị trí
+          <select id="pos-mode">
+            <option value="end">Cuối tài liệu</option>
+            <option value="start">Đầu tài liệu</option>
+            <option value="after">Sau một trang cụ thể…</option>
+          </select>
+        </label>
+        <label id="pos-after-row" hidden>Sau trang số
+          <input id="pos-after" type="number" min="1" value="1" />
+        </label>
+        <p class="cmp-note" id="pos-hint"></p>
+        <div class="modal-actions">
+          <button id="pos-cancel">Hủy</button>
+          <button id="pos-ok" class="primary">Tiếp tục</button>
         </div>
       </div>
     </div>
