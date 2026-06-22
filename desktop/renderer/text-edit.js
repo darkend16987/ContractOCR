@@ -25,9 +25,99 @@
     active: false,
     page: -1, // page index being edited
     spans: [], // [{ id, text, bbox, size, font, color, flags }]
-    edits: {}, // spanId -> { page, bbox, new_text, size, color }
+    edits: {}, // spanId -> { page, bbox, new_text, size, color, bold, italic, underline, bg, font }
     meta: null, // /text-spans response (width/height/rotation)
+    editing: null, // span id currently open in a textarea (null = none)
+    lastSpanId: null, // last span clicked (target for toolbar control changes)
   };
+
+  // ---- formatting controls (text colour / bg / font / size / B I U) --------
+
+  function packedToHex(c) {
+    const n = typeof c === "number" ? c : 0;
+    return "#" + (((n >> 16) & 255) << 16 | ((n >> 8) & 255) << 8 | (n & 255)).toString(16).padStart(6, "0");
+  }
+  // PyMuPDF span flags: bit1 (2)=italic, bit4 (16)=bold.
+  function flagsBold(f) {
+    return !!(f & 16);
+  }
+  function flagsItalic(f) {
+    return !!(f & 2);
+  }
+  function setFmtBtn(id, on) {
+    const b = $(id);
+    if (b) b.classList.toggle("active", !!on);
+  }
+  // Push a span's (or its pending edit's) style into the toolbar controls.
+  function syncControls(sp) {
+    const ed = te.edits[sp.id];
+    $("te-font").value = ed ? ed.font || "default" : "default";
+    $("te-size").value = String(ed ? ed.size : Math.round(sp.size * 10) / 10);
+    $("te-color").value = ed ? ed.color : packedToHex(sp.color);
+    $("te-bg-on").checked = ed ? !!ed.bg : false;
+    if (ed && ed.bg) $("te-bg").value = ed.bg;
+    setFmtBtn("te-bold", ed ? ed.bold : flagsBold(sp.flags));
+    setFmtBtn("te-italic", ed ? ed.italic : flagsItalic(sp.flags));
+    setFmtBtn("te-underline", ed ? ed.underline : false);
+  }
+  // Read the current toolbar control values into a style object.
+  function readControls() {
+    return {
+      font: $("te-font").value || "default",
+      size: Math.max(4, parseFloat($("te-size").value) || 11),
+      color: $("te-color").value || "#000000",
+      bg: $("te-bg-on").checked ? $("te-bg").value : null,
+      bold: $("te-bold").classList.contains("active"),
+      italic: $("te-italic").classList.contains("active"),
+      underline: $("te-underline").classList.contains("active"),
+    };
+  }
+
+  // The span a toolbar control change should affect: the one being edited, else
+  // the last one clicked.
+  function targetSpanId() {
+    return te.editing != null ? te.editing : te.lastSpanId;
+  }
+  // Ensure a staged edit exists for a span (seeded from its current text/style).
+  function ensureEdit(spId) {
+    const sp = te.spans.find((s) => s.id === spId);
+    if (!sp) return null;
+    if (!te.edits[spId]) {
+      te.edits[spId] = {
+        page: te.page,
+        bbox: sp.bbox,
+        origin: sp.origin,
+        new_text: sp.text,
+        size: Math.round(sp.size * 10) / 10,
+        color: packedToHex(sp.color),
+        bg: null,
+        bold: flagsBold(sp.flags),
+        italic: flagsItalic(sp.flags),
+        underline: false,
+        font: "default",
+      };
+    }
+    return te.edits[spId];
+  }
+  // A toolbar formatting control changed → apply it to the target span's edit.
+  function onControlChange() {
+    const id = targetSpanId();
+    if (id == null) return;
+    const ed = ensureEdit(id);
+    if (!ed) return;
+    const st = readControls();
+    const open = document.querySelector(".span-input");
+    if (open) ed.new_text = open.value; // don't lose in-progress typing
+    ed.size = st.size;
+    ed.color = st.color;
+    ed.bg = st.bg;
+    ed.bold = st.bold;
+    ed.italic = st.italic;
+    ed.underline = st.underline;
+    ed.font = st.font;
+    renderBoxes();
+    updateHint();
+  }
 
   // ---- page + layer helpers ------------------------------------------------
 
@@ -100,6 +190,10 @@
     // Commit any other open editor first.
     layer.querySelectorAll(".span-input").forEach((t) => t.blur());
 
+    te.editing = sp.id;
+    te.lastSpanId = sp.id;
+    syncControls(sp); // reflect this span's style in the toolbar controls
+
     const ta = document.createElement("textarea");
     ta.className = "span-input";
     ta.value = te.edits[sp.id] ? te.edits[sp.id].new_text : sp.text;
@@ -112,23 +206,44 @@
     ta.select();
 
     let done = false;
-    const commit = () => {
-      if (done) return;
-      done = true;
+    // Stage the edit into te.edits. Keeps it if text OR style changed from the
+    // original span; otherwise drops it. Returns whether an edit is now staged.
+    const stage = () => {
       const val = ta.value;
-      ta.remove();
-      if (val !== sp.text) {
+      const st = readControls();
+      const styleChanged =
+        st.bold !== flagsBold(sp.flags) ||
+        st.italic !== flagsItalic(sp.flags) ||
+        st.underline ||
+        st.bg ||
+        st.font !== "default" ||
+        Math.abs(st.size - sp.size) > 0.01 ||
+        st.color.toLowerCase() !== packedToHex(sp.color).toLowerCase();
+      if (val !== sp.text || styleChanged) {
         te.edits[sp.id] = {
           page: te.page,
           bbox: sp.bbox,
           origin: sp.origin,
           new_text: val,
-          size: sp.size,
-          color: sp.color,
+          size: st.size,
+          color: st.color,
+          bg: st.bg,
+          bold: st.bold,
+          italic: st.italic,
+          underline: st.underline,
+          font: st.font,
         };
-      } else {
-        delete te.edits[sp.id];
+        return true;
       }
+      delete te.edits[sp.id];
+      return false;
+    };
+    const commit = () => {
+      if (done) return;
+      done = true;
+      ta.remove();
+      te.editing = null;
+      stage();
       renderBoxes();
       updateHint();
     };
@@ -136,12 +251,24 @@
       if (done) return;
       done = true;
       ta.remove();
+      te.editing = null;
     };
     ta.addEventListener("blur", commit);
     ta.addEventListener("keydown", (e) => {
-      if (e.key === "Enter" && !e.shiftKey) {
+      if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+        // Ctrl+Enter = stage this edit AND write it to the PDF immediately.
         e.preventDefault();
-        ta.blur();
+        done = true;
+        ta.removeEventListener("blur", commit);
+        ta.remove();
+        te.editing = null;
+        stage();
+        renderBoxes();
+        updateHint();
+        apply();
+      } else if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        ta.blur(); // stage only (Áp dụng later)
       } else if (e.key === "Escape") {
         e.preventDefault();
         ta.removeEventListener("blur", commit);
@@ -234,9 +361,10 @@
         toast("Sửa lỗi: " + (data.error || data.detail || "không rõ"), "bad");
         return;
       }
+      if (window.History) window.History.pushUndo();
       state.bytes = Uint8Array.from(atob(data.data_b64), (ch) => ch.charCodeAt(0));
       const n = edits.length;
-      await exit(); // re-renders from the new bytes
+      await exit(new Set([te.page])); // only the edited page changed — repaint just it
       toast(`Đã ghi ${n} sửa đổi vào PDF.`, "good");
     } catch (e) {
       toast("Lỗi sửa: " + e.message, "bad");
@@ -246,20 +374,25 @@
   }
 
   // Leave edit mode and redraw cleanly (drops the box layer; shows latest bytes).
-  async function exit() {
+  // `changed` (a Set of page indices) is passed only by the apply path, where the
+  // bytes were rewritten — then we repaint just those pages. A plain toggle-off
+  // leaves the bytes untouched, so dropping the box layer is all that's needed.
+  async function exit(changed) {
     te.active = false;
     te.spans = [];
     te.edits = {};
     te.page = -1;
     te.meta = null;
+    te.editing = null;
+    te.lastSpanId = null;
     const bar = $("tedit-bar");
     if (bar) bar.hidden = true;
     document.body.classList.remove("text-editing");
     const btn = $("btn-text-edit");
     if (btn) btn.classList.remove("active");
     updateToolbar();
-    if (state.bytes) await renderAll();
-    else clearLayers();
+    clearLayers();
+    if (changed && state.bytes) await rerenderChanged(changed);
   }
 
   // Re-place boxes after a re-render (e.g. zoom). No-op when inactive.
@@ -277,6 +410,8 @@
     te.spans = [];
     te.edits = {};
     te.meta = null;
+    te.editing = null;
+    te.lastSpanId = null;
     const bar = $("tedit-bar");
     if (bar) bar.hidden = true;
     document.body.classList.remove("text-editing");
@@ -290,6 +425,23 @@
   $("btn-text-edit").onclick = enter;
   $("te-apply").onclick = apply;
   $("te-exit").onclick = () => exit();
+
+  // Format toggle buttons: preventDefault on mousedown so the open span textarea
+  // keeps focus (clicking a button would otherwise blur+commit it).
+  ["te-bold", "te-italic", "te-underline"].forEach((id) => {
+    const b = $(id);
+    if (!b) return;
+    b.addEventListener("mousedown", (e) => e.preventDefault());
+    b.addEventListener("click", () => {
+      b.classList.toggle("active");
+      onControlChange();
+    });
+  });
+  // Selects / colour / size inputs: apply on change (these legitimately take focus).
+  ["te-font", "te-size", "te-color", "te-bg", "te-bg-on"].forEach((id) => {
+    const el = $(id);
+    if (el) el.addEventListener("change", onControlChange);
+  });
 
   // ---- public surface (consumed by app.js) ---------------------------------
 

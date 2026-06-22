@@ -720,6 +720,15 @@ def _norm_color(c) -> tuple[float, float, float]:
     """
     if c is None:
         return (0.0, 0.0, 0.0)
+    if isinstance(c, str):
+        s = c.strip().lstrip("#")
+        if len(s) == 6:
+            try:
+                n = int(s, 16)
+                return (((n >> 16) & 255) / 255.0, ((n >> 8) & 255) / 255.0, (n & 255) / 255.0)
+            except ValueError:
+                return (0.0, 0.0, 0.0)
+        return (0.0, 0.0, 0.0)
     if isinstance(c, int):
         return (((c >> 16) & 255) / 255.0, ((c >> 8) & 255) / 255.0, (c & 255) / 255.0)
     if isinstance(c, (list, tuple)) and len(c) == 3:
@@ -829,8 +838,14 @@ class TextEdit(BaseModel):
     new_text: str
     origin: list[float] | None = None  # baseline [x, y]; falls back to bbox bottom-left
     size: float | None = None
-    color: Any | None = None  # packed int / [r,g,b]; defaults to black
+    color: Any | None = None  # packed int / [r,g,b] / "#rrggbb"; defaults to black
     fill: Any | None = None  # redaction fill (page background); defaults to white
+    # Optional rich-text formatting (P6 formatting controls):
+    bg: Any | None = None  # background highlight colour; None = transparent
+    bold: bool = False
+    italic: bool = False
+    underline: bool = False
+    font: str | None = None  # family key: "default"(DejaVu/Vietnamese)|"times"|"helv"|"courier"
 
 
 class EditTextRequest(BaseModel):
@@ -908,13 +923,62 @@ async def edit_text(req: EditTextRequest):
                 # insert_textbox for a single span — no box-fit failure if the new text
                 # is a bit longer (it flows right, just like the original line did).
                 ox, oy = e.origin if e.origin else (x0, y1)
-                fontname = "vnedit" if have_font else "helv"
+
+                # Background highlight (drawn before the text so the glyphs sit on top).
+                if e.bg is not None:
+                    try:
+                        page.draw_rect(fitz.Rect(x0, y0, x1, y1), color=None, fill=_norm_color(e.bg))
+                    except Exception as be:
+                        logger.debug("draw_rect (bg) error: %s", be)
+
+                # Font family. Vietnamese diacritics need the bundled DejaVu (vnedit);
+                # builtin fonts (helv/tiro/cour) only cover Latin-1, so force DejaVu when
+                # the text has any char beyond Latin-1 to avoid blank glyphs.
+                fam = (e.font or "default").lower()
+                needs_unicode = any(ord(ch) > 0xFF for ch in txt)
+                builtin = {"times": "tiro", "helv": "helv", "courier": "cour"}.get(fam)
+                if fam == "default" or needs_unicode or not builtin:
+                    fontname = "vnedit" if have_font else "helv"
+                else:
+                    fontname = builtin
+
+                # Bold = faux-bold via fill+stroke (render_mode 2). Italic = faux-italic
+                # via a horizontal shear about the baseline origin. Both work on any font.
+                render_mode = 2 if e.bold else 0
+                border_width = max(0.3, size * 0.03) if e.bold else 0
+                morph = None
+                if e.italic:
+                    morph = (fitz.Point(ox, oy), fitz.Matrix(1, 0, 0.25, 1, 0, 0))
+
                 try:
                     page.insert_text(
-                        (ox, oy), txt, fontname=fontname, fontsize=size, color=color
+                        (ox, oy), txt, fontname=fontname, fontsize=size,
+                        color=color, fill=color, render_mode=render_mode,
+                        border_width=border_width, morph=morph,
                     )
                 except Exception as ie:
                     logger.debug("insert_text error: %s", ie)
+                    try:  # retry plain — some morph/render combos fail on odd fonts
+                        page.insert_text((ox, oy), txt, fontname=fontname, fontsize=size, color=color)
+                    except Exception as ie2:
+                        logger.debug("insert_text retry error: %s", ie2)
+                        continue
+
+                # Underline: a line just under the baseline, width = drawn-text width.
+                if e.underline:
+                    try:
+                        if fontname == "vnedit" and font_path:
+                            tw = fitz.Font(fontfile=font_path).text_length(txt, fontsize=size)
+                        else:
+                            tw = fitz.Font(fontname=fontname).text_length(txt, fontsize=size)
+                    except Exception:
+                        tw = x1 - x0
+                    uy = oy + size * 0.12
+                    try:
+                        page.draw_line(fitz.Point(ox, uy), fitz.Point(ox + tw, uy),
+                                       color=color, width=max(0.4, size * 0.06))
+                    except Exception as ue:
+                        logger.debug("draw_line (underline) error: %s", ue)
 
         out_bytes = doc.tobytes(deflate=True, garbage=3)
         pages_changed = len(by_page)

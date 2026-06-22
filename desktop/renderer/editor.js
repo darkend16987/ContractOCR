@@ -336,6 +336,9 @@
     }
 
     if (ed.tool === "text") {
+      // Stop the mousedown's default focus shift, otherwise the freshly-focused
+      // textarea blurs immediately → commits empty → vanishes before you can type.
+      e.preventDefault();
       openTextEditor(layer, i, p, null);
       return;
     }
@@ -368,6 +371,7 @@
     }
 
     if (ed.tool === "note") {
+      e.preventDefault(); // keep focus on the note textarea (see text tool above)
       openNoteEditor(layer, i, p, null);
       return;
     }
@@ -448,12 +452,14 @@
     const i = +layer.dataset.index;
     const noteEl = e.target.closest(".an-note");
     if (noteEl) {
+      e.preventDefault();
       const a = findAnnot(+noteEl.dataset.id).a;
       openNoteEditor(layer, i, { x: a.x, y: a.y }, a);
       return;
     }
     const anEl = e.target.closest(".an-text");
     if (!anEl) return;
+    e.preventDefault();
     const a = findAnnot(+anEl.dataset.id).a;
     openTextEditor(layer, i, { x: a.x, y: a.y }, a);
   }
@@ -849,11 +855,19 @@
     try {
       const anyRedact = Object.values(ed.annots).some((a) => a.some((x) => x.kind === "redact"));
       const bytes = anyRedact ? await bakeWithRedaction() : await bakeInPlace();
+      // Only the annotated pages change pixels (watermark hits every page) — so we
+      // can repaint just those instead of reloading the whole document.
+      let changed = null;
+      if (!ed.watermark) {
+        changed = new Set();
+        for (const k of Object.keys(ed.annots)) if (ed.annots[k].length) changed.add(+k);
+      }
+      if (window.History) window.History.pushUndo(); // one undo step per Áp dụng
       state.bytes = bytes;
       ed.annots = {};
       ed.watermark = null;
       ed.sel = null;
-      await renderAll();
+      await rerenderChanged(changed);
       toast("Đã áp dụng chỉnh sửa.", "good");
       return true;
     } catch (err) {
@@ -980,6 +994,7 @@
         else if (kind === "radio" && input.value) f.select(input.value);
       }
       if ($("form-flatten").checked) ed._formDoc.getForm().flatten();
+      if (window.History) window.History.pushUndo();
       state.bytes = await ed._formDoc.save();
       ed._form = null;
       ed._formDoc = null;
@@ -1049,7 +1064,7 @@
 
   $("btn-edit").onclick = () => (ed.active ? exit() : enter());
   $("ed-exit").onclick = exit;
-  $("ed-apply").onclick = bakePending;
+  $("ed-apply").onclick = exit; // Áp dụng = bake pending edits AND leave edit mode
   $("ed-delete").onclick = deleteSelected;
   $("ed-watermark").onclick = openWatermark;
   $("ed-form").onclick = openForm;

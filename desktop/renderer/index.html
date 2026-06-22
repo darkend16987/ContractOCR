@@ -37,6 +37,8 @@
         <symbol id="ic-message" viewBox="0 0 24 24"><path d="M5 5h14a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1h-8l-4 4v-4H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1z"/></symbol>
         <symbol id="ic-photo" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="8.5" cy="10" r="1.5"/><path d="M21 16l-5-5-4 4-2-2-7 6"/></symbol>
         <symbol id="ic-redact" viewBox="0 0 24 24"><rect x="4" y="6" width="16" height="12" rx="1"/></symbol>
+        <symbol id="ic-undo" viewBox="0 0 24 24"><path d="M9 14L4 9l5-5"/><path d="M4 9h11a5 5 0 1 1 0 10H8"/></symbol>
+        <symbol id="ic-redo" viewBox="0 0 24 24"><path d="M15 14l5-5-5-5"/><path d="M20 9H9a5 5 0 1 0 0 10h8"/></symbol>
       </defs>
     </svg>
 
@@ -46,6 +48,13 @@
       <div class="group">
         <button id="btn-open" title="Mở PDF"><svg class="ic"><use href="#ic-folder"/></svg>Mở</button>
         <button id="btn-save" class="primary" disabled title="Lưu PDF (Ctrl+S)"><svg class="ic"><use href="#ic-save"/></svg>Lưu</button>
+      </div>
+
+      <div class="sep"></div>
+
+      <div class="group">
+        <button id="btn-undo" class="icon-only" disabled title="Hoàn tác (Ctrl+Z)"><svg class="ic"><use href="#ic-undo"/></svg></button>
+        <button id="btn-redo" class="icon-only" disabled title="Làm lại (Ctrl+Y)"><svg class="ic"><use href="#ic-redo"/></svg></button>
       </div>
 
       <div class="sep"></div>
@@ -114,12 +123,32 @@
     </div>
     <input type="file" id="ed-file" accept="image/png,image/jpeg" hidden />
 
+    <!-- Breadcrumb: full path + filename of the open document. Hidden until a doc loads. -->
+    <nav class="breadcrumb" id="breadcrumb" hidden aria-label="Đường dẫn file"></nav>
+
     <!-- P6 native text-edit toolbar (hidden until "Sửa chữ" is on) -->
     <div class="edit-bar" id="tedit-bar" hidden>
       <b class="tedit-title">Sửa chữ gốc</b>
+      <div class="sep"></div>
+      <label class="ctl" title="Font chữ">Font
+        <select id="te-font">
+          <option value="default">Mặc định (Việt)</option>
+          <option value="times">Times</option>
+          <option value="helv">Helvetica</option>
+          <option value="courier">Courier</option>
+        </select>
+      </label>
+      <label class="ctl" title="Cỡ chữ (điểm)">Cỡ <input type="number" id="te-size" min="4" max="200" step="0.5" value="11" /></label>
+      <label class="ctl" title="Màu chữ">Chữ <input type="color" id="te-color" value="#000000" /></label>
+      <label class="ctl" title="Màu nền (tô sau chữ)"><input type="checkbox" id="te-bg-on" /> Nền <input type="color" id="te-bg" value="#ffff00" /></label>
+      <div class="sep"></div>
+      <button id="te-bold" class="icon-only te-fmt" title="In đậm" style="font-weight:800">B</button>
+      <button id="te-italic" class="icon-only te-fmt" title="In nghiêng" style="font-style:italic">I</button>
+      <button id="te-underline" class="icon-only te-fmt" title="Gạch chân" style="text-decoration:underline">U</button>
+      <div class="sep"></div>
       <span id="te-hint" class="readout"></span>
       <div class="spacer"></div>
-      <button id="te-apply" class="primary" disabled title="Ghi các sửa đổi vào tài liệu">Áp dụng</button>
+      <button id="te-apply" class="primary" disabled title="Ghi các sửa đổi vào tài liệu (Ctrl+Enter khi đang sửa 1 đoạn cũng lưu ngay)">Áp dụng</button>
       <button id="te-exit" title="Thoát chế độ sửa chữ">Thoát</button>
     </div>
 

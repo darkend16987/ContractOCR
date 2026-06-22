@@ -34,3 +34,9 @@ models/
 
 # Per-user app settings (may contain API key)
 settings.json
+
+# Dev / build logs
+*.log
+dev-stdout.log
+dev-stderr.log
+build-package.log

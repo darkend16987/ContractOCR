@@ -20,6 +20,7 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = "vendor/pdf.worker.min.js";
 const state = {
   bytes: null, // Uint8Array — canonical PDF
   name: "document.pdf",
+  path: null, // full filesystem path of the open file (null = unsaved / drag-drop)
   pdf: null, // pdfjs document proxy
   numPages: 0,
   scale: 1.0, // viewer zoom (1.0 = 100%)
@@ -69,13 +70,149 @@ function withTimeout(promise, ms, msg) {
   ]);
 }
 
-// ---- loading + rendering -------------------------------------------------
+// ---- undo / redo ---------------------------------------------------------
+// Document-level history: each entry snapshots the canonical bytes (+ name/path)
+// before a mutating op (rotate/delete/merge/insert/reorder/edit-bake/form/
+// text-edit). Annotation edits while in edit mode aren't individually undoable;
+// they collapse into one history step when baked. Snapshots are full copies —
+// fine for a desktop app; capped at HISTORY_LIMIT to bound memory.
+const HISTORY_LIMIT = 30;
+const history = { undo: [], redo: [] };
 
-async function loadBytes(bytes, name) {
-  state.bytes = toU8(bytes);
-  if (name) state.name = name;
+function snapshot() {
+  return {
+    bytes: state.bytes ? state.bytes.slice() : null,
+    name: state.name,
+    path: state.path,
+  };
+}
+function resetHistory() {
+  history.undo.length = 0;
+  history.redo.length = 0;
+  updateUndoRedo();
+}
+// Call BEFORE mutating state.bytes. Captures the pre-op document.
+function pushUndo() {
+  if (!state.bytes) return;
+  history.undo.push(snapshot());
+  if (history.undo.length > HISTORY_LIMIT) history.undo.shift();
+  history.redo.length = 0;
+  updateUndoRedo();
+}
+async function restoreSnapshot(s) {
+  state.bytes = s.bytes;
+  state.name = s.name;
+  state.path = s.path;
   state.selected.clear();
   state.lastClicked = null;
+  if (window.Editor) window.Editor.reset();
+  if (window.TextEdit) window.TextEdit.reset();
+  await renderAll();
+  renderBreadcrumb();
+  updateUndoRedo();
+}
+async function undo() {
+  if (!history.undo.length) return;
+  history.redo.push(snapshot());
+  await restoreSnapshot(history.undo.pop());
+  toast("Đã hoàn tác.", "");
+}
+async function redo() {
+  if (!history.redo.length) return;
+  history.undo.push(snapshot());
+  await restoreSnapshot(history.redo.pop());
+  toast("Đã làm lại.", "");
+}
+function updateUndoRedo() {
+  const u = $("btn-undo");
+  const r = $("btn-redo");
+  if (u) u.disabled = !history.undo.length;
+  if (r) r.disabled = !history.redo.length;
+}
+
+// Expose pushUndo so the editor / text-edit modules (separate scripts that also
+// reassign state.bytes) record a history step before their own mutations.
+window.History = { pushUndo };
+
+// ---- breadcrumb (open file path) -----------------------------------------
+
+function renderBreadcrumb() {
+  const bar = $("breadcrumb");
+  if (!bar) return;
+  if (!state.bytes) {
+    bar.hidden = true;
+    bar.innerHTML = "";
+    return;
+  }
+  bar.hidden = false;
+  bar.innerHTML = "";
+
+  const folderIcon = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  folderIcon.setAttribute("class", "ic");
+  const use = document.createElementNS("http://www.w3.org/2000/svg", "use");
+  use.setAttribute("href", "#ic-folder");
+  folderIcon.appendChild(use);
+  bar.appendChild(folderIcon);
+
+  // Drag-dropped files (and never-saved docs) carry no path — show name only.
+  if (!state.path) {
+    const tag = document.createElement("span");
+    tag.className = "crumb-tag";
+    tag.textContent = "Chưa lưu";
+    bar.appendChild(tag);
+    bar.appendChild(sepEl());
+    bar.appendChild(fileCrumb(state.name));
+    return;
+  }
+
+  // Split on both separators so Windows + POSIX paths both render.
+  const parts = state.path.split(/[\\/]/).filter(Boolean);
+  const fileName = parts.pop();
+  const sepChar = state.path.includes("\\") ? "\\" : "/";
+  let acc = "";
+  parts.forEach((seg, idx) => {
+    acc = acc ? acc + sepChar + seg : seg + sepChar; // keep drive root "D:\"
+    const target = acc;
+    const btn = document.createElement("button");
+    btn.className = "crumb";
+    btn.textContent = seg;
+    btn.title = "Mở thư mục: " + target;
+    btn.onclick = () => window.desktop.showInFolder && window.desktop.showInFolder(target);
+    bar.appendChild(btn);
+    bar.appendChild(sepEl());
+  });
+  bar.appendChild(fileCrumb(fileName, state.path));
+
+  function sepEl() {
+    const s = document.createElement("span");
+    s.className = "crumb-sep";
+    s.textContent = "›";
+    return s;
+  }
+}
+function fileCrumb(name, fullPath) {
+  const f = document.createElement("button");
+  f.className = "crumb file";
+  f.textContent = name || state.name;
+  if (fullPath) {
+    f.title = "Hiện file trong thư mục: " + fullPath;
+    f.onclick = () => window.desktop.showInFolder && window.desktop.showInFolder(fullPath);
+  } else {
+    f.title = name || state.name;
+  }
+  return f;
+}
+
+// ---- loading + rendering -------------------------------------------------
+
+async function loadBytes(bytes, name, fullPath) {
+  state.bytes = toU8(bytes);
+  if (name) state.name = name;
+  state.path = fullPath || null;
+  state.selected.clear();
+  state.lastClicked = null;
+  resetHistory(); // a new document starts a fresh undo timeline
+  renderBreadcrumb();
   if (window.Editor) window.Editor.reset(); // drop annotations from any previous doc
   if (window.TextEdit) window.TextEdit.reset(); // drop any in-progress text edits
   try {
@@ -304,9 +441,117 @@ async function renderPageCanvas(i) {
       viewport: vp,
       transform: dpr !== 1 ? [dpr, 0, 0, dpr, 0, 0] : undefined,
     }).promise;
+    await addNoteMarkers(i, m); // surface baked sticky-note comments (readable in-app)
   } catch (_) {
     m.wrap.dataset.rendered = "0"; // let it retry on the next intersection
   }
+}
+
+// Baked notes (from the editor) are real PDF `Text` annotations — pdf.js paints
+// the page canvas but NOT the annotation text, so in our own viewer the comment
+// was invisible (only readable in Foxit/Acrobat). Place an invisible clickable
+// hotspot over each one that reveals its text on hover/click.
+async function addNoteMarkers(i, m) {
+  const { page, vp, wrap, canvas, cw, ch } = m;
+  const existing = wrap.querySelector(".note-layer");
+  if (existing) existing.remove();
+  let annots;
+  try {
+    annots = await page.getAnnotations();
+  } catch (_) {
+    return;
+  }
+  const notes = (annots || []).filter((a) => a.subtype === "Text" && a.contents);
+  if (!notes.length) return;
+  const layer = document.createElement("div");
+  layer.className = "note-layer";
+  layer.style.width = (parseFloat(canvas.style.width) || cw) + "px";
+  layer.style.height = (parseFloat(canvas.style.height) || ch) + "px";
+  for (const an of notes) {
+    const r = vp.convertToViewportRectangle(an.rect);
+    const x = Math.min(r[0], r[2]);
+    const y = Math.min(r[1], r[3]);
+    const el = document.createElement("div");
+    el.className = "note-marker";
+    el.style.left = x + "px";
+    el.style.top = y + "px";
+    el.style.width = Math.max(16, Math.abs(r[2] - r[0])) + "px";
+    el.style.height = Math.max(16, Math.abs(r[3] - r[1])) + "px";
+    el.title = an.contents;
+    el.onclick = (e) => {
+      e.stopPropagation();
+      showNotePopup(an.contents, e.clientX, e.clientY);
+    };
+    layer.appendChild(el);
+  }
+  wrap.appendChild(layer);
+}
+
+// Floating reader for a sticky-note's text (Electron has no annotation UI).
+function showNotePopup(text, cx, cy) {
+  let pop = $("note-popup");
+  if (!pop) {
+    pop = document.createElement("div");
+    pop.id = "note-popup";
+    pop.className = "note-popup";
+    document.body.appendChild(pop);
+    document.addEventListener("mousedown", (e) => {
+      if (pop && !pop.hidden && !pop.contains(e.target) && !e.target.classList.contains("note-marker")) {
+        pop.hidden = true;
+      }
+    });
+  }
+  pop.textContent = text;
+  pop.hidden = false;
+  pop.style.left = Math.min(cx + 8, window.innerWidth - 280) + "px";
+  pop.style.top = Math.min(cy + 8, window.innerHeight - 140) + "px";
+}
+
+// Re-render after an in-place edit (overlay bake / native text edit) WITHOUT the
+// full-document teardown `renderAll` does. The bytes changed so pdf.js must reload
+// the document, but baking never changes the page count — so we keep the existing
+// page-wrap DOM + every unchanged page's bitmap, and only repaint the pages whose
+// pixels actually changed. `changed` is a Set of 0-based indices (null = all).
+async function rerenderChanged(changed) {
+  if (!state.pageMetas || !state.pdf) return renderAll();
+  showOverlay("Đang cập nhật trang…");
+  try {
+    try { await state.pdf.destroy(); } catch (_) {}
+    const task = pdfjsLib.getDocument({ data: state.bytes.slice(), isEvalSupported: false });
+    state.pdf = await withTimeout(task.promise, 25000, "Tải PDF quá lâu.");
+    // Page count shifted (shouldn't for bake/edit) → safest to do the full path.
+    if (state.pdf.numPages !== state.numPages) {
+      hideOverlay();
+      return renderAll();
+    }
+    for (let i = 0; i < state.numPages; i++) {
+      const m = state.pageMetas[i];
+      const wasRendered = m.wrap.dataset.rendered === "1";
+      m.page = await state.pdf.getPage(i + 1); // refresh ref so later lazy redraws use new doc
+      m.vp = m.page.getViewport({ scale: state.scale });
+      if (changed && !changed.has(i)) continue; // unchanged: keep its bitmap as-is
+      m.wrap.dataset.rendered = "0";
+      if (wasRendered || !changed) await renderPageCanvas(i); // repaint now if it was on screen
+      await refreshThumb(i);
+    }
+    if (window.Editor) window.Editor.syncOverlays();
+    if (window.TextEdit) window.TextEdit.syncOverlays();
+  } finally {
+    hideOverlay();
+  }
+}
+
+// Repaint a single thumbnail in place (used by the targeted re-render above).
+async function refreshThumb(i) {
+  const div = $("thumbs").querySelector(`.thumb[data-index="${i}"]`);
+  const canvas = div && div.querySelector("canvas");
+  if (!canvas) return;
+  const page = state.pageMetas[i].page;
+  const base = page.getViewport({ scale: 1 });
+  const vp = page.getViewport({ scale: 150 / base.width });
+  canvas.width = Math.floor(vp.width);
+  canvas.height = Math.floor(vp.height);
+  await page.render({ canvasContext: canvas.getContext("2d"), viewport: vp }).promise;
 }
 
 function scrollToPage(i) {
@@ -394,6 +639,7 @@ async function reorderPage(from, to) {
   const [m] = order.splice(from, 1);
   order.splice(to, 0, m);
   showOverlay("Đang sắp xếp…");
+  pushUndo();
   try {
     const src = await PDFDocument.load(state.bytes);
     const out = await PDFDocument.create();
@@ -410,6 +656,7 @@ async function reorderPage(from, to) {
 async function rotateSelected(delta) {
   if (state.selected.size === 0) return;
   showOverlay("Đang xoay…");
+  pushUndo();
   try {
     const doc = await PDFDocument.load(state.bytes);
     const pages = doc.getPages();
@@ -435,6 +682,7 @@ async function deleteSelected() {
     return;
   }
   showOverlay("Đang xóa…");
+  pushUndo();
   try {
     const doc = await PDFDocument.load(state.bytes);
     [...state.selected].sort((a, b) => b - a).forEach((i) => doc.removePage(i));
@@ -450,6 +698,7 @@ async function mergeFiles() {
   const files = await window.desktop.openPdf({ multi: true });
   if (!files.length) return;
   showOverlay("Đang ghép…");
+  pushUndo();
   try {
     const doc = await PDFDocument.load(state.bytes);
     let added = 0;
@@ -472,6 +721,7 @@ async function insertFile() {
   if (!files.length) return;
   const at = state.selected.size ? Math.max(...state.selected) + 1 : state.numPages;
   showOverlay("Đang chèn…");
+  pushUndo();
   try {
     const doc = await PDFDocument.load(state.bytes);
     const other = await PDFDocument.load(toU8(files[0].data));
@@ -966,11 +1216,13 @@ function updateToolbar() {
 async function openDialog() {
   const files = await window.desktop.openPdf({ multi: false });
   if (!files.length) return;
-  await loadBytes(toU8(files[0].data), files[0].name);
+  await loadBytes(toU8(files[0].data), files[0].name, files[0].path);
 }
 
 $("btn-open").onclick = openDialog;
 $("btn-save").onclick = saveDoc;
+$("btn-undo").onclick = undo;
+$("btn-redo").onclick = redo;
 $("btn-merge").onclick = mergeFiles;
 $("btn-insert").onclick = insertFile;
 $("btn-extract").onclick = extractSelected;
@@ -1068,9 +1320,19 @@ $("btn-select-all").onclick = () => {
 };
 
 window.addEventListener("keydown", (e) => {
-  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") {
+  if (!(e.ctrlKey || e.metaKey)) return;
+  // Don't hijack shortcuts while typing in an input/textarea/select.
+  const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement && document.activeElement.tagName);
+  const k = e.key.toLowerCase();
+  if (k === "s") {
     e.preventDefault();
     saveDoc();
+  } else if (k === "z" && !e.shiftKey && !typing) {
+    e.preventDefault();
+    undo();
+  } else if (((k === "z" && e.shiftKey) || k === "y") && !typing) {
+    e.preventDefault();
+    redo();
   }
 });
 
@@ -1090,7 +1352,9 @@ window.addEventListener("drop", async (e) => {
   const f = [...e.dataTransfer.files].find((x) => x.name.toLowerCase().endsWith(".pdf"));
   if (f) {
     const buf = await f.arrayBuffer();
-    await loadBytes(new Uint8Array(buf), f.name);
+    // Electron exposes the dropped file's real path via file.path; use it for the
+    // breadcrumb when present (older/secured builds may omit it).
+    await loadBytes(new Uint8Array(buf), f.name, f.path || null);
   }
 });
 

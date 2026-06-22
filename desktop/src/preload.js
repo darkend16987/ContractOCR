@@ -42,4 +42,7 @@ contextBridge.exposeInMainWorld("desktop", {
   // Generic save for exports. filters: [{ name, extensions: [...] }].
   saveFile: (data, defaultName, filters) =>
     ipcRenderer.invoke("dialog:save-file", { data, defaultName, filters }),
+
+  // Reveal a file/folder in the OS file manager (breadcrumb navigation).
+  showInFolder: (fullPath) => ipcRenderer.invoke("shell:show-in-folder", fullPath),
 });

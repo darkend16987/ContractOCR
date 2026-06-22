@@ -3,7 +3,7 @@
 const path = require("path");
 const fs = require("fs");
 const crypto = require("crypto");
-const { app, BrowserWindow, ipcMain, dialog } = require("electron");
+const { app, BrowserWindow, ipcMain, dialog, shell } = require("electron");
 const { startSidecar, stopSidecar } = require("./sidecar");
 const { initAutoUpdate } = require("./updater");
 const { initLicense } = require("./license");
@@ -138,6 +138,23 @@ ipcMain.handle("dialog:save-file", async (_e, { data, defaultName, filters }) =>
   if (res.canceled || !res.filePath) return { saved: false };
   fs.writeFileSync(res.filePath, Buffer.from(data));
   return { saved: true, path: res.filePath };
+});
+
+// Reveal a path in the OS file manager (Explorer/Finder). Used by the
+// breadcrumb: click a folder segment → open that folder; the filename → select
+// the file. Falls back to opening the path if it's a directory.
+ipcMain.handle("shell:show-in-folder", (_e, fullPath) => {
+  if (!fullPath || typeof fullPath !== "string") return false;
+  try {
+    if (fs.existsSync(fullPath) && fs.statSync(fullPath).isDirectory()) {
+      shell.openPath(fullPath);
+    } else {
+      shell.showItemInFolder(fullPath);
+    }
+    return true;
+  } catch {
+    return false;
+  }
 });
 
 // ---- shutdown ------------------------------------------------------------
