@@ -443,6 +443,35 @@ def _vietnamese_font() -> str | None:
     return None
 
 
+# DejaVu ships style variants beside the regular TTF. Using the real bold/oblique
+# file renders far cleaner than faux-bold stroking (the old approach blobbed at
+# small sizes). Returns None when the variant file is absent → caller faux-styles.
+_DEJAVU_SUFFIX = {
+    (False, False): "",
+    (True, False): "-Bold",
+    (False, True): "-Oblique",
+    (True, True): "-BoldOblique",
+}
+
+
+def _dejavu_variant(base_path: str, bold: bool, italic: bool) -> str | None:
+    if not base_path:
+        return None
+    suffix = _DEJAVU_SUFFIX[(bold, italic)]
+    if not suffix:
+        return base_path
+    cand = Path(base_path).with_name(f"DejaVuSans{suffix}.ttf")
+    return str(cand) if cand.is_file() else None
+
+
+# PyMuPDF Base14 names by (bold, italic). Real font variants, no faux needed.
+_BUILTIN_VARIANTS = {
+    "helv": {(False, False): "helv", (True, False): "hebo", (False, True): "heit", (True, True): "hebi"},
+    "tiro": {(False, False): "tiro", (True, False): "tibo", (False, True): "tiit", (True, True): "tibi"},
+    "cour": {(False, False): "cour", (True, False): "cobo", (False, True): "coit", (True, True): "cobi"},
+}
+
+
 class SearchableRequest(BaseModel):
     """Request body for building a searchable PDF (invisible OCR text layer)."""
     pdf_b64: str  # the source PDF, base64 (no data URL prefix)
@@ -901,15 +930,28 @@ async def edit_text(req: EditTextRequest):
                 page.add_redact_annot(fitz.Rect(*e.bbox), fill=_norm_color(e.fill) if e.fill is not None else (1, 1, 1))
             page.apply_redactions()
 
-            # 2. Redraw the new text in the same box. Embed the Unicode fallback
-            #    font once per page (only if we have it).
-            have_font = False
-            if font_path:
+            # 2. Redraw the new text in the same box. Embed Vietnamese-capable
+            #    fonts lazily — one PyMuPDF fontname per style variant we actually
+            #    use (regular/bold/italic/bolditalic). Real variant TTFs render far
+            #    cleaner than faux-bold stroking.
+            embedded: dict[tuple[bool, bool], tuple[str, str] | None] = {}
+
+            def embed_vn(bold: bool, italic: bool):
+                key = (bold, italic)
+                if key in embedded:
+                    return embedded[key]
+                vp = _dejavu_variant(font_path, bold, italic) if font_path else None
+                if not vp:
+                    embedded[key] = None
+                    return None
+                fn = "vnedit" + ("b" if bold else "") + ("i" if italic else "")
                 try:
-                    page.insert_font(fontname="vnedit", fontfile=font_path)
-                    have_font = True
+                    page.insert_font(fontname=fn, fontfile=vp)
+                    embedded[key] = (fn, vp)
                 except Exception as fe:
-                    logger.debug("insert_font failed: %s", fe)
+                    logger.debug("insert_font %s failed: %s", fn, fe)
+                    embedded[key] = None
+                return embedded[key]
 
             for e in edits:
                 txt = e.new_text or ""
@@ -937,17 +979,33 @@ async def edit_text(req: EditTextRequest):
                 fam = (e.font or "default").lower()
                 needs_unicode = any(ord(ch) > 0xFF for ch in txt)
                 builtin = {"times": "tiro", "helv": "helv", "courier": "cour"}.get(fam)
-                if fam == "default" or needs_unicode or not builtin:
-                    fontname = "vnedit" if have_font else "helv"
-                else:
-                    fontname = builtin
 
-                # Bold = faux-bold via fill+stroke (render_mode 2). Italic = faux-italic
-                # via a horizontal shear about the baseline origin. Both work on any font.
-                render_mode = 2 if e.bold else 0
-                border_width = max(0.3, size * 0.03) if e.bold else 0
+                # Pick a REAL bold/italic font variant where possible; only fall back
+                # to faux styling (stroke/shear) when the variant TTF is unavailable.
+                fontfile = None  # set when using an embedded TTF (for width calc)
+                faux_bold = False
+                faux_italic = False
+                if not (fam == "default" or needs_unicode or not builtin):
+                    fontname = _BUILTIN_VARIANTS[builtin][(bool(e.bold), bool(e.italic))]
+                else:
+                    emb = embed_vn(bool(e.bold), bool(e.italic))
+                    if emb:
+                        fontname, fontfile = emb
+                    else:
+                        base = embed_vn(False, False)
+                        if base:
+                            fontname, fontfile = base
+                        else:
+                            fontname = "helv"  # last resort (Latin-1 only)
+                        faux_bold = bool(e.bold)
+                        faux_italic = bool(e.italic)
+
+                # Faux-bold via fill+stroke (render_mode 2); faux-italic via a
+                # horizontal shear. Only used when no real variant was found.
+                render_mode = 2 if faux_bold else 0
+                border_width = max(0.3, size * 0.03) if faux_bold else 0
                 morph = None
-                if e.italic:
+                if faux_italic:
                     morph = (fitz.Point(ox, oy), fitz.Matrix(1, 0, 0.25, 1, 0, 0))
 
                 try:
@@ -967,8 +1025,8 @@ async def edit_text(req: EditTextRequest):
                 # Underline: a line just under the baseline, width = drawn-text width.
                 if e.underline:
                     try:
-                        if fontname == "vnedit" and font_path:
-                            tw = fitz.Font(fontfile=font_path).text_length(txt, fontsize=size)
+                        if fontfile:
+                            tw = fitz.Font(fontfile=fontfile).text_length(txt, fontsize=size)
                         else:
                             tw = fitz.Font(fontname=fontname).text_length(txt, fontsize=size)
                     except Exception:
