@@ -489,3 +489,24 @@ body.editing .note-marker, body.text-editing .note-marker { pointer-events: none
   * { transition-duration: 0.01ms !important; }
   .spinner { animation-duration: 2s; }
 }
+
+/* Toolbar dropdown — single "Chuyển đổi" button reveals grouped tools,
+   keeping the toolbar uncluttered (P7). */
+.dropdown { position: relative; display: inline-flex; }
+#btn-convert .chev { width: 14px; height: 14px; margin-left: 2px; opacity: .7; }
+.dropdown-menu {
+  position: absolute; top: calc(100% + 4px); right: 0; z-index: 130;
+  background: var(--bg-2); border: 1px solid var(--line); border-radius: 10px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5); padding: 6px; min-width: 220px;
+  display: flex; flex-direction: column; gap: 2px;
+}
+.dd-item {
+  display: flex; align-items: center; gap: 8px; width: 100%;
+  background: transparent; border: 0; color: var(--fg);
+  font: inherit; font-size: 13px; text-align: left;
+  padding: 8px 10px; border-radius: 7px; cursor: pointer;
+}
+.dd-item:hover:not(:disabled) { background: var(--bg-hover); }
+.dd-item:disabled { color: var(--muted); cursor: not-allowed; }
+.dd-item .ic { width: 16px; height: 16px; color: var(--muted); flex: 0 0 auto; }
+.dd-sep { border-top: 1px solid var(--line); margin: 4px 2px; }

@@ -37,6 +37,9 @@ contextBridge.exposeInMainWorld("desktop", {
   // --- native file dialogs ---
   // Returns [{ path, name, data: Uint8Array }, ...] (empty if cancelled).
   openPdf: (opts) => ipcRenderer.invoke("dialog:open-pdf", opts || {}),
+  // Generic open for non-PDF inputs (e.g. images → PDF). opts: { multi, filters }.
+  // Returns [{ path, name, data: Uint8Array }, ...] (empty if cancelled).
+  openFiles: (opts) => ipcRenderer.invoke("dialog:open-files", opts || {}),
   // data: Uint8Array | ArrayBuffer. Returns { saved, path? }. Always prompts.
   savePdf: (data, defaultName) =>
     ipcRenderer.invoke("dialog:save-pdf", { data, defaultName }),

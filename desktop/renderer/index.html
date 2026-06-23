@@ -39,6 +39,9 @@
         <symbol id="ic-redact" viewBox="0 0 24 24"><rect x="4" y="6" width="16" height="12" rx="1"/></symbol>
         <symbol id="ic-undo" viewBox="0 0 24 24"><path d="M9 14L4 9l5-5"/><path d="M4 9h11a5 5 0 1 1 0 10H8"/></symbol>
         <symbol id="ic-redo" viewBox="0 0 24 24"><path d="M15 14l5-5-5-5"/><path d="M20 9H9a5 5 0 1 0 0 10h8"/></symbol>
+        <symbol id="ic-lock" viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="9" rx="1"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></symbol>
+        <symbol id="ic-convert" viewBox="0 0 24 24"><path d="M4 8h11l-3-3M20 16H9l3 3"/></symbol>
+        <symbol id="ic-chevron" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></symbol>
       </defs>
     </svg>
 
@@ -87,6 +90,16 @@
       <button id="btn-text-edit" class="ghost" disabled title="Sửa trực tiếp chữ gốc của PDF (chỉ PDF có text thật, không phải scan)"><svg class="ic"><use href="#ic-type"/></svg>Sửa chữ</button>
       <button id="btn-searchable" class="ghost" disabled title="Tạo PDF tìm-kiếm-được (OCR thêm lớp text vô hình)"><svg class="ic"><use href="#ic-file-search"/></svg>Searchable</button>
       <button id="btn-compress" class="ghost" disabled title="Nén PDF (giảm dung lượng ảnh)"><svg class="ic"><use href="#ic-compress"/></svg>Nén</button>
+      <div class="dropdown" id="convert-dd">
+        <button id="btn-convert" class="ghost" disabled title="Khoá file, xuất ảnh, chuyển đổi ảnh ↔ PDF"><svg class="ic"><use href="#ic-convert"/></svg>Chuyển đổi<svg class="ic chev"><use href="#ic-chevron"/></svg></button>
+        <div class="dropdown-menu" id="convert-menu" hidden>
+          <button class="dd-item" id="mi-encrypt"><svg class="ic"><use href="#ic-lock"/></svg>Khoá file (đặt mật khẩu)…</button>
+          <div class="dd-sep"></div>
+          <button class="dd-item" id="mi-extract-images"><svg class="ic"><use href="#ic-photo"/></svg>Xuất ảnh trong PDF…</button>
+          <button class="dd-item" id="mi-pdf-to-images"><svg class="ic"><use href="#ic-photo"/></svg>Trang PDF → ảnh…</button>
+          <button class="dd-item" id="mi-images-to-pdf"><svg class="ic"><use href="#ic-file"/></svg>Ảnh → PDF…</button>
+        </div>
+      </div>
       <button id="btn-ocr" class="ghost" disabled title="OCR + bóc tách field bằng AI"><svg class="ic"><use href="#ic-wand"/></svg>Bóc tách</button>
       <button id="btn-settings" class="ghost icon-only" title="Cài đặt — API key cho Bóc tách"><svg class="ic"><use href="#ic-settings"/></svg></button>
       <span id="sidecar-badge" class="badge starting" title="Trạng thái engine OCR">OCR: …</span>
@@ -293,6 +306,78 @@
         <div class="modal-actions">
           <button id="cmp-cancel">Hủy</button>
           <button id="cmp-ok" class="primary">Nén &amp; lưu</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Lock PDF (set password) dialog -->
+    <div class="modal" id="enc-modal" hidden>
+      <div class="modal-card">
+        <h3>Khoá file PDF</h3>
+        <p class="cmp-note">Đặt mật khẩu để mở file. Người không có mật khẩu sẽ không xem được nội dung.</p>
+        <label>Mật khẩu mở file
+          <span class="key-row">
+            <input id="enc-pw" type="password" placeholder="Nhập mật khẩu…" autocomplete="off" spellcheck="false" />
+            <button id="enc-pw-toggle" type="button" class="ghost" title="Hiện / ẩn mật khẩu">👁</button>
+          </span>
+        </label>
+        <label>Nhập lại mật khẩu
+          <input id="enc-pw2" type="password" placeholder="Nhập lại để xác nhận…" autocomplete="off" spellcheck="false" />
+        </label>
+        <details class="ext-raw" style="margin-top:8px">
+          <summary>Quyền hạn (tuỳ chọn)</summary>
+          <label class="chk"><input type="checkbox" id="enc-print" checked /> Cho phép in</label>
+          <label class="chk"><input type="checkbox" id="enc-copy" checked /> Cho phép sao chép nội dung</label>
+          <label class="chk"><input type="checkbox" id="enc-modify" checked /> Cho phép chỉnh sửa</label>
+          <label class="chk"><input type="checkbox" id="enc-annotate" checked /> Cho phép chú thích</label>
+        </details>
+        <div class="modal-actions">
+          <button id="enc-cancel">Hủy</button>
+          <button id="enc-ok" class="primary">Khoá &amp; lưu</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- PDF → images dialog -->
+    <div class="modal" id="p2i-modal" hidden>
+      <div class="modal-card">
+        <h3>Trang PDF → ảnh</h3>
+        <p class="cmp-note">Mỗi trang được xuất thành một ảnh; tất cả gói trong một file .zip.</p>
+        <label>Định dạng
+          <select id="p2i-format">
+            <option value="png" selected>PNG (nét, file lớn hơn)</option>
+            <option value="jpg">JPG (nhẹ hơn)</option>
+          </select>
+        </label>
+        <label>Độ phân giải
+          <select id="p2i-dpi">
+            <option value="96">96 DPI — màn hình</option>
+            <option value="150" selected>150 DPI — vừa</option>
+            <option value="300">300 DPI — in ấn</option>
+          </select>
+        </label>
+        <div class="modal-actions">
+          <button id="p2i-cancel">Hủy</button>
+          <button id="p2i-ok" class="primary">Xuất &amp; lưu</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- images → PDF dialog -->
+    <div class="modal" id="i2p-modal" hidden>
+      <div class="modal-card">
+        <h3>Ảnh → PDF</h3>
+        <p class="cmp-note" id="i2p-count">Chọn các ảnh để gộp thành một PDF (theo đúng thứ tự chọn).</p>
+        <button id="i2p-pick" class="ghost" style="margin-bottom:8px"><svg class="ic"><use href="#ic-photo"/></svg>Chọn ảnh…</button>
+        <label>Khổ trang
+          <select id="i2p-size">
+            <option value="fit" selected>Vừa khít ảnh (không lề)</option>
+            <option value="a4">A4 dọc (căn giữa)</option>
+          </select>
+        </label>
+        <div class="modal-actions">
+          <button id="i2p-cancel">Hủy</button>
+          <button id="i2p-ok" class="primary" disabled>Tạo PDF &amp; lưu</button>
         </div>
       </div>
     </div>

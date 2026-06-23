@@ -1217,6 +1217,203 @@ async function runCompress() {
   }
 }
 
+// ---- P7: convert tools (lock / extract images / image↔pdf) ---------------
+//
+// All four share the established sidecar pattern: bake pending edits, POST to a
+// PyMuPDF endpoint, then save the returned bytes via a native dialog. PDF outputs
+// use savePdf; image bundles come back as a .zip saved via saveFile.
+
+// Guard shared by every convert tool: pro-gate + engine-ready + a doc is open.
+function convertReady(needDoc = true) {
+  if (gateProFeature()) return false;
+  if (sidecar.state !== "ready" || !sidecar.base) {
+    toast("Engine chưa sẵn sàng.", "bad");
+    return false;
+  }
+  if (needDoc && !state.bytes) {
+    toast("Mở PDF trước.", "bad");
+    return false;
+  }
+  return true;
+}
+
+// --- lock PDF (set password) ---
+function openEncrypt() {
+  if (!convertReady()) return;
+  $("enc-pw").value = "";
+  $("enc-pw2").value = "";
+  $("enc-pw").type = "password";
+  $("enc-modal").hidden = false;
+  $("enc-pw").focus();
+}
+
+async function runEncrypt() {
+  const pw = $("enc-pw").value;
+  const pw2 = $("enc-pw2").value;
+  if (!pw) {
+    toast("Nhập mật khẩu trước.", "bad");
+    return;
+  }
+  if (pw !== pw2) {
+    toast("Hai lần nhập mật khẩu không khớp.", "bad");
+    return;
+  }
+  $("enc-modal").hidden = true;
+  if (window.Editor) await window.Editor.bakePending();
+  showOverlay("Đang khoá file…");
+  try {
+    const res = await sidecarFetch("/encrypt", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        pdf_b64: u8ToB64(state.bytes),
+        user_password: pw,
+        allow_print: $("enc-print").checked,
+        allow_copy: $("enc-copy").checked,
+        allow_modify: $("enc-modify").checked,
+        allow_annotate: $("enc-annotate").checked,
+      }),
+    });
+    const data = await res.json();
+    if (!data.success) {
+      toast("Khoá file lỗi: " + (data.error || data.detail || "không rõ"), "bad");
+      return;
+    }
+    const bytes = Uint8Array.from(atob(data.data_b64), (ch) => ch.charCodeAt(0));
+    const name = `${baseName(state.name)}-locked.pdf`;
+    const r = await window.desktop.savePdf(bytes, name);
+    if (r.saved) toast("Đã khoá file bằng mật khẩu: " + r.path, "good");
+  } catch (err) {
+    toast("Lỗi khoá file: " + err.message, "bad");
+  } finally {
+    hideOverlay();
+  }
+}
+
+// --- extract embedded images → zip ---
+async function extractImages() {
+  if (!convertReady()) return;
+  if (window.Editor) await window.Editor.bakePending();
+  showOverlay("Đang tìm và trích ảnh trong PDF…");
+  try {
+    const res = await sidecarFetch("/extract-images", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ pdf_b64: u8ToB64(state.bytes) }),
+    });
+    const data = await res.json();
+    if (!data.success) {
+      toast("Xuất ảnh lỗi: " + (data.error || data.detail || "không rõ"), "bad");
+      return;
+    }
+    const bytes = Uint8Array.from(atob(data.data_b64), (ch) => ch.charCodeAt(0));
+    const name = `${baseName(state.name)}-images.zip`;
+    const r = await window.desktop.saveFile(bytes, name, [{ name: "ZIP", extensions: ["zip"] }]);
+    if (r.saved) toast(`Đã xuất ${data.count} ảnh: ` + r.path, "good");
+  } catch (err) {
+    toast("Lỗi xuất ảnh: " + err.message, "bad");
+  } finally {
+    hideOverlay();
+  }
+}
+
+// --- PDF pages → images zip ---
+function openPdfToImages() {
+  if (!convertReady()) return;
+  $("p2i-modal").hidden = false;
+}
+
+async function runPdfToImages() {
+  $("p2i-modal").hidden = true;
+  if (window.Editor) await window.Editor.bakePending();
+  const format = $("p2i-format").value || "png";
+  const dpi = parseInt($("p2i-dpi").value, 10) || 150;
+  showOverlay("Đang chuyển trang PDF thành ảnh…");
+  try {
+    const res = await sidecarFetch("/pdf-to-images", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ pdf_b64: u8ToB64(state.bytes), dpi, format }),
+    });
+    const data = await res.json();
+    if (!data.success) {
+      toast("Chuyển ảnh lỗi: " + (data.error || data.detail || "không rõ"), "bad");
+      return;
+    }
+    const bytes = Uint8Array.from(atob(data.data_b64), (ch) => ch.charCodeAt(0));
+    const name = `${baseName(state.name)}-pages.zip`;
+    const r = await window.desktop.saveFile(bytes, name, [{ name: "ZIP", extensions: ["zip"] }]);
+    if (r.saved) toast(`Đã xuất ${data.count} trang thành ảnh: ` + r.path, "good");
+  } catch (err) {
+    toast("Lỗi chuyển ảnh: " + err.message, "bad");
+  } finally {
+    hideOverlay();
+  }
+}
+
+// --- images → PDF ---
+let i2pImages = []; // [{ name, b64 }] picked by the user, in order
+
+function openImagesToPdf() {
+  if (!convertReady(false)) return; // no open doc needed — we build a new PDF
+  i2pImages = [];
+  updateI2pUI();
+  $("i2p-modal").hidden = false;
+}
+
+function updateI2pUI() {
+  const n = i2pImages.length;
+  $("i2p-count").textContent = n
+    ? `Đã chọn ${n} ảnh — sẽ tạo PDF ${n} trang (theo thứ tự chọn).`
+    : "Chọn các ảnh để gộp thành một PDF (theo đúng thứ tự chọn).";
+  $("i2p-ok").disabled = n === 0;
+}
+
+async function pickI2pImages() {
+  const files = await window.desktop.openFiles({ multi: true });
+  if (!files || !files.length) return;
+  for (const f of files) {
+    i2pImages.push({ name: f.name, b64: u8ToB64(toU8(f.data)) });
+  }
+  updateI2pUI();
+}
+
+async function runImagesToPdf() {
+  if (!i2pImages.length) {
+    toast("Chọn ít nhất một ảnh.", "bad");
+    return;
+  }
+  $("i2p-modal").hidden = true;
+  const page_size = $("i2p-size").value || "fit";
+  showOverlay("Đang tạo PDF từ ảnh…");
+  try {
+    const res = await sidecarFetch("/images-to-pdf", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ images: i2pImages.map((x) => x.b64), page_size }),
+    });
+    const data = await res.json();
+    if (!data.success) {
+      toast("Tạo PDF lỗi: " + (data.error || data.detail || "không rõ"), "bad");
+      return;
+    }
+    const bytes = Uint8Array.from(atob(data.data_b64), (ch) => ch.charCodeAt(0));
+    const r = await window.desktop.savePdf(bytes, "images-to-pdf.pdf");
+    if (r.saved) toast(`Đã tạo PDF ${data.pages} trang từ ảnh: ` + r.path, "good");
+  } catch (err) {
+    toast("Lỗi tạo PDF: " + err.message, "bad");
+  } finally {
+    hideOverlay();
+  }
+}
+
+// Dropdown open/close: toggle the menu; closed on outside-click/Escape (wired below).
+function toggleConvertMenu(force) {
+  const menu = $("convert-menu");
+  const show = force !== undefined ? force : menu.hidden;
+  menu.hidden = !show;
+}
+
 // ---- settings (API key) --------------------------------------------------
 
 async function openSettings() {
@@ -1299,6 +1496,7 @@ const GATED_BTNS = [
   "btn-ocr",
   "btn-searchable",
   "btn-compress",
+  "btn-convert",
   "btn-edit",
   "btn-text-edit",
   "btn-merge",
@@ -1447,6 +1645,11 @@ function updateToolbar() {
   if (bs) bs.disabled = !(ready && has) || editing;
   const bc = $("btn-compress");
   if (bc) bc.disabled = !(ready && has) || editing;
+  // Convert dropdown: enabled whenever the engine is ready (Ảnh→PDF works with no
+  // doc open); per-item guards enforce the "open a PDF first" rule where needed.
+  const bcv = $("btn-convert");
+  if (bcv) bcv.disabled = !ready || editing;
+  if (editing) toggleConvertMenu(false);
   // Overlay edit must not run while text-editing, and vice versa.
   const be = $("btn-edit");
   if (be) be.disabled = !has || textEditing;
@@ -1487,6 +1690,40 @@ $("btn-searchable").onclick = makeSearchable;
 $("btn-compress").onclick = openCompress;
 $("cmp-cancel").onclick = () => ($("cmp-modal").hidden = true);
 $("cmp-ok").onclick = runCompress;
+
+// Convert dropdown — trigger toggles the menu; each item runs its tool and
+// closes the menu. Outside-click / Escape close it (handlers further below).
+$("btn-convert").onclick = (e) => {
+  e.stopPropagation();
+  toggleConvertMenu();
+};
+const ddRun = (fn) => () => {
+  toggleConvertMenu(false);
+  fn();
+};
+$("mi-encrypt").onclick = ddRun(openEncrypt);
+$("mi-extract-images").onclick = ddRun(extractImages);
+$("mi-pdf-to-images").onclick = ddRun(openPdfToImages);
+$("mi-images-to-pdf").onclick = ddRun(openImagesToPdf);
+document.addEventListener("click", (e) => {
+  if (!$("convert-dd").contains(e.target)) toggleConvertMenu(false);
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") toggleConvertMenu(false);
+});
+// Convert modals.
+$("enc-cancel").onclick = () => ($("enc-modal").hidden = true);
+$("enc-ok").onclick = runEncrypt;
+$("enc-pw-toggle").onclick = () => {
+  const i = $("enc-pw");
+  i.type = i.type === "password" ? "text" : "password";
+};
+$("p2i-cancel").onclick = () => ($("p2i-modal").hidden = true);
+$("p2i-ok").onclick = runPdfToImages;
+$("i2p-cancel").onclick = () => ($("i2p-modal").hidden = true);
+$("i2p-pick").onclick = pickI2pImages;
+$("i2p-ok").onclick = runImagesToPdf;
+
 $("btn-settings").onclick = openSettings;
 $("set-cancel").onclick = () => ($("set-modal").hidden = true);
 $("set-ok").onclick = saveSettings;
@@ -1647,6 +1884,10 @@ window.desktop.onMenuCommand((cmd) => {
     zoomOut: () => zoom(-0.2),
     zoomReset,
     settings: openSettings,
+    encrypt: openEncrypt,
+    extractImages: extractImages,
+    pdfToImages: openPdfToImages,
+    imagesToPdf: openImagesToPdf,
   };
   const fn = actions[cmd];
   if (fn) fn();

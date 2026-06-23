@@ -105,6 +105,16 @@ function buildMenu() {
       ],
     },
     {
+      label: "Chuyển đổi",
+      submenu: [
+        { label: "Khoá file (đặt mật khẩu)…", click: send("encrypt") },
+        { type: "separator" },
+        { label: "Xuất ảnh trong PDF…", click: send("extractImages") },
+        { label: "Trang PDF → ảnh…", click: send("pdfToImages") },
+        { label: "Ảnh → PDF…", click: send("imagesToPdf") },
+      ],
+    },
+    {
       label: "Hiển thị",
       submenu: [
         { label: "Phóng to", accelerator: "CmdOrCtrl+=", registerAccelerator: false, click: send("zoomIn") },
@@ -177,6 +187,27 @@ ipcMain.handle("dialog:open-pdf", async (_e, { multi = false } = {}) => {
     title: "Mở PDF",
     properties: props,
     filters: [{ name: "PDF", extensions: ["pdf"] }],
+  });
+  if (res.canceled) return [];
+  return res.filePaths.map((fp) => ({
+    path: fp,
+    name: path.basename(fp),
+    data: fs.readFileSync(fp),
+  }));
+});
+
+// Generic open for non-PDF inputs (images → PDF). `filters`/`multi` come from the
+// renderer; defaults to common image types with multi-selection.
+ipcMain.handle("dialog:open-files", async (_e, { multi = true, filters } = {}) => {
+  const props = ["openFile"];
+  if (multi) props.push("multiSelections");
+  const res = await dialog.showOpenDialog(mainWindow, {
+    title: "Chọn tệp",
+    properties: props,
+    filters:
+      filters && filters.length
+        ? filters
+        : [{ name: "Ảnh", extensions: ["jpg", "jpeg", "png", "bmp", "tif", "tiff", "webp", "gif"] }],
   });
   if (res.canceled) return [];
   return res.filePaths.map((fp) => ({

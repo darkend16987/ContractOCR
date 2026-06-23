@@ -11,6 +11,7 @@ import io
 import logging
 import os
 import tempfile
+import zipfile
 from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
@@ -790,6 +791,333 @@ async def decrypt(req: DecryptRequest):
         filename=f"unlocked_{ts}.pdf",
         data_b64=base64.b64encode(out_bytes).decode("ascii"),
         pages=pages,
+    )
+
+
+# ---- shared PDF helpers (used by the P7 conversion endpoints below) -------
+#
+# Every PDF endpoint repeats the same three steps: size-check the base64, decode
+# it, and open it with fitz. These helpers centralise that for the new endpoints
+# (existing endpoints keep their inline version to stay surgical).
+
+
+def _decode_pdf_b64(pdf_b64: str) -> bytes:
+    """Validate size + decode a base64 PDF payload, raising HTTPException on error."""
+    if len(pdf_b64) > _MAX_PDF_B64:
+        raise HTTPException(status_code=400, detail="PDF quá lớn (tối đa ~200MB).")
+    try:
+        return base64.b64decode(pdf_b64)
+    except Exception:
+        raise HTTPException(status_code=400, detail="pdf_b64 không hợp lệ")
+
+
+def _require_fitz():
+    """Import PyMuPDF or raise a 503 with a Vietnamese message (frozen builds bundle it)."""
+    try:
+        import fitz  # PyMuPDF
+
+        return fitz
+    except ImportError:
+        raise HTTPException(status_code=503, detail="PyMuPDF (fitz) chưa cài — không xử lý được PDF.")
+
+
+# ---- P7: lock a PDF (set open/owner password) -----------------------------
+
+
+class EncryptRequest(BaseModel):
+    """Request body for password-protecting a PDF.
+
+    `user_password` is the open password (required to view). `owner_password`
+    (optional) controls permissions/editing; if blank we reuse the user password.
+    The allow_* flags are honoured only when an owner password differs from the
+    user password — otherwise a viewer who can open also holds owner rights.
+    """
+    pdf_b64: str
+    user_password: str = ""
+    owner_password: str = ""
+    allow_print: bool = True
+    allow_copy: bool = True
+    allow_modify: bool = True
+    allow_annotate: bool = True
+
+
+class EncryptResponse(BaseModel):
+    success: bool
+    filename: str = ""
+    data_b64: str = ""
+    pages: int = 0
+    error: str | None = None
+
+
+@app.post("/encrypt", response_model=EncryptResponse)
+async def encrypt(req: EncryptRequest):
+    """Return an AES-256 encrypted copy of the PDF protected by the given password(s).
+
+    Mirror image of /decrypt. At least a user (open) password is required so the
+    output is actually protected on open. Permissions are derived from the
+    allow_* flags and bound to the owner password.
+    """
+    fitz = _require_fitz()
+
+    user_pw = req.user_password or ""
+    owner_pw = req.owner_password or user_pw
+    if not user_pw and not req.owner_password:
+        raise HTTPException(status_code=400, detail="Cần ít nhất một mật khẩu để khoá file.")
+
+    pdf_bytes = _decode_pdf_b64(req.pdf_b64)
+    try:
+        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Không mở được PDF: {e}")
+
+    try:
+        if doc.needs_pass:
+            doc.close()
+            raise HTTPException(status_code=400, detail="File đã có mật khẩu. Hãy mở khoá trước khi khoá lại.")
+        perm = int(
+            fitz.PDF_PERM_ACCESSIBILITY  # screen readers always allowed
+            | (fitz.PDF_PERM_PRINT | fitz.PDF_PERM_PRINT_HQ if req.allow_print else 0)
+            | (fitz.PDF_PERM_COPY if req.allow_copy else 0)
+            | (fitz.PDF_PERM_MODIFY if req.allow_modify else 0)
+            | (fitz.PDF_PERM_ANNOTATE if req.allow_annotate else 0)
+        )
+        out_bytes = doc.tobytes(
+            encryption=fitz.PDF_ENCRYPT_AES_256,
+            owner_pw=owner_pw,
+            user_pw=user_pw,
+            permissions=perm,
+            deflate=True,
+            garbage=3,
+        )
+        pages = doc.page_count
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Encrypt error")
+        return EncryptResponse(success=False, error=str(e))
+    finally:
+        doc.close()
+
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    return EncryptResponse(
+        success=True,
+        filename=f"locked_{ts}.pdf",
+        data_b64=base64.b64encode(out_bytes).decode("ascii"),
+        pages=pages,
+    )
+
+
+# ---- P7: extract embedded images out of a PDF -----------------------------
+
+
+class ExtractImagesRequest(BaseModel):
+    pdf_b64: str
+    min_size: int = 16  # skip tiny images (icons/lines) below this px on a side
+
+
+class ZipResponse(BaseModel):
+    """Shared response for endpoints that return a .zip bundle of images."""
+    success: bool
+    filename: str = ""
+    data_b64: str = ""  # the .zip, base64
+    count: int = 0
+    error: str | None = None
+
+
+@app.post("/extract-images", response_model=ZipResponse)
+async def extract_images(req: ExtractImagesRequest):
+    """Pull every embedded raster image out of the PDF, returned as one .zip.
+
+    De-duplicates by xref so an image repeated on many pages is saved once. Each
+    file is named pNNN_imgMM.<ext> using the image's native encoding (no recompress).
+    """
+    fitz = _require_fitz()
+    pdf_bytes = _decode_pdf_b64(req.pdf_b64)
+    try:
+        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Không mở được PDF: {e}")
+
+    buf = io.BytesIO()
+    count = 0
+    seen: set[int] = set()
+    try:
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+            for pno in range(doc.page_count):
+                for img in doc.get_page_images(pno, full=True):
+                    xref = img[0]
+                    if xref in seen:
+                        continue
+                    seen.add(xref)
+                    try:
+                        info = doc.extract_image(xref)
+                    except Exception as e:
+                        logger.debug("extract_image %d failed: %s", xref, e)
+                        continue
+                    if not info or not info.get("image"):
+                        continue
+                    if min(int(info.get("width", 0)), int(info.get("height", 0))) < req.min_size:
+                        continue
+                    ext = info.get("ext", "png")
+                    count += 1
+                    zf.writestr(f"p{pno + 1:03d}_img{count:03d}.{ext}", info["image"])
+        pages = doc.page_count
+    except Exception as e:
+        logger.exception("Extract-images error")
+        return ZipResponse(success=False, error=str(e))
+    finally:
+        doc.close()
+
+    if count == 0:
+        return ZipResponse(success=False, error="PDF không chứa ảnh nhúng nào (có thể là PDF text thuần).")
+
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    return ZipResponse(
+        success=True,
+        filename=f"images_{ts}.zip",
+        data_b64=base64.b64encode(buf.getvalue()).decode("ascii"),
+        count=count,
+    )
+
+
+# ---- P7: build a PDF from images ------------------------------------------
+
+
+class ImagesToPdfRequest(BaseModel):
+    images: list[str]  # base64 image bytes (no data URL prefix), in order
+    page_size: str = "fit"  # "fit" = page matches each image; "a4" = fit onto A4 portrait
+
+
+class PdfBytesResponse(BaseModel):
+    success: bool
+    filename: str = ""
+    data_b64: str = ""
+    pages: int = 0
+    error: str | None = None
+
+
+@app.post("/images-to-pdf", response_model=PdfBytesResponse)
+async def images_to_pdf(req: ImagesToPdfRequest):
+    """Combine images (JPG/PNG/…) into a single PDF, one image per page.
+
+    "fit": each page is sized to its image (no whitespace). "a4": each image is
+    centred and scaled to fit an A4 portrait page.
+    """
+    fitz = _require_fitz()
+    if not req.images:
+        raise HTTPException(status_code=400, detail="Chưa chọn ảnh nào.")
+    if len(req.images) > 500:
+        raise HTTPException(status_code=400, detail="Quá nhiều ảnh (tối đa 500).")
+    if req.page_size not in ("fit", "a4"):
+        raise HTTPException(status_code=400, detail="page_size phải là fit|a4")
+
+    doc = fitz.open()
+    try:
+        for i, b64 in enumerate(req.images):
+            try:
+                raw = base64.b64decode(b64)
+            except Exception:
+                raise HTTPException(status_code=400, detail=f"Ảnh thứ {i + 1} không hợp lệ (base64).")
+            try:
+                # Normalise via Pillow so odd formats (BMP/TIFF/WebP) become a PDF-safe
+                # raster, and we get reliable pixel dimensions.
+                pil = Image.open(io.BytesIO(raw))
+                pil = pil.convert("RGB") if pil.mode not in ("RGB", "L") else pil
+                png = io.BytesIO()
+                pil.save(png, format="PNG")
+                img_bytes = png.getvalue()
+                iw, ih = pil.width, pil.height
+            except Exception as e:
+                raise HTTPException(status_code=400, detail=f"Không đọc được ảnh thứ {i + 1}: {e}")
+
+            if req.page_size == "a4":
+                page = doc.new_page(width=595, height=842)  # A4 portrait in points
+                rect = page.rect + (28, 28, -28, -28)  # ~10mm margin
+                scale = min(rect.width / iw, rect.height / ih)
+                w, h = iw * scale, ih * scale
+                x0 = rect.x0 + (rect.width - w) / 2
+                y0 = rect.y0 + (rect.height - h) / 2
+                target = fitz.Rect(x0, y0, x0 + w, y0 + h)
+            else:  # fit: page == image size (72 dpi mapping point==pixel)
+                page = doc.new_page(width=iw, height=ih)
+                target = page.rect
+            page.insert_image(target, stream=img_bytes)
+
+        out_bytes = doc.tobytes(deflate=True, garbage=3)
+        pages = doc.page_count
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Images-to-pdf error")
+        return PdfBytesResponse(success=False, error=str(e))
+    finally:
+        doc.close()
+
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    return PdfBytesResponse(
+        success=True,
+        filename=f"images_to_pdf_{ts}.pdf",
+        data_b64=base64.b64encode(out_bytes).decode("ascii"),
+        pages=pages,
+    )
+
+
+# ---- P7: render PDF pages to images ---------------------------------------
+
+
+class PdfToImagesRequest(BaseModel):
+    pdf_b64: str
+    dpi: int = 150
+    format: str = "png"  # png | jpg
+
+
+@app.post("/pdf-to-images", response_model=ZipResponse)
+async def pdf_to_images(req: PdfToImagesRequest):
+    """Render every page to a raster image (PNG/JPG) and return them as one .zip."""
+    fitz = _require_fitz()
+    fmt = (req.format or "png").lower()
+    if fmt not in ("png", "jpg", "jpeg"):
+        raise HTTPException(status_code=400, detail="format phải là png|jpg")
+    dpi = max(72, min(400, req.dpi))
+
+    pdf_bytes = _decode_pdf_b64(req.pdf_b64)
+    try:
+        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Không mở được PDF: {e}")
+
+    if doc.page_count > 500:
+        doc.close()
+        raise HTTPException(status_code=400, detail="PDF quá nhiều trang (tối đa 500).")
+
+    buf = io.BytesIO()
+    count = 0
+    ext = "jpg" if fmt in ("jpg", "jpeg") else "png"
+    try:
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+            for pno in range(doc.page_count):
+                pix = doc[pno].get_pixmap(dpi=dpi, alpha=False)
+                if ext == "jpg":
+                    img = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
+                    out = io.BytesIO()
+                    img.save(out, format="JPEG", quality=85)
+                    data = out.getvalue()
+                else:
+                    data = pix.tobytes("png")
+                count += 1
+                zf.writestr(f"page_{pno + 1:03d}.{ext}", data)
+    except Exception as e:
+        logger.exception("Pdf-to-images error")
+        doc.close()
+        return ZipResponse(success=False, error=str(e))
+    doc.close()
+
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    return ZipResponse(
+        success=True,
+        filename=f"pages_{ts}.zip",
+        data_b64=base64.b64encode(buf.getvalue()).decode("ascii"),
+        count=count,
     )
 
 
