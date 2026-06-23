@@ -178,6 +178,9 @@ button.ghost { background: transparent; }
 .thumb.selected { border-color: var(--accent); }
 .thumb.drag-over { border-color: var(--ok); }
 .thumb.dragging { opacity: 0.4; }
+/* external PDF dragged from OS: show the gap it will drop into */
+.thumb.insert-before { box-shadow: 0 -4px 0 -1px var(--ok); }
+.thumb.insert-after { box-shadow: 0 4px 0 -1px var(--ok); }
 .thumb canvas { width: 100%; display: block; border-radius: 3px; background: #fff; }
 .thumb-check {
   position: absolute;

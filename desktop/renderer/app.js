@@ -651,16 +651,45 @@ function wireThumb(div) {
     e.dataTransfer.setData("application/x-thumb", String(i));
   });
   div.addEventListener("dragend", () => div.classList.remove("dragging"));
+  // Drop targets: internal reorder (state.dragSrc set) OR an external PDF file
+  // dragged from the OS. For files we pick the gap above/below the hovered thumb
+  // by cursor position so the user drops "between" pages, like reorder.
+  const clearCues = () =>
+    div.classList.remove("drag-over", "insert-before", "insert-after");
+  const fileDrag = (e) =>
+    e.dataTransfer && [...e.dataTransfer.types].includes("Files");
   div.addEventListener("dragover", (e) => {
+    if (fileDrag(e)) {
+      e.preventDefault();
+      e.stopPropagation(); // keep the window "open fresh" handler from firing
+      e.dataTransfer.dropEffect = "copy";
+      const r = div.getBoundingClientRect();
+      const after = e.clientY > r.top + r.height / 2;
+      div.classList.toggle("insert-after", after);
+      div.classList.toggle("insert-before", !after);
+      return;
+    }
     if (state.dragSrc == null) return;
     e.preventDefault();
     div.classList.add("drag-over");
   });
-  div.addEventListener("dragleave", () => div.classList.remove("drag-over"));
-  div.addEventListener("drop", (e) => {
+  div.addEventListener("dragleave", clearCues);
+  div.addEventListener("drop", async (e) => {
     e.preventDefault();
     e.stopPropagation();
-    div.classList.remove("drag-over");
+    if (fileDrag(e)) {
+      const r = div.getBoundingClientRect();
+      const at = e.clientY > r.top + r.height / 2 ? i + 1 : i;
+      clearCues();
+      const buffers = [];
+      for (const f of e.dataTransfer.files) {
+        if (f.name.toLowerCase().endsWith(".pdf"))
+          buffers.push(new Uint8Array(await f.arrayBuffer()));
+      }
+      if (buffers.length) await insertBuffersAt(buffers, at);
+      return;
+    }
+    clearCues();
     const from = state.dragSrc;
     const to = i;
     state.dragSrc = null;
@@ -810,18 +839,30 @@ async function insertFile() {
   if (!files.length) return;
   const at = await choosePosition("Chèn trang — chọn vị trí");
   if (at == null) return; // cancelled
+  await insertBuffersAt([toU8(files[0].data)], at);
+}
+
+// Core insert shared by the picker (insertFile) and drag-drop onto the thumbnail
+// strip. `buffers` = list of PDF byte arrays inserted in order at index `at`.
+async function insertBuffersAt(buffers, at) {
+  if (!state.bytes || !buffers.length) return;
   const where = posLabel(at);
   showOverlay("Đang chèn…");
   pushUndo();
   try {
     const doc = await PDFDocument.load(state.bytes);
-    const other = await PDFDocument.load(toU8(files[0].data));
-    const pages = await doc.copyPages(other, other.getPageIndices());
-    pages.forEach((p, k) => doc.insertPage(at + k, p));
+    let pos = at;
+    let added = 0;
+    for (const b of buffers) {
+      const other = await PDFDocument.load(b);
+      const pages = await doc.copyPages(other, other.getPageIndices());
+      pages.forEach((p) => doc.insertPage(pos++, p));
+      added += pages.length;
+    }
     state.bytes = await doc.save();
-    state.selected = new Set([at]); // select the first inserted page
+    state.selected = new Set([at]); // land on the first inserted page
     await renderAll();
-    toast(`Đã chèn ${pages.length} trang ${where}.`, "good");
+    toast(`Đã chèn ${added} trang ${where}.`, "good");
   } finally {
     hideOverlay();
   }

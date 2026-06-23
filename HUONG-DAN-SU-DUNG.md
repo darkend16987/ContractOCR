@@ -64,6 +64,13 @@ Hai file này nằm ở: `D:\GitHub\ContractOCR\desktop\dist-app\`
 | **Searchable** (PDF tìm-kiếm-được) | ⚠️ Lần đầu | Cần engine OCR; lần đầu/máy mới tải model (mục 3.3). |
 | **Bóc tách** hợp đồng (OCR + AI) | ✅ Có | Cần model OCR **và** key AI (mục 6). |
 
+> 💡 **Mẹo kéo–thả ở cột trang (thumbnail):**
+> - **Sắp xếp trang:** kéo một trang thả lên trang khác để đổi vị trí.
+> - **Chèn file PDF bằng kéo–thả:** kéo file `.pdf` từ Windows thả vào **khe giữa hai trang** ở cột
+>   thumbnail — trang sẽ được chèn ngay tại vị trí đó (thả vào nửa trên = chèn phía trước trang, nửa
+>   dưới = chèn phía sau). Thả nhiều file cùng lúc cũng được. Không cần mở hộp thoại chọn vị trí.
+> - Vẫn dùng được nút **Chèn / Ghép** với hộp thoại chọn vị trí như cũ; kéo–thả chỉ là lối tắt.
+
 Cache model lưu ở: `C:\Users\<tên-bạn>\.paddlex` (và `.cache`). Xóa được nếu cần giải phóng ổ; lần
 sau dùng OCR sẽ tải lại.
 
