@@ -43,7 +43,7 @@
     </svg>
 
     <header class="toolbar">
-      <div class="brand"><svg class="ic"><use href="#ic-file-search"/></svg>Nabu PDF</div>
+      <div class="brand"><svg class="ic"><use href="#ic-file-search"/></svg>Nabu PDF<span class="by">developed by Nam Ta</span></div>
 
       <div class="group">
         <button id="btn-open" title="Mở PDF"><svg class="ic"><use href="#ic-folder"/></svg>Mở</button>
@@ -314,6 +314,16 @@
           <button id="lic-activate" class="primary">Kích hoạt</button>
         </div>
         <button id="lic-remove" class="ghost" hidden style="margin-top:8px">Gỡ bản quyền</button>
+        <div class="set-row-between" id="lic-hwid-row" style="margin-top:10px">
+          <div>
+            <b>Mã máy (HWID)</b>
+            <p class="cmp-note" style="margin:2px 0 0">Gửi mã này cho nhà phát hành để được cấp key khóa theo máy.</p>
+          </div>
+          <span class="key-row">
+            <code id="lic-hwid" class="hwid" title="Mã định danh máy này">…</code>
+            <button id="lic-hwid-copy" type="button" class="ghost" title="Sao chép mã máy">Copy</button>
+          </span>
+        </div>
         <hr class="set-div" />
 
         <p class="cmp-note">
@@ -353,6 +363,19 @@
           <button id="set-check-update" class="ghost">Kiểm tra cập nhật</button>
         </div>
         <p class="set-status" id="set-update-status"></p>
+
+        <hr class="set-div" />
+        <div class="about">
+          <b>Giới thiệu</b>
+          <p class="cmp-note" style="margin:6px 0 0">
+            <b>Nabu PDF</b> — bộ công cụ PDF &amp; OCR tiếng Việt, chạy ngoại tuyến (local-first):
+            xem, chỉnh sửa, ghép/tách, nén, tạo searchable và bóc tách hợp đồng bằng AI.
+          </p>
+          <p class="cmp-note" style="margin:6px 0 0">
+            Phát triển bởi <b>Tạ Hoàng Nam</b> — nhà phát triển độc lập (independent developer).
+          </p>
+          <p class="cmp-note" style="margin:6px 0 0">© 2026 Tạ Hoàng Nam · liên hệ: hoangnam.mng@gmail.com</p>
+        </div>
 
         <div class="modal-actions">
           <button id="set-cancel">Đóng</button>

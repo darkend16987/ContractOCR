@@ -5,7 +5,10 @@
  * you never copy/paste keys into a doc by hand.
  *
  *   node scripts/license-cli.js keygen [--force]
- *   node scripts/license-cli.js issue --name "Nguyen Van A" --email a@x.com --plan pro --days 365 [--note "..."]
+ *   node scripts/license-cli.js issue --name "Nguyen Van A" --email a@x.com --plan pro --days 365 [--hwid <id>] [--note "..."]
+ *
+ * Pass --hwid to BIND the key to one machine (user reads it from the app's
+ * Settings → "Mã máy (HWID)"). Omit it for a floating key (any machine).
  *   node scripts/license-cli.js list [--all]            # active only by default
  *   node scripts/license-cli.js show <email-or-name>    # substring match
  *   node scripts/license-cli.js revoke <id>             # ledger flag only (see note)
@@ -91,6 +94,9 @@ function issue() {
     iat: now,
     exp: days > 0 ? now + days * 86400 : 0,
   };
+  // Optional machine binding. Empty omits the claim entirely → floating key.
+  const hwid = (flag("hwid", "") || "").trim();
+  if (hwid) payload.hwid = hwid;
 
   const body = Buffer.from(JSON.stringify(payload)).toString("base64url");
   const signature = sign(null, Buffer.from(body), privateKey).toString("base64url");
@@ -114,7 +120,10 @@ function issue() {
   });
   saveLedger(db);
 
-  console.log(`Issued ${id} -> ${payload.name} <${payload.email}> · ${payload.plan} · ${fmtDate(payload.exp)}`);
+  console.log(
+    `Issued ${id} -> ${payload.name} <${payload.email}> · ${payload.plan} · ${fmtDate(payload.exp)}` +
+      (hwid ? ` · machine ${hwid}` : " · floating")
+  );
   console.log("Recorded in", LEDGER);
   console.log("\n" + key + "\n");
 }
@@ -132,10 +141,10 @@ function list() {
     return;
   }
   const now = Math.floor(Date.now() / 1000);
-  console.log(["ID", "NAME", "EMAIL", "PLAN", "EXPIRY", "STATUS"].join("\t"));
+  console.log(["ID", "NAME", "EMAIL", "PLAN", "EXPIRY", "MACHINE", "STATUS"].join("\t"));
   for (const r of rs) {
     const status = r.revoked ? "revoked" : r.exp && r.exp < now ? "expired" : "active";
-    console.log([r.id, r.name, r.email, r.plan, fmtDate(r.exp), status].join("\t"));
+    console.log([r.id, r.name, r.email, r.plan, fmtDate(r.exp), r.hwid || "floating", status].join("\t"));
   }
   console.log(`\n${rs.length} license(s)${all ? "" : " (active; use --all to include revoked)"}.`);
 }
@@ -154,7 +163,9 @@ function show() {
     return;
   }
   for (const r of hits) {
-    console.log(`\n${r.id} · ${r.name} <${r.email}> · ${r.plan} · ${fmtDate(r.exp)}${r.revoked ? " · REVOKED" : ""}`);
+    console.log(
+      `\n${r.id} · ${r.name} <${r.email}> · ${r.plan} · ${fmtDate(r.exp)} · ${r.hwid ? "machine " + r.hwid : "floating"}${r.revoked ? " · REVOKED" : ""}`
+    );
     if (r.note) console.log("  note:", r.note);
     console.log("  " + r.key);
   }

@@ -154,6 +154,36 @@ không phải scan/flat (chỉ là ảnh, không có ký tự). Cách làm = **s
 - [x] **TS.2** `BrowserWindow` thêm `sandbox:true`; `api.py __main__` bind `127.0.0.1` (không `0.0.0.0`).
 - [ ] **TS.3** ▶️ Test GUI: DevTools `fetch` không token → 401; thao tác trong app vẫn chạy.
 
+## Phase L — Bản quyền / License (✅ offline + HWID xong, online hybrid ⬜)
+
+Mô hình **local-first**: verify hoàn toàn ngoại tuyến, không server bắt buộc.
+
+- [x] **L.0** License key offline Ed25519: `NABU1.<payload>.<sig>`, app chỉ giữ public key
+  (`src/license-public-key.pem`), ký bằng `scripts/license-cli.js`. Verify trong `src/license.js`.
+- [x] **L.1** `ENFORCE=true` + gate 8 tính năng pro (bóc tách/sửa chữ/chỉnh sửa/ghép/chèn/tách/
+  searchable/nén). Free: mở/lưu/xoay/xóa/zoom. Chặn 3 đường: click (capture guard), menu, phím, kéo-thả.
+- [x] **L.2** HWID binding (ngoại tuyến): payload có `hwid` → key chỉ chạy đúng máy
+  (Windows `MachineGuid`, hash sha256 cắt 16 ký tự). `hwid` rỗng = key floating (mọi máy).
+  CLI cờ `--hwid`; Settings hiện "Mã máy (HWID)" để user gửi nhà phát hành.
+  ⚠️ Vẫn bypass được (client-side patch) + không revoke được — chỉ chặn share thường.
+
+- [ ] **L.3** ▶️ **Hybrid: online activation MỘT lần** (mục tiêu kế). Giữ trải nghiệm offline
+  nhưng thêm sức mạnh thật của server (revoke + đếm seat). Luồng:
+  1. App gửi `key + hwid` lên server activation **một lần** lúc kích hoạt.
+  2. Server (DB) kiểm: key hợp lệ? chưa revoke? còn slot máy (seat-cap)? → ghi binding
+     `{key → [hwid...]}`, cấp **activation token offline** (Ed25519, TTL dài vd 30–90 ngày, chứa hwid).
+  3. App lưu token, **chạy offline** tới khi token gần hết hạn → tự gia hạn im lặng khi có mạng.
+     Mất mạng quá hạn → grace period rồi nhắc online lại (không brick ngay).
+  - **Server tối thiểu**: 1 endpoint `POST /activate` + `POST /refresh`, DB nhỏ (keys, activations,
+    seat_limit). Hosting rẻ (Cloudflare Workers + D1 / Supabase / VPS). Revoke = xóa binding +
+    từ chối refresh → máy mất quyền ở lần gia hạn kế.
+  - **Được thêm so với L.2**: thu hồi key (refund/lộ), giới hạn số máy/key, thấy usage.
+  - **Chi phí**: cần server uptime + logic grace/refresh cẩn thận (mất mạng không được khóa nhầm).
+  - **Quyết định kiến trúc**: token offline sau activation → KHÔNG phone-home liên tục, giữ tinh thần
+    local-first; chỉ chạm mạng lúc activate + lúc gia hạn định kỳ.
+  - **Bảo mật thực tế**: verify cuối vẫn client-side nên crack được; nhưng seat-cap + revoke ở server
+    là thứ DUY NHẤT chặn share quy mô. Ký số binary (SIGNING.md) giảm patch dễ dãi.
+
 ## Ghi chú thực thi
 
 - **Onedir, không onefile**: torch giải nén onefile rất chậm + dễ lỗi. Spec tạo `dist/sidecar/`.

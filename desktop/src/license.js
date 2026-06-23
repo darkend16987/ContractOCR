@@ -16,13 +16,15 @@
  */
 
 const fs = require("fs");
+const os = require("os");
 const path = require("path");
+const { execFileSync } = require("child_process");
 const { app, ipcMain } = require("electron");
-const { createPublicKey, verify } = require("crypto");
+const { createHash, createPublicKey, verify } = require("crypto");
 
 // Policy switch. Mechanism is always live; this only changes whether the
-// renderer should gate features. Left false so nothing breaks for free users.
-const ENFORCE = false;
+// renderer should gate features. On = pro features locked behind a valid key.
+const ENFORCE = true;
 
 let publicKey = null;
 function getPublicKey() {
@@ -34,6 +36,33 @@ function getPublicKey() {
 
 function storePath() {
   return path.join(app.getPath("userData"), "license.json");
+}
+
+// Stable per-machine id used for HWID-bound keys. Windows: MachineGuid (survives
+// reboots; changes only on OS reinstall). Other OS / lookup failure: hash of
+// hostname+platform+arch. Always hashed + truncated so the raw GUID is never
+// exposed. A key whose payload carries a matching `hwid` runs only on this
+// machine; an empty/absent `hwid` claim is a floating key (any machine).
+let cachedHwid = null;
+function machineHwid() {
+  if (cachedHwid) return cachedHwid;
+  let raw = "";
+  try {
+    if (process.platform === "win32") {
+      const out = execFileSync(
+        "reg",
+        ["query", "HKLM\\SOFTWARE\\Microsoft\\Cryptography", "/v", "MachineGuid"],
+        { encoding: "utf8", windowsHide: true },
+      );
+      const m = out.match(/MachineGuid\s+REG_SZ\s+([0-9a-fA-F-]+)/);
+      if (m) raw = m[1].trim();
+    }
+  } catch {
+    raw = "";
+  }
+  if (!raw) raw = `${os.hostname()}|${process.platform}|${process.arch}`;
+  cachedHwid = createHash("sha256").update("nabu-hwid:" + raw).digest("hex").slice(0, 16);
+  return cachedHwid;
 }
 
 // Parse + cryptographically verify a key string. Pure (no disk I/O).
@@ -61,6 +90,11 @@ function verifyKey(key) {
   if (payload.exp && payload.exp > 0 && now > payload.exp) {
     return { valid: false, reason: "expired", payload };
   }
+  // HWID binding: if the key is bound to a machine, it only validates there.
+  // Empty/absent `hwid` = floating key, valid on any machine.
+  if (payload.hwid && payload.hwid !== machineHwid()) {
+    return { valid: false, reason: "hwid", payload };
+  }
   return { valid: true, payload };
 }
 
@@ -80,7 +114,8 @@ function publicStatus() {
   const res = verifyKey(key);
   if (!res.valid) {
     return {
-      state: res.reason === "expired" ? "expired" : "invalid",
+      state: res.reason === "expired" ? "expired" : res.reason === "hwid" ? "machine" : "invalid",
+      reason: res.reason,
       enforce: ENFORCE,
       payload: res.payload || null,
     };
@@ -121,6 +156,7 @@ function initLicense() {
   ipcMain.handle("license:get", () => publicStatus());
   ipcMain.handle("license:activate", (_e, key) => activate(key));
   ipcMain.handle("license:deactivate", () => deactivate());
+  ipcMain.handle("license:hwid", () => machineHwid());
 }
 
-module.exports = { initLicense, verifyKey, publicStatus };
+module.exports = { initLicense, verifyKey, publicStatus, machineHwid };

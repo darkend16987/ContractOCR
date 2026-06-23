@@ -31,6 +31,7 @@ contextBridge.exposeInMainWorld("desktop", {
     get: () => ipcRenderer.invoke("license:get"),
     activate: (key) => ipcRenderer.invoke("license:activate", key),
     deactivate: () => ipcRenderer.invoke("license:deactivate"),
+    hwid: () => ipcRenderer.invoke("license:hwid"),
   },
 
   // --- native file dialogs ---

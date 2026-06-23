@@ -808,6 +808,7 @@ function posLabel(at) {
 }
 
 async function mergeFiles() {
+  if (gateProFeature()) return;
   const files = await window.desktop.openPdf({ multi: true });
   if (!files.length) return;
   const at = await choosePosition("Ghép PDF — chọn vị trí");
@@ -835,6 +836,7 @@ async function mergeFiles() {
 }
 
 async function insertFile() {
+  if (gateProFeature()) return;
   const files = await window.desktop.openPdf({ multi: false });
   if (!files.length) return;
   const at = await choosePosition("Chèn trang — chọn vị trí");
@@ -845,6 +847,7 @@ async function insertFile() {
 // Core insert shared by the picker (insertFile) and drag-drop onto the thumbnail
 // strip. `buffers` = list of PDF byte arrays inserted in order at index `at`.
 async function insertBuffersAt(buffers, at) {
+  if (gateProFeature()) return; // also covers drag-drop onto the thumbnail strip
   if (!state.bytes || !buffers.length) return;
   const where = posLabel(at);
   showOverlay("Đang chèn…");
@@ -869,6 +872,7 @@ async function insertBuffersAt(buffers, at) {
 }
 
 async function extractSelected() {
+  if (gateProFeature()) return;
   if (state.selected.size === 0) {
     toast("Chọn ít nhất 1 trang để tách.", "bad");
     return;
@@ -990,6 +994,7 @@ async function loadTemplates() {
 }
 
 function openExtractPanel() {
+  if (gateProFeature()) return;
   $("ext-panel").hidden = false;
   loadTemplates();
 }
@@ -1125,6 +1130,7 @@ function u8ToB64(u8) {
 }
 
 async function makeSearchable() {
+  if (gateProFeature()) return;
   if (sidecar.state !== "ready" || !sidecar.base) {
     toast("Engine OCR chưa sẵn sàng.", "bad");
     return;
@@ -1166,6 +1172,7 @@ function fmtBytes(n) {
 }
 
 function openCompress() {
+  if (gateProFeature()) return;
   if (sidecar.state !== "ready" || !sidecar.base) {
     toast("Engine chưa sẵn sàng.", "bad");
     return;
@@ -1280,12 +1287,76 @@ async function saveSettings() {
 
 // ---- license (offline Ed25519) -------------------------------------------
 
+// Live license status, kept in sync by renderLicense(). Pro features are gated
+// against this when `enforce` is on (see licBlocked + the capture guard below).
+// Defaults fail-open so nothing is locked during the brief window before the
+// first status load returns.
+let licState = { state: "unlicensed", enforce: false };
+
+// Pro features locked behind a valid license. Basic page ops (open/save/rotate/
+// delete/zoom/undo/redo) stay free.
+const GATED_BTNS = [
+  "btn-ocr",
+  "btn-searchable",
+  "btn-compress",
+  "btn-edit",
+  "btn-text-edit",
+  "btn-merge",
+  "btn-insert",
+  "btn-extract",
+];
+
+function licBlocked() {
+  return licState.enforce && licState.state !== "licensed";
+}
+
+// Guard for pro-feature entry points reachable outside a plain button click
+// (native menu, keyboard, drag-drop). Returns true — and steers the user to the
+// activation dialog — when the feature must be blocked. Button clicks are caught
+// separately by installLicenseGuard().
+function gateProFeature() {
+  if (!licBlocked()) return false;
+  toast("Tính năng này cần kích hoạt bản quyền.", "bad");
+  openSettings();
+  return true;
+}
+
+// Document-level capture guard: fires during the capture phase (root → target),
+// so it pre-empts the per-button onclick handlers wired in editor.js/text-edit.js
+// regardless of registration order. When blocked, swallow the click and steer
+// the user to the activation dialog.
+function installLicenseGuard() {
+  document.addEventListener(
+    "click",
+    (e) => {
+      if (!licBlocked()) return;
+      const btn = e.target.closest && e.target.closest("button");
+      if (!btn || !GATED_BTNS.includes(btn.id)) return;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      toast("Tính năng này cần kích hoạt bản quyền.", "bad");
+      openSettings();
+    },
+    true,
+  );
+}
+
 async function loadLicense() {
   if (!window.desktop.license) return;
   try {
     renderLicense(await window.desktop.license.get());
   } catch (err) {
     $("lic-status").textContent = "Không đọc được trạng thái bản quyền.";
+  }
+  // Machine id (HWID) for binding keys to this device. Shown so the user can
+  // send it to the vendor when buying a machine-locked key.
+  if (window.desktop.license.hwid) {
+    try {
+      const el = $("lic-hwid");
+      if (el) el.textContent = await window.desktop.license.hwid();
+    } catch {
+      /* leave placeholder */
+    }
   }
 }
 
@@ -1295,6 +1366,7 @@ function licReason(r) {
       format: "sai định dạng key",
       signature: "chữ ký không hợp lệ",
       expired: "key đã hết hạn",
+      hwid: "key dành cho máy khác",
       payload: "dữ liệu key hỏng",
       store: "không lưu được key",
     }[r] || "không rõ"
@@ -1302,6 +1374,8 @@ function licReason(r) {
 }
 
 function renderLicense(s) {
+  licState = s;
+  updateToolbar();
   const badge = $("lic-badge");
   const status = $("lic-status");
   const inputRow = $("lic-input-row");
@@ -1313,9 +1387,11 @@ function renderLicense(s) {
     ? "Đã kích hoạt"
     : s.state === "expired"
       ? "Hết hạn"
-      : s.state === "invalid"
-        ? "Không hợp lệ"
-        : "Chưa kích hoạt";
+      : s.state === "machine"
+        ? "Sai máy"
+        : s.state === "invalid"
+          ? "Không hợp lệ"
+          : "Chưa kích hoạt";
   if (licensed) {
     const exp = s.exp ? "hạn " + new Date(s.exp * 1000).toLocaleDateString("vi-VN") : "vĩnh viễn";
     const who = s.name || s.email || "—";
@@ -1326,9 +1402,11 @@ function renderLicense(s) {
     status.textContent =
       s.state === "expired"
         ? "Key đã hết hạn — nhập key mới."
-        : s.state === "invalid"
-          ? "Key không hợp lệ — nhập lại key."
-          : "Chưa kích hoạt bản quyền. Dán key để kích hoạt.";
+        : s.state === "machine"
+          ? "Key này được khóa cho máy khác. Dùng đúng máy đã đăng ký, hoặc xin cấp lại key theo mã máy bên dưới."
+          : s.state === "invalid"
+            ? "Key không hợp lệ — nhập lại key."
+            : "Chưa kích hoạt bản quyền. Dán key để kích hoạt.";
     inputRow.hidden = false;
     remove.hidden = true;
   }
@@ -1375,6 +1453,13 @@ function updateToolbar() {
   const bt = $("btn-text-edit");
   if (bt) bt.disabled = !(ready && has) || overlayEditing;
   $("zoom-label").textContent = Math.round(state.scale * 100) + "%";
+  // Visual cue for the license gate: a lock class on gated buttons. The actual
+  // block happens in the capture guard; this is just a hover hint + CSS hook.
+  const blocked = licBlocked();
+  for (const id of GATED_BTNS) {
+    const b = $(id);
+    if (b) b.classList.toggle("locked", blocked);
+  }
 }
 
 // ---- wiring --------------------------------------------------------------
@@ -1447,6 +1532,19 @@ $("lic-activate").onclick = async () => {
 $("lic-key").addEventListener("keydown", (e) => {
   if (e.key === "Enter") $("lic-activate").click();
 });
+const licHwidCopy = $("lic-hwid-copy");
+if (licHwidCopy) {
+  licHwidCopy.onclick = async () => {
+    const id = $("lic-hwid").textContent.trim();
+    if (!id || id === "…") return;
+    try {
+      await navigator.clipboard.writeText(id);
+      toast("Đã sao chép mã máy.", "good");
+    } catch {
+      toast("Không sao chép được — chép tay giúp nhé.", "bad");
+    }
+  };
+}
 $("lic-remove").onclick = async () => {
   try {
     renderLicense(await window.desktop.license.deactivate());
@@ -1580,6 +1678,10 @@ window.addEventListener("drop", async (e) => {
 window.desktop.onSidecarStatus(applySidecar);
 window.desktop.getSidecarStatus().then(applySidecar);
 updateToolbar();
+
+// license: install the pro-feature gate, then load current status
+installLicenseGuard();
+loadLicense();
 
 // ---- auto-update status --------------------------------------------------
 // Only fires for the installed (NSIS) build; portable/dev stay silent. The
