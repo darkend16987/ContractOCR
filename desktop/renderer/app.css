@@ -267,6 +267,7 @@ button.ghost { background: transparent; }
 }
 .toast.bad { color: var(--danger); }
 .toast.good { color: var(--ok); }
+.toast.warn { color: var(--warn); }
 
 .overlay {
   position: fixed; inset: 0;

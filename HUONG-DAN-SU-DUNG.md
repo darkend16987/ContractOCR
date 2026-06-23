@@ -87,6 +87,12 @@ sau dùng OCR sẽ tải lại.
 Giới hạn đã biết: sửa trong phạm vi từng đoạn (không tự dàn lại dòng); chữ dài hơn ô cũ sẽ tự co nhỏ;
 font có thể hơi khác nếu file gốc dùng font đặc biệt.
 
+> **Chèn chữ ký:** dùng nút **Chèn ảnh / chữ ký** → chọn ảnh chữ ký rồi bấm lên trang để đặt.
+> Nên dùng **PNG nền trong** để chữ ký không có hộp trắng đè lên tài liệu (ảnh JPG có nền đặc — app sẽ
+> nhắc). Chỉ nhận **PNG / JPG**.
+> ⚠️ Đây là **dán ảnh chữ ký**, không phải **chữ ký số** (digital signature có chứng thư CA). App
+> hiện chưa hỗ trợ chữ ký số pháp lý.
+
 ---
 
 ## 6. Tính năng "Bóc tách" (OCR + AI) — nhập API key trong app

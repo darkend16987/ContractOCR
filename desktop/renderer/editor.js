@@ -101,6 +101,16 @@
     return u8;
   }
 
+  // Identify an image by its magic bytes — pdf-lib can only embed PNG or JPEG, and
+  // the file's reported MIME is unreliable (empty for some files, wrong for others).
+  // Returns "png", "jpg", or null (unsupported: webp/gif/bmp/svg/…).
+  function sniffImage(bytes) {
+    if (bytes.length >= 8 && bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47)
+      return "png";
+    if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return "jpg";
+    return null;
+  }
+
   // ---- overlay rendering ---------------------------------------------------
 
   function syncOverlays() {
@@ -573,8 +583,16 @@
       if (!f) return;
       const reader = new FileReader();
       reader.onload = () => {
-        ed.pendingImage = { dataUrl: reader.result, mime: f.type };
-        toast("Đã chọn ảnh — bấm lên trang để đặt.", "good");
+        // Trust the bytes, not the MIME: only PNG/JPEG can be embedded.
+        const fmt = sniffImage(dataUrlToBytes(reader.result));
+        if (!fmt) {
+          toast("Định dạng ảnh không hỗ trợ — chỉ nhận PNG hoặc JPG.", "bad");
+          return;
+        }
+        ed.pendingImage = { dataUrl: reader.result, fmt };
+        if (fmt === "jpg")
+          toast("Đã chọn ảnh JPG (nền đặc) — chữ ký nên dùng PNG nền trong. Bấm lên trang để đặt.", "warn");
+        else toast("Đã chọn ảnh — bấm lên trang để đặt.", "good");
       };
       reader.readAsDataURL(f);
     };
@@ -595,7 +613,7 @@
         w,
         h: w * ratio,
         dataUrl: ed.pendingImage.dataUrl,
-        mime: ed.pendingImage.mime,
+        fmt: ed.pendingImage.fmt,
       };
       annotsFor(i).push(a);
       ed.sel = a.id;
@@ -682,8 +700,22 @@
 
   async function drawAnnots(doc, page, anns, vp1, mode) {
     const map = makeMap(vp1, mode);
+    let failed = 0;
     for (const a of anns) {
-      if (a.kind === "highlight") {
+      try {
+        await drawOneAnnot(doc, page, a, map);
+      } catch (err) {
+        // Isolate failures: one bad annotation (e.g. a corrupt image) must not
+        // wipe out every other pending edit in the same bake.
+        failed++;
+        console.error("drawAnnot failed:", a.kind, err);
+      }
+    }
+    if (failed) toast(`Bỏ qua ${failed} mục lỗi khi áp dụng (ảnh hỏng?).`, "warn");
+  }
+
+  async function drawOneAnnot(doc, page, a, map) {
+    if (a.kind === "highlight") {
         const [x1, y1] = map(a.x, a.y);
         const [x2, y2] = map(a.x + a.w, a.y + a.h);
         page.drawRectangle({
@@ -788,11 +820,13 @@
         arr.push(ref);
       } else if (a.kind === "image") {
         const bytes = dataUrlToBytes(a.dataUrl);
-        const img = a.mime === "image/png" ? await doc.embedPng(bytes) : await doc.embedJpg(bytes);
+        // fmt was sniffed from magic bytes at selection time; fall back to a byte
+        // sniff for any older in-memory annotation that predates this field.
+        const fmt = a.fmt || sniffImage(bytes);
+        const img = fmt === "png" ? await doc.embedPng(bytes) : await doc.embedJpg(bytes);
         const [bx, by] = map(a.x, a.y + a.h);
         page.drawImage(img, { x: bx, y: by, width: a.w, height: a.h });
       }
-    }
   }
 
   async function drawWatermark(doc, page, vp1, mode) {
