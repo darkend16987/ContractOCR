@@ -132,10 +132,12 @@
       <div class="sep"></div>
       <label class="ctl" title="Font chữ">Font
         <select id="te-font">
+          <option value="__keep__">Giữ nguyên (font gốc)</option>
           <option value="default">Mặc định (Việt)</option>
           <option value="times">Times</option>
           <option value="helv">Helvetica</option>
           <option value="courier">Courier</option>
+          <optgroup id="te-font-system" label="Font máy"></optgroup>
         </select>
       </label>
       <label class="ctl" title="Cỡ chữ (điểm)">Cỡ <input type="number" id="te-size" min="4" max="200" step="0.5" value="11" /></label>

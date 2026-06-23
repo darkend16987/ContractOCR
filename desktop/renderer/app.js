@@ -889,12 +889,33 @@ async function extractSelected() {
   }
 }
 
+// Save: write silently to the document's existing path; prompt (Save As) only
+// when it has none (drag-dropped / never-saved doc) or a silent write fails.
 async function saveDoc() {
   if (!state.bytes) return;
-  // Bake any unapplied overlay edits into the bytes first (P4).
+  if (window.Editor) await window.Editor.bakePending();
+  if (state.path) {
+    const res = await window.desktop.writePdf(state.path, state.bytes);
+    if (res.saved) {
+      toast("Đã lưu: " + res.path, "good");
+      return;
+    }
+    if (res.error) toast("Lưu lỗi: " + res.error + " — chọn nơi lưu khác.", "bad");
+  }
+  await saveAsDoc();
+}
+
+// Save As: always prompt, then adopt the chosen path as the document's location.
+async function saveAsDoc() {
+  if (!state.bytes) return;
   if (window.Editor) await window.Editor.bakePending();
   const res = await window.desktop.savePdf(state.bytes, state.name);
-  if (res.saved) toast("Đã lưu: " + res.path, "good");
+  if (res.saved) {
+    state.path = res.path;
+    state.name = res.path.split(/[\\/]/).pop() || state.name;
+    renderBreadcrumb();
+    toast("Đã lưu: " + res.path, "good");
+  }
 }
 
 // ---- zoom ----------------------------------------------------------------
@@ -906,6 +927,19 @@ async function zoom(delta) {
   if (next === state.scale) return;
   state.scale = next;
   $("zoom-label").textContent = Math.round(state.scale * 100) + "%";
+  zooming = true;
+  try {
+    await renderViewer();
+  } finally {
+    zooming = false;
+  }
+}
+
+// Reset zoom to 100% (Ctrl+0).
+async function zoomReset() {
+  if (zooming || !state.bytes || state.scale === 1) return;
+  state.scale = 1;
+  $("zoom-label").textContent = "100%";
   zooming = true;
   try {
     await renderViewer();
@@ -1451,21 +1485,73 @@ $("btn-select-all").onclick = () => {
   updateToolbar();
 };
 
+// Whether the user is typing in a field or mid-edit (so we don't hijack keys).
+function isTyping() {
+  const el = document.activeElement;
+  if (!el) return false;
+  if (/^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName) || el.isContentEditable) return true;
+  if (document.body.classList.contains("text-editing")) return true;
+  return false;
+}
+
 window.addEventListener("keydown", (e) => {
-  if (!(e.ctrlKey || e.metaKey)) return;
-  // Don't hijack shortcuts while typing in an input/textarea/select.
-  const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement && document.activeElement.tagName);
-  const k = e.key.toLowerCase();
-  if (k === "s") {
-    e.preventDefault();
-    saveDoc();
-  } else if (k === "z" && !e.shiftKey && !typing) {
-    e.preventDefault();
-    undo();
-  } else if (((k === "z" && e.shiftKey) || k === "y") && !typing) {
-    e.preventDefault();
-    redo();
+  if (e.ctrlKey || e.metaKey) {
+    const k = e.key.toLowerCase();
+    // Open / Save / Save As are registered as native menu accelerators (main.js),
+    // so they're intentionally NOT handled here (would fire twice).
+    if (k === "z" && !e.shiftKey && !isTyping()) {
+      e.preventDefault();
+      undo();
+    } else if (((k === "z" && e.shiftKey) || k === "y") && !isTyping()) {
+      e.preventDefault();
+      redo();
+    } else if (e.key === "=" || e.key === "+") {
+      e.preventDefault();
+      zoom(0.2);
+    } else if (e.key === "-" || e.key === "_") {
+      e.preventDefault();
+      zoom(-0.2);
+    } else if (e.key === "0") {
+      e.preventDefault();
+      zoomReset();
+    }
+    return;
   }
+  // Delete removes the selected pages — but never while typing or in an editor
+  // (the overlay/text editors own Delete for their own selection).
+  if (
+    e.key === "Delete" &&
+    !isTyping() &&
+    !(window.Editor && window.Editor.active && window.Editor.active()) &&
+    state.selected &&
+    state.selected.size
+  ) {
+    e.preventDefault();
+    deleteSelected();
+  }
+});
+
+// Native menu (File/Edit/Page/View) → same actions as the toolbar buttons.
+window.desktop.onMenuCommand((cmd) => {
+  const actions = {
+    open: openDialog,
+    save: saveDoc,
+    saveAs: saveAsDoc,
+    undo,
+    redo,
+    rotateL: () => rotateSelected(-90),
+    rotateR: () => rotateSelected(90),
+    delete: deleteSelected,
+    merge: mergeFiles,
+    insert: insertFile,
+    extract: extractSelected,
+    zoomIn: () => zoom(0.2),
+    zoomOut: () => zoom(-0.2),
+    zoomReset,
+    settings: openSettings,
+  };
+  const fn = actions[cmd];
+  if (fn) fn();
 });
 
 // drag-drop a PDF file onto the window to open it

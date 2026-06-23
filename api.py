@@ -472,6 +472,68 @@ _BUILTIN_VARIANTS = {
 }
 
 
+# ---- local system fonts (text edit) --------------------------------------
+# matplotlib's font_manager already indexes the machine's installed fonts
+# (C:\Windows\Fonts on Windows). We reuse it both to list families for the UI
+# and to resolve a family + style → an actual TTF the editor can embed, so an
+# edited span can keep its original font instead of falling back to DejaVu.
+import re as _re
+
+_LOCAL_FONT_CACHE: dict[tuple[str, bool, bool], str] = {}
+
+
+def _clean_font_name(name: str) -> str:
+    """Normalise a PDF/PostScript font name to a plain family for lookup.
+
+    Strips the 6-char subset prefix ("ABCDEF+Arial") and common style suffixes
+    ("TimesNewRomanPS-BoldMT" → "TimesNewRoman").
+    """
+    if "+" in name and len(name.split("+", 1)[0]) == 6:
+        name = name.split("+", 1)[1]
+    name = name.split(",")[0].split("-")[0]
+    name = _re.sub(r"(PSMT|PS|MT)$", "", name)
+    return name.strip() or name
+
+
+def _resolve_local_font(name: str, bold: bool, italic: bool) -> str | None:
+    """Resolve a font family name + style to a local TTF path, or None.
+
+    Uses matplotlib.font_manager.findfont with fallback disabled so a missing
+    family raises (→ None) instead of silently returning DejaVu — the caller
+    then applies its own DejaVu fallback for Vietnamese safety.
+    """
+    key = (name, bold, italic)
+    if key in _LOCAL_FONT_CACHE:
+        return _LOCAL_FONT_CACHE[key] or None
+    path = ""
+    try:
+        from matplotlib import font_manager as fm
+
+        fp = fm.FontProperties(
+            family=_clean_font_name(name),
+            weight="bold" if bold else "normal",
+            style="italic" if italic else "normal",
+        )
+        found = fm.findfont(fp, fallback_to_default=False)
+        if found and Path(found).is_file():
+            path = found
+    except Exception as fe:  # ValueError when no family matches
+        logger.debug("resolve local font '%s' failed: %s", name, fe)
+        path = ""
+    _LOCAL_FONT_CACHE[key] = path
+    return path or None
+
+
+def _list_local_font_families() -> list[str]:
+    try:
+        from matplotlib import font_manager as fm
+
+        return sorted({f.name for f in fm.fontManager.ttflist})
+    except Exception as fe:
+        logger.debug("list local fonts failed: %s", fe)
+        return []
+
+
 class SearchableRequest(BaseModel):
     """Request body for building a searchable PDF (invisible OCR text layer)."""
     pdf_b64: str  # the source PDF, base64 (no data URL prefix)
@@ -795,6 +857,19 @@ class TextSpansResponse(BaseModel):
     error: str | None = None
 
 
+class FontsResponse(BaseModel):
+    success: bool
+    families: list[str] = []
+    error: str | None = None
+
+
+@app.get("/fonts", response_model=FontsResponse)
+async def list_fonts():
+    """List installed font families on this machine (for the text-edit font picker)."""
+    fams = _list_local_font_families()
+    return FontsResponse(success=bool(fams), families=fams)
+
+
 @app.post("/text-spans", response_model=TextSpansResponse)
 async def text_spans(req: TextSpansRequest):
     """Return the editable text spans on one page (empty if the page is a scan)."""
@@ -953,6 +1028,30 @@ async def edit_text(req: EditTextRequest):
                     embedded[key] = None
                 return embedded[key]
 
+            # Lazily embed a local system font (resolved by family name + style),
+            # one PyMuPDF fontname per (name, bold, italic). Returns (fontname,
+            # fontfile) or None when the family can't be resolved on this machine.
+            local_embedded: dict[tuple[str, bool, bool], tuple[str, str] | None] = {}
+            local_seq = [0]
+
+            def embed_local(name: str, bold: bool, italic: bool):
+                key = (name, bold, italic)
+                if key in local_embedded:
+                    return local_embedded[key]
+                vp = _resolve_local_font(name, bold, italic)
+                if not vp:
+                    local_embedded[key] = None
+                    return None
+                fn = "loc%d" % local_seq[0]
+                local_seq[0] += 1
+                try:
+                    page.insert_font(fontname=fn, fontfile=vp)
+                    local_embedded[key] = (fn, vp)
+                except Exception as fe:
+                    logger.debug("insert_font local %s failed: %s", name, fe)
+                    local_embedded[key] = None
+                return local_embedded[key]
+
             for e in edits:
                 txt = e.new_text or ""
                 if not txt.strip():
@@ -973,21 +1072,41 @@ async def edit_text(req: EditTextRequest):
                     except Exception as be:
                         logger.debug("draw_rect (bg) error: %s", be)
 
-                # Font family. Vietnamese diacritics need the bundled DejaVu (vnedit);
-                # builtin fonts (helv/tiro/cour) only cover Latin-1, so force DejaVu when
-                # the text has any char beyond Latin-1 to avoid blank glyphs.
-                fam = (e.font or "default").lower()
+                # Font selection. "default" → bundled DejaVu (Vietnamese-safe);
+                # "times"/"helv"/"courier" → Base14 builtin (or matching local TTF
+                # when the text needs non-Latin-1 glyphs); any other name → a local
+                # system font resolved by family (this is how an edit keeps its
+                # original font — the frontend sends the span's own font name).
+                fam_raw = e.font or "default"
+                fam = fam_raw.lower()
                 needs_unicode = any(ord(ch) > 0xFF for ch in txt)
                 builtin = {"times": "tiro", "helv": "helv", "courier": "cour"}.get(fam)
 
-                # Pick a REAL bold/italic font variant where possible; only fall back
-                # to faux styling (stroke/shear) when the variant TTF is unavailable.
+                fontname = None
                 fontfile = None  # set when using an embedded TTF (for width calc)
                 faux_bold = False
                 faux_italic = False
-                if not (fam == "default" or needs_unicode or not builtin):
-                    fontname = _BUILTIN_VARIANTS[builtin][(bool(e.bold), bool(e.italic))]
+
+                if fam == "default":
+                    pass  # → DejaVu fallback below
+                elif builtin:
+                    if needs_unicode:
+                        # Base14 builtins are Latin-1 only; use the matching local
+                        # TrueType (covers Vietnamese) to preserve the look.
+                        alias = {"times": "Times New Roman", "helv": "Arial", "courier": "Courier New"}[fam]
+                        lf = embed_local(alias, bool(e.bold), bool(e.italic))
+                        if lf:
+                            fontname, fontfile = lf
+                    else:
+                        fontname = _BUILTIN_VARIANTS[builtin][(bool(e.bold), bool(e.italic))]
                 else:
+                    lf = embed_local(fam_raw, bool(e.bold), bool(e.italic))
+                    if lf:
+                        fontname, fontfile = lf
+
+                # Fallback to bundled DejaVu (real bold/italic variant) when nothing
+                # above resolved; faux styling only as the final resort.
+                if fontname is None:
                     emb = embed_vn(bool(e.bold), bool(e.italic))
                     if emb:
                         fontname, fontfile = emb
@@ -1038,6 +1157,12 @@ async def edit_text(req: EditTextRequest):
                     except Exception as ue:
                         logger.debug("draw_line (underline) error: %s", ue)
 
+        # Subset embedded fonts so a full local TTF (Arial/Times/…) doesn't bloat
+        # the file — only the glyphs actually used are kept.
+        try:
+            doc.subset_fonts()
+        except Exception as se:
+            logger.debug("subset_fonts (edit-text) skipped: %s", se)
         out_bytes = doc.tobytes(deflate=True, garbage=3)
         pages_changed = len(by_page)
     except HTTPException:

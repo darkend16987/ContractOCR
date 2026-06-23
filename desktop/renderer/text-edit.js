@@ -51,7 +51,7 @@
   // Push a span's (or its pending edit's) style into the toolbar controls.
   function syncControls(sp) {
     const ed = te.edits[sp.id];
-    $("te-font").value = ed ? ed.font || "default" : "default";
+    $("te-font").value = ed ? ed.font || "__keep__" : "__keep__";
     $("te-size").value = String(ed ? ed.size : Math.round(sp.size * 10) / 10);
     $("te-color").value = ed ? ed.color : packedToHex(sp.color);
     $("te-bg-on").checked = ed ? !!ed.bg : false;
@@ -63,7 +63,7 @@
   // Read the current toolbar control values into a style object.
   function readControls() {
     return {
-      font: $("te-font").value || "default",
+      font: $("te-font").value || "__keep__",
       size: Math.max(4, parseFloat($("te-size").value) || 11),
       color: $("te-color").value || "#000000",
       bg: $("te-bg-on").checked ? $("te-bg").value : null,
@@ -94,7 +94,7 @@
         bold: flagsBold(sp.flags),
         italic: flagsItalic(sp.flags),
         underline: false,
-        font: "default",
+        font: "__keep__", // keep the span's original font unless changed
       };
     }
     return te.edits[spId];
@@ -216,7 +216,7 @@
         st.italic !== flagsItalic(sp.flags) ||
         st.underline ||
         st.bg ||
-        st.font !== "default" ||
+        st.font !== "__keep__" ||
         Math.abs(st.size - sp.size) > 0.01 ||
         st.color.toLowerCase() !== packedToHex(sp.color).toLowerCase();
       if (val !== sp.text || styleChanged) {
@@ -341,10 +341,46 @@
     scrollToPage(page);
     renderBoxes();
     updateHint();
+    loadSystemFonts(); // fill the font picker with installed families (once)
+  }
+
+  // Populate the "Font máy" optgroup from the sidecar's /fonts list. Runs once;
+  // silently no-ops if the engine isn't ready or the call fails (built-in choices
+  // still work). Each option's value is the family name sent straight to /edit-text.
+  let fontsLoaded = false;
+  async function loadSystemFonts() {
+    if (fontsLoaded) return;
+    const grp = $("te-font-system");
+    if (!grp || sidecar.state !== "ready" || !sidecar.base) return;
+    try {
+      const res = await sidecarFetch("/fonts", { method: "GET" });
+      const data = await res.json();
+      if (!data.success || !Array.isArray(data.families)) return;
+      const frag = document.createDocumentFragment();
+      for (const name of data.families) {
+        const o = document.createElement("option");
+        o.value = name;
+        o.textContent = name;
+        frag.appendChild(o);
+      }
+      grp.appendChild(frag);
+      fontsLoaded = true;
+    } catch (_) {
+      /* keep built-in font choices */
+    }
   }
 
   async function apply() {
-    const edits = Object.values(te.edits);
+    // Resolve the font choice per edit: "__keep__" → the span's original font name
+    // (the backend cleans/looks it up); every other value passes through unchanged.
+    const edits = Object.keys(te.edits).map((id) => {
+      const ed = { ...te.edits[id] };
+      if (ed.font === "__keep__") {
+        const sp = te.spans.find((s) => String(s.id) === id);
+        ed.font = (sp && sp.font) || "default";
+      }
+      return ed;
+    });
     if (!edits.length) {
       toast("Chưa sửa đoạn nào.", "");
       return;

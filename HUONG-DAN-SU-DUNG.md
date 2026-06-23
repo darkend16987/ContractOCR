@@ -71,6 +71,13 @@ Hai file này nằm ở: `D:\GitHub\ContractOCR\desktop\dist-app\`
 >   dưới = chèn phía sau). Thả nhiều file cùng lúc cũng được. Không cần mở hộp thoại chọn vị trí.
 > - Vẫn dùng được nút **Chèn / Ghép** với hộp thoại chọn vị trí như cũ; kéo–thả chỉ là lối tắt.
 
+> ⌨️ **Menu & phím tắt** (thanh menu trên cùng: Tập tin · Chỉnh sửa · Trang · Hiển thị · Trợ giúp):
+> - **Ctrl+O** Mở · **Ctrl+S** Lưu · **Ctrl+Shift+S** Lưu thành…
+>   (Ctrl+S ghi đè thẳng vào file đang mở; file kéo–thả/chưa lưu thì hỏi nơi lưu.)
+> - **Ctrl+Z** Hoàn tác · **Ctrl+Y** Làm lại.
+> - **Ctrl + / Ctrl − / Ctrl 0** Phóng to / Thu nhỏ / Cỡ gốc 100%.
+> - **Delete** Xóa trang đang chọn.
+
 Cache model lưu ở: `C:\Users\<tên-bạn>\.paddlex` (và `.cache`). Xóa được nếu cần giải phóng ổ; lần
 sau dùng OCR sẽ tải lại.
 
@@ -84,8 +91,10 @@ sau dùng OCR sẽ tải lại.
 - ❌ **PDF scan (ảnh chụp/scan giấy)**: không có ký tự để sửa. App sẽ báo *"trang này là ảnh scan,
   không có chữ để sửa"* → hãy dùng **Searchable** hoặc **Bóc tách** thay thế.
 
-Giới hạn đã biết: sửa trong phạm vi từng đoạn (không tự dàn lại dòng); chữ dài hơn ô cũ sẽ tự co nhỏ;
-font có thể hơi khác nếu file gốc dùng font đặc biệt.
+> **Chọn font khi sửa:** ô **Font** có **"Giữ nguyên (font gốc)"** (mặc định — giữ đúng font của đoạn
+> đang sửa) và nhóm **"Font máy"** liệt kê font cài trên máy. Chọn font máy → chữ sửa dùng đúng font đó.
+
+Giới hạn đã biết: sửa trong phạm vi từng đoạn (không tự dàn lại dòng); chữ dài hơn ô cũ sẽ tự co nhỏ.
 
 > **Chèn chữ ký:** dùng nút **Chèn ảnh / chữ ký** → chọn ảnh chữ ký rồi bấm lên trang để đặt.
 > Nên dùng **PNG nền trong** để chữ ký không có hộp trắng đè lên tài liệu (ảnh JPG có nền đặc — app sẽ

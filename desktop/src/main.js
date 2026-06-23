@@ -3,7 +3,7 @@
 const path = require("path");
 const fs = require("fs");
 const crypto = require("crypto");
-const { app, BrowserWindow, ipcMain, dialog, shell } = require("electron");
+const { app, BrowserWindow, Menu, ipcMain, dialog, shell } = require("electron");
 const { startSidecar, stopSidecar } = require("./sidecar");
 const { initAutoUpdate } = require("./updater");
 const { initLicense } = require("./license");
@@ -54,6 +54,75 @@ function createWindow() {
   });
 }
 
+// Native application menu. File/Save accelerators are registered by Electron;
+// editing/zoom/page shortcuts are flagged registerAccelerator:false so the
+// renderer's keydown handler owns them (it can check focus to avoid hijacking
+// keys while the user types in a field). All custom items relay a command to the
+// renderer over the "menu:cmd" channel.
+function buildMenu() {
+  const send = (cmd) => () => {
+    const wc =
+      (mainWindow && !mainWindow.isDestroyed() && mainWindow.webContents) ||
+      (BrowserWindow.getFocusedWindow() && BrowserWindow.getFocusedWindow().webContents);
+    if (wc) wc.send("menu:cmd", cmd);
+  };
+  const isDev = !app.isPackaged;
+  const template = [
+    {
+      label: "Tập tin",
+      submenu: [
+        { label: "Mở…", accelerator: "CmdOrCtrl+O", click: send("open") },
+        { type: "separator" },
+        { label: "Lưu", accelerator: "CmdOrCtrl+S", click: send("save") },
+        { label: "Lưu thành…", accelerator: "CmdOrCtrl+Shift+S", click: send("saveAs") },
+        { type: "separator" },
+        { role: "close", label: "Đóng cửa sổ" },
+        { role: "quit", label: "Thoát" },
+      ],
+    },
+    {
+      label: "Chỉnh sửa",
+      submenu: [
+        { label: "Hoàn tác", accelerator: "CmdOrCtrl+Z", registerAccelerator: false, click: send("undo") },
+        { label: "Làm lại", accelerator: "CmdOrCtrl+Y", registerAccelerator: false, click: send("redo") },
+        { type: "separator" },
+        { role: "cut", label: "Cắt" },
+        { role: "copy", label: "Sao chép" },
+        { role: "paste", label: "Dán" },
+        { role: "selectAll", label: "Chọn tất cả" },
+      ],
+    },
+    {
+      label: "Trang",
+      submenu: [
+        { label: "Xoay trái 90°", click: send("rotateL") },
+        { label: "Xoay phải 90°", click: send("rotateR") },
+        { label: "Xóa trang đang chọn", accelerator: "Delete", registerAccelerator: false, click: send("delete") },
+        { type: "separator" },
+        { label: "Ghép PDF…", click: send("merge") },
+        { label: "Chèn trang…", click: send("insert") },
+        { label: "Tách trang đang chọn…", click: send("extract") },
+      ],
+    },
+    {
+      label: "Hiển thị",
+      submenu: [
+        { label: "Phóng to", accelerator: "CmdOrCtrl+=", registerAccelerator: false, click: send("zoomIn") },
+        { label: "Thu nhỏ", accelerator: "CmdOrCtrl+-", registerAccelerator: false, click: send("zoomOut") },
+        { label: "Cỡ gốc (100%)", accelerator: "CmdOrCtrl+0", registerAccelerator: false, click: send("zoomReset") },
+        { type: "separator" },
+        { role: "togglefullscreen", label: "Toàn màn hình" },
+        ...(isDev ? [{ type: "separator" }, { role: "reload" }, { role: "toggleDevTools" }] : []),
+      ],
+    },
+    {
+      label: "Trợ giúp",
+      submenu: [{ label: "Cài đặt…", click: send("settings") }],
+    },
+  ];
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+}
+
 // Spawn the Python sidecar in the background. OCR-dependent UI stays disabled
 // until this resolves; the rest of the app works without it.
 function bootSidecar() {
@@ -70,6 +139,7 @@ function bootSidecar() {
 }
 
 app.whenReady().then(() => {
+  buildMenu();
   createWindow();
   bootSidecar();
   initAutoUpdate(mainWindow);
@@ -125,6 +195,19 @@ ipcMain.handle("dialog:save-pdf", async (_e, { data, defaultName }) => {
   if (res.canceled || !res.filePath) return { saved: false };
   fs.writeFileSync(res.filePath, Buffer.from(data));
   return { saved: true, path: res.filePath };
+});
+
+// Silent save (no dialog) to a path the document already has — backs "Lưu"
+// (Ctrl+S) once the file has a known location. Falls back to {saved:false} on
+// any write error so the renderer can surface it / prompt Save As instead.
+ipcMain.handle("file:write-pdf", async (_e, { path: fp, data }) => {
+  try {
+    if (!fp) return { saved: false };
+    fs.writeFileSync(fp, Buffer.from(data));
+    return { saved: true, path: fp };
+  } catch (e) {
+    return { saved: false, error: String((e && e.message) || e) };
+  }
 });
 
 // Generic save for non-PDF exports (xlsx/csv/json). `filters` is an array of

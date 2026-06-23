@@ -36,9 +36,17 @@ contextBridge.exposeInMainWorld("desktop", {
   // --- native file dialogs ---
   // Returns [{ path, name, data: Uint8Array }, ...] (empty if cancelled).
   openPdf: (opts) => ipcRenderer.invoke("dialog:open-pdf", opts || {}),
-  // data: Uint8Array | ArrayBuffer. Returns { saved, path? }.
+  // data: Uint8Array | ArrayBuffer. Returns { saved, path? }. Always prompts.
   savePdf: (data, defaultName) =>
     ipcRenderer.invoke("dialog:save-pdf", { data, defaultName }),
+  // Silent write to an existing path (Ctrl+S on an already-saved doc). { saved, path? }.
+  writePdf: (path, data) => ipcRenderer.invoke("file:write-pdf", { path, data }),
+  // Native menu commands (File/Edit/Page/View). cb receives the command string.
+  onMenuCommand: (cb) => {
+    const handler = (_e, cmd) => cb(cmd);
+    ipcRenderer.on("menu:cmd", handler);
+    return () => ipcRenderer.removeListener("menu:cmd", handler);
+  },
   // Generic save for exports. filters: [{ name, extensions: [...] }].
   saveFile: (data, defaultName, filters) =>
     ipcRenderer.invoke("dialog:save-file", { data, defaultName, filters }),
