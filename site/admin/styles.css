@@ -4,6 +4,10 @@
   --ok: #22c55e; --warn: #f59e0b; --bad: #ef4444;
 }
 * { box-sizing: border-box; }
+/* The `hidden` attribute must always win over class display rules
+   (.login/.drawer/.tabpane set display, which would otherwise keep a
+   full-screen overlay rendered on top and block all interaction). */
+[hidden] { display: none !important; }
 body { margin: 0; background: var(--bg); color: var(--fg);
   font: 14px/1.5 system-ui, "Segoe UI", Roboto, sans-serif; }
 h1 { font-size: 18px; margin: 0 0 8px; }
