@@ -12,6 +12,18 @@
          Referenced via <svg class="ic"><use href="#ic-NAME"></svg>. -->
     <svg width="0" height="0" style="position:absolute" aria-hidden="true">
       <defs>
+        <symbol id="ic-nabu-logo" viewBox="0 0 24 24">
+          <!-- Document outline -->
+          <path d="M14 3v4a1 1 0 0 0 1 1h4"/>
+          <path d="M19 21H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h7l5 5v13a2 2 0 0 1-2 2z"/>
+          <!-- Stylized Sumerian 'Na' with wedges -->
+          <path d="M9 11l-1.5-1v2z" fill="currentColor" stroke="none"/>
+          <line x1="9" y1="11" x2="15" y2="11" />
+          <path d="M12 11l-1-1.5h2z" fill="currentColor" stroke="none"/>
+          <line x1="12" y1="11" x2="12" y2="17" />
+          <path d="M9 14l-1.5-1v2z" fill="currentColor" stroke="none"/>
+          <line x1="9" y1="14" x2="12" y2="14" />
+        </symbol>
         <symbol id="ic-file" viewBox="0 0 24 24"><path d="M6 3h7l5 5v12a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z"/><path d="M13 3v5h5"/><path d="M9 13h6M9 17h6"/></symbol>
         <symbol id="ic-folder" viewBox="0 0 24 24"><path d="M5 19l2.3-8.5h13L18 19z"/><path d="M5 19V6a1 1 0 0 1 1-1h4l2 2h6a1 1 0 0 1 1 1v2"/></symbol>
         <symbol id="ic-save" viewBox="0 0 24 24"><path d="M6 4h9l3 3v12a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1z"/><path d="M9 4v4h6"/><circle cx="12" cy="14" r="2.4"/></symbol>
@@ -46,64 +58,69 @@
     </svg>
 
     <header class="toolbar">
-      <div class="brand"><svg class="ic"><use href="#ic-file-search"/></svg>Nabu PDF<span class="by">developed by Nam Ta</span></div>
+      <div class="tb-row">
+        <div class="brand"><svg class="ic logo-icon"><use href="#ic-nabu-logo"/></svg>Nabu PDF<span class="by">developed by Nam Ta</span></div>
 
-      <div class="group">
-        <button id="btn-open" title="Mở PDF"><svg class="ic"><use href="#ic-folder"/></svg>Mở</button>
-        <button id="btn-save" class="primary" disabled title="Lưu PDF (Ctrl+S)"><svg class="ic"><use href="#ic-save"/></svg>Lưu</button>
-      </div>
-
-      <div class="sep"></div>
-
-      <div class="group">
-        <button id="btn-undo" class="icon-only" disabled title="Hoàn tác (Ctrl+Z)"><svg class="ic"><use href="#ic-undo"/></svg></button>
-        <button id="btn-redo" class="icon-only" disabled title="Làm lại (Ctrl+Y)"><svg class="ic"><use href="#ic-redo"/></svg></button>
-      </div>
-
-      <div class="sep"></div>
-
-      <div class="group" data-needs-doc>
-        <button id="btn-merge" disabled title="Ghép PDF khác vào — chọn vị trí (đầu/cuối/sau trang)"><svg class="ic"><use href="#ic-copy"/></svg>Ghép</button>
-        <button id="btn-insert" disabled title="Chèn trang từ PDF khác — chọn vị trí (đầu/cuối/sau trang)"><svg class="ic"><use href="#ic-file-plus"/></svg>Chèn</button>
-        <button id="btn-extract" disabled title="Tách các trang đang chọn ra PDF mới"><svg class="ic"><use href="#ic-scissors"/></svg>Tách</button>
-      </div>
-
-      <div class="sep"></div>
-
-      <div class="group" data-needs-doc>
-        <button id="btn-rotate-l" class="icon-only" disabled title="Xoay trái 90°"><svg class="ic"><use href="#ic-rotate-l"/></svg></button>
-        <button id="btn-rotate-r" class="icon-only" disabled title="Xoay phải 90°"><svg class="ic"><use href="#ic-rotate-r"/></svg></button>
-        <button id="btn-delete" class="icon-only" disabled title="Xóa trang đang chọn"><svg class="ic"><use href="#ic-trash"/></svg></button>
-      </div>
-
-      <div class="sep"></div>
-
-      <div class="group" data-needs-doc>
-        <button id="btn-zoom-out" class="icon-only" disabled title="Thu nhỏ"><svg class="ic"><use href="#ic-minus"/></svg></button>
-        <span id="zoom-label" class="readout">100%</span>
-        <button id="btn-zoom-in" class="icon-only" disabled title="Phóng to"><svg class="ic"><use href="#ic-plus"/></svg></button>
-      </div>
-
-      <div class="spacer"></div>
-
-      <button id="btn-edit" class="ghost" disabled title="Chỉnh sửa: chú thích, watermark, redact, điền form"><svg class="ic"><use href="#ic-edit"/></svg>Chỉnh sửa</button>
-      <button id="btn-text-edit" class="ghost" disabled title="Sửa trực tiếp chữ gốc của PDF (chỉ PDF có text thật, không phải scan)"><svg class="ic"><use href="#ic-type"/></svg>Sửa chữ</button>
-      <button id="btn-searchable" class="ghost" disabled title="Tạo PDF tìm-kiếm-được (OCR thêm lớp text vô hình)"><svg class="ic"><use href="#ic-file-search"/></svg>Searchable</button>
-      <button id="btn-compress" class="ghost" disabled title="Nén PDF (giảm dung lượng ảnh)"><svg class="ic"><use href="#ic-compress"/></svg>Nén</button>
-      <div class="dropdown" id="convert-dd">
-        <button id="btn-convert" class="ghost" disabled title="Khoá file, xuất ảnh, chuyển đổi ảnh ↔ PDF"><svg class="ic"><use href="#ic-convert"/></svg>Chuyển đổi<svg class="ic chev"><use href="#ic-chevron"/></svg></button>
-        <div class="dropdown-menu" id="convert-menu" hidden>
-          <button class="dd-item" id="mi-encrypt"><svg class="ic"><use href="#ic-lock"/></svg>Khoá file (đặt mật khẩu)…</button>
-          <div class="dd-sep"></div>
-          <button class="dd-item" id="mi-extract-images"><svg class="ic"><use href="#ic-photo"/></svg>Xuất ảnh trong PDF…</button>
-          <button class="dd-item" id="mi-pdf-to-images"><svg class="ic"><use href="#ic-photo"/></svg>Trang PDF → ảnh…</button>
-          <button class="dd-item" id="mi-images-to-pdf"><svg class="ic"><use href="#ic-file"/></svg>Ảnh → PDF…</button>
+        <div class="group">
+          <button id="btn-open" title="Mở PDF"><svg class="ic"><use href="#ic-folder"/></svg>Mở</button>
+          <button id="btn-save" class="primary" disabled title="Lưu PDF (Ctrl+S)"><svg class="ic"><use href="#ic-save"/></svg>Lưu</button>
         </div>
+
+        <div class="spacer"></div>
+
+        <div class="group" data-needs-doc>
+          <button id="btn-zoom-out" class="icon-only" disabled title="Thu nhỏ"><svg class="ic"><use href="#ic-minus"/></svg></button>
+          <span id="zoom-label" class="readout">100%</span>
+          <button id="btn-zoom-in" class="icon-only" disabled title="Phóng to"><svg class="ic"><use href="#ic-plus"/></svg></button>
+        </div>
+
+        <div class="spacer"></div>
+
+        <button id="btn-settings" class="ghost icon-only" title="Cài đặt — API key cho Bóc tách"><svg class="ic"><use href="#ic-settings"/></svg></button>
+        <span id="sidecar-badge" class="badge starting" title="Trạng thái engine OCR">OCR: …</span>
+        <span id="update-badge" class="badge update" title="Trạng thái cập nhật" hidden></span>
       </div>
-      <button id="btn-ocr" class="ghost" disabled title="OCR + bóc tách field bằng AI"><svg class="ic"><use href="#ic-wand"/></svg>Bóc tách</button>
-      <button id="btn-settings" class="ghost icon-only" title="Cài đặt — API key cho Bóc tách"><svg class="ic"><use href="#ic-settings"/></svg></button>
-      <span id="sidecar-badge" class="badge starting" title="Trạng thái engine OCR">OCR: …</span>
-      <span id="update-badge" class="badge update" title="Trạng thái cập nhật" hidden></span>
+
+      <div class="tb-row tb-tools">
+        <div class="group">
+          <button id="btn-undo" class="icon-only" disabled title="Hoàn tác (Ctrl+Z)"><svg class="ic"><use href="#ic-undo"/></svg></button>
+          <button id="btn-redo" class="icon-only" disabled title="Làm lại (Ctrl+Y)"><svg class="ic"><use href="#ic-redo"/></svg></button>
+        </div>
+
+        <div class="sep"></div>
+
+        <div class="group" data-needs-doc>
+          <button id="btn-merge" disabled title="Ghép PDF khác vào — chọn vị trí (đầu/cuối/sau trang)"><svg class="ic"><use href="#ic-copy"/></svg>Ghép</button>
+          <button id="btn-insert" disabled title="Chèn trang từ PDF khác — chọn vị trí (đầu/cuối/sau trang)"><svg class="ic"><use href="#ic-file-plus"/></svg>Chèn</button>
+          <button id="btn-extract" disabled title="Tách các trang đang chọn ra PDF mới"><svg class="ic"><use href="#ic-scissors"/></svg>Tách</button>
+        </div>
+
+        <div class="sep"></div>
+
+        <div class="group" data-needs-doc>
+          <button id="btn-rotate-l" class="icon-only" disabled title="Xoay trái 90°"><svg class="ic"><use href="#ic-rotate-l"/></svg></button>
+          <button id="btn-rotate-r" class="icon-only" disabled title="Xoay phải 90°"><svg class="ic"><use href="#ic-rotate-r"/></svg></button>
+          <button id="btn-delete" class="icon-only" disabled title="Xóa trang đang chọn"><svg class="ic"><use href="#ic-trash"/></svg></button>
+        </div>
+
+        <div class="sep"></div>
+
+        <button id="btn-edit" class="ghost" disabled title="Chỉnh sửa: chú thích, watermark, redact, điền form"><svg class="ic"><use href="#ic-edit"/></svg>Chỉnh sửa</button>
+        <button id="btn-text-edit" class="ghost" disabled title="Sửa trực tiếp chữ gốc của PDF (chỉ PDF có text thật, không phải scan)"><svg class="ic"><use href="#ic-type"/></svg>Sửa chữ</button>
+        <button id="btn-searchable" class="ghost" disabled title="Tạo PDF tìm-kiếm-được (OCR thêm lớp text vô hình)"><svg class="ic"><use href="#ic-file-search"/></svg>Searchable</button>
+        <button id="btn-compress" class="ghost" disabled title="Nén PDF (giảm dung lượng ảnh)"><svg class="ic"><use href="#ic-compress"/></svg>Nén</button>
+        <div class="dropdown" id="convert-dd">
+          <button id="btn-convert" class="ghost" disabled title="Khoá file, xuất ảnh, chuyển đổi ảnh ↔ PDF"><svg class="ic"><use href="#ic-convert"/></svg>Chuyển đổi<svg class="ic chev"><use href="#ic-chevron"/></svg></button>
+          <div class="dropdown-menu" id="convert-menu" hidden>
+            <button class="dd-item" id="mi-encrypt"><svg class="ic"><use href="#ic-lock"/></svg>Khoá file (đặt mật khẩu)…</button>
+            <div class="dd-sep"></div>
+            <button class="dd-item" id="mi-extract-images"><svg class="ic"><use href="#ic-photo"/></svg>Xuất ảnh trong PDF…</button>
+            <button class="dd-item" id="mi-pdf-to-images"><svg class="ic"><use href="#ic-photo"/></svg>Trang PDF → ảnh…</button>
+            <button class="dd-item" id="mi-images-to-pdf"><svg class="ic"><use href="#ic-file"/></svg>Ảnh → PDF…</button>
+          </div>
+        </div>
+        <button id="btn-ocr" class="ghost" disabled title="OCR + bóc tách field bằng AI"><svg class="ic"><use href="#ic-wand"/></svg>Bóc tách</button>
+      </div>
     </header>
 
     <!-- P4 overlay-editor toolbar (hidden until edit mode is on) -->
@@ -184,9 +201,8 @@
           <p class="hint">Xem · ghép · tách · chèn · xoay · xóa · sắp xếp · chú thích · khoanh vùng · ghi chú · watermark · redact · sửa chữ · OCR — chạy hoàn toàn trên máy.</p>
         </div>
       </section>
-    </main>
 
-    <div class="ext-panel" id="ext-panel" hidden>
+      <div class="ext-panel" id="ext-panel" hidden>
       <div class="ext-head">
         <b>Bóc tách hợp đồng</b>
         <button id="ext-close" class="link">Đóng</button>
@@ -216,6 +232,7 @@
         <pre id="ext-raw-out"></pre>
       </details>
     </div>
+    </main>
 
     <!-- Watermark dialog -->
     <div class="modal" id="wm-modal" hidden>

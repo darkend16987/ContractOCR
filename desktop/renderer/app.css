@@ -50,15 +50,25 @@ body {
 /* ---- toolbar ---- */
 .toolbar {
   display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 8px 12px;
+  flex-direction: column;
   background: var(--bg-2);
   border-bottom: 1px solid var(--line);
   flex: 0 0 auto;
 }
+.tb-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  flex-wrap: wrap; /* Fix overflow / missing menu by wrapping items on small screens */
+}
+.tb-tools {
+  background: var(--bg);
+  border-top: 1px solid var(--line);
+  padding: 6px 12px;
+}
 .brand { font-weight: 700; font-size: 15px; margin-right: 6px; white-space: nowrap; display: inline-flex; align-items: center; gap: 7px; }
-.brand .ic { width: 20px; height: 20px; color: var(--accent); }
+.brand .ic.logo-icon { width: 22px; height: 22px; color: var(--accent); }
 .brand .by { font-size: 10px; font-weight: 400; color: var(--muted); margin-left: 7px; align-self: center; letter-spacing: .2px; }
 /* HWID readout in Settings (machine-bound license keys). */
 .hwid { font-family: ui-monospace, "Cascadia Code", Consolas, monospace; font-size: 12px; color: var(--muted); background: var(--bg-hover); padding: 3px 7px; border-radius: 5px; user-select: all; }
@@ -160,7 +170,7 @@ button.ghost { background: transparent; }
 .badge.done { color: var(--ok); cursor: default; }
 
 /* ---- workspace ---- */
-.workspace { flex: 1; display: flex; min-height: 0; }
+.workspace { flex: 1; display: flex; min-height: 0; position: relative; }
 
 .sidebar {
   width: 180px;
@@ -232,8 +242,8 @@ button.ghost { background: transparent; }
 
 /* ---- extraction panel ---- */
 .ext-panel {
-  position: fixed;
-  right: 0; top: 49px; bottom: 0;
+  position: absolute;
+  right: 0; top: 0; bottom: 0;
   width: 420px;
   background: var(--bg-2);
   border-left: 1px solid var(--line);
