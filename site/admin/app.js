@@ -31,19 +31,28 @@ const esc = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, (c) =>
 async function adminCall(body) {
   const { data: { session } } = await sb.auth.getSession();
   if (!session) return { ok: false, reason: "no_session" };
-  const res = await fetch(`${CFG.SUPABASE_URL}/functions/v1/admin`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      apikey: CFG.SUPABASE_ANON_KEY,
-      Authorization: `Bearer ${session.access_token}`,
-    },
-    body: JSON.stringify(body),
-  });
   try {
-    return await res.json();
-  } catch {
-    return { ok: false, reason: "bad_response" };
+    const res = await fetch(`${CFG.SUPABASE_URL}/functions/v1/admin`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        apikey: CFG.SUPABASE_ANON_KEY,
+        Authorization: `Bearer ${session.access_token}`,
+      },
+      body: JSON.stringify(body),
+    });
+    try {
+      const data = await res.json();
+      // Supabase Edge Functions may return non-2xx with a JSON body that lacks `ok`
+      if (typeof data.ok === "undefined" && !res.ok) {
+        return { ok: false, reason: data.error || data.message || `HTTP ${res.status}` };
+      }
+      return data;
+    } catch {
+      return { ok: false, reason: `bad_response (HTTP ${res.status})` };
+    }
+  } catch (err) {
+    return { ok: false, reason: "network_error: " + (err.message || err) };
   }
 }
 
@@ -151,20 +160,27 @@ function openIssue() {
   $("i-cancel").onclick = hideDrawer;
   $("i-submit").onclick = async () => {
     $("i-submit").disabled = true;
-    const r = await adminCall({
-      action: "issue",
-      name: $("i-name").value, email: $("i-email").value, plan: $("i-plan").value,
-      max_seats: $("i-seats").value, days: $("i-days").value,
-      assigned_to: $("i-assigned").value, note: $("i-note").value,
-    });
-    $("i-submit").disabled = false;
-    if (!r.ok) return toast("Cấp key lỗi: " + (r.reason || ""), "bad");
-    $("i-result").innerHTML = `<div class="sect"><label class="muted small">Key (gửi cho khách):</label>
-      <div class="keybox" id="i-key">${esc(r.key)}</div>
-      <button class="ghost" id="i-copy" style="margin-top:8px">Copy key</button></div>`;
-    $("i-copy").onclick = () => { navigator.clipboard.writeText(r.key); toast("Đã copy key", "good"); };
-    toast("Đã cấp " + r.license.key_id, "good");
-    loadLicenses();
+    try {
+      const r = await adminCall({
+        action: "issue",
+        name: $("i-name").value, email: $("i-email").value, plan: $("i-plan").value,
+        max_seats: parseInt($("i-seats").value, 10) || 1,
+        days: parseInt($("i-days").value, 10) || 0,
+        assigned_to: $("i-assigned").value, note: $("i-note").value,
+      });
+      $("i-submit").disabled = false;
+      if (!r.ok) return toast("Cấp key lỗi: " + (r.reason || "không rõ"), "bad");
+      $("i-result").innerHTML = `<div class="sect"><label class="muted small">Key (gửi cho khách):</label>
+        <div class="keybox" id="i-key">${esc(r.key)}</div>
+        <button class="ghost" id="i-copy" style="margin-top:8px">Copy key</button></div>`;
+      $("i-copy").onclick = () => { navigator.clipboard.writeText(r.key); toast("Đã copy key", "good"); };
+      toast("Đã cấp " + r.license.key_id, "good");
+      loadLicenses();
+    } catch (err) {
+      $("i-submit").disabled = false;
+      toast("Cấp key lỗi: " + (err.message || err), "bad");
+      console.error("Issue key error:", err);
+    }
   };
 }
 
