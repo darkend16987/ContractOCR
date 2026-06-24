@@ -27,15 +27,34 @@
 
     <!-- App -->
     <header id="topbar" class="topbar" hidden>
-      <b>Nabu PDF · License</b>
-      <nav class="tabs">
-        <button class="tab active" data-tab="licenses">Licenses</button>
-        <button class="tab" data-tab="audit">Nhật ký</button>
-        <button class="tab" data-tab="admins">Admins</button>
-      </nav>
-      <span class="spacer"></span>
-      <span id="who" class="muted small"></span>
-      <button id="signout" class="ghost">Đăng xuất</button>
+      <div class="topbar-container">
+        <div class="brand">
+          <svg class="logo-icon" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <rect x="5" y="3" width="22" height="26" rx="4" fill="var(--accent-bg)" stroke="var(--accent)" stroke-width="2"/>
+            <path d="M27 10L20 3V7C20 8.65685 21.3431 10 23 10H27Z" fill="var(--accent)" fill-opacity="0.1" stroke="var(--accent)" stroke-width="2" stroke-linejoin="round"/>
+            <g transform="translate(10, 14)">
+              <path d="M0 1.5 L4 0.5 L4 2.5 Z" fill="var(--accent)"/>
+              <path d="M0 5.5 L4 4.5 L4 6.5 Z" fill="var(--accent)"/>
+              <path d="M2 0 L3.5 0 L2.5 8 Z" fill="var(--accent)"/>
+              <path d="M5.5 2.5 L9 1 L8 4 Z" fill="var(--accent)"/>
+            </g>
+          </svg>
+          <div>Nabu PDF <span class="badge">License</span></div>
+        </div>
+        
+        <nav class="tabs">
+          <button class="tab active" data-tab="licenses">Licenses</button>
+          <button class="tab" data-tab="audit">Nhật ký</button>
+          <button class="tab" data-tab="admins">Admins</button>
+        </nav>
+        
+        <span class="spacer"></span>
+        
+        <div class="topbar-right">
+          <span id="who" class="muted small"></span>
+          <button id="signout" class="ghost">Đăng xuất</button>
+        </div>
+      </div>
     </header>
 
     <main id="app" hidden>
@@ -78,30 +97,34 @@
             </button>
           </div>
         </div>
-        <table class="grid">
-          <thead>
-            <tr>
-              <th data-sort="key_id" class="sortable">Key ID <span></span></th>
-              <th data-sort="name" class="sortable">Người dùng <span></span></th>
-              <th data-sort="plan" class="sortable">Gói <span></span></th>
-              <th data-sort="seats" class="sortable">Máy <span></span></th>
-              <th data-sort="issued_at" class="sortable">Ngày cấp <span></span></th>
-              <th data-sort="expires_at" class="sortable">Hạn <span></span></th>
-              <th>Trạng thái</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody id="lic-rows"></tbody>
-        </table>
+        <div class="table-container">
+          <table class="grid">
+            <thead>
+              <tr>
+                <th data-sort="key_id" class="sortable">Key ID <span></span></th>
+                <th data-sort="name" class="sortable">Người dùng <span></span></th>
+                <th data-sort="plan" class="sortable">Gói <span></span></th>
+                <th data-sort="seats" class="sortable">Máy <span></span></th>
+                <th data-sort="issued_at" class="sortable">Ngày cấp <span></span></th>
+                <th data-sort="expires_at" class="sortable">Hạn <span></span></th>
+                <th>Trạng thái</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="lic-rows"></tbody>
+          </table>
+        </div>
         <p id="lic-empty" class="muted" hidden>Chưa có license nào.</p>
       </section>
 
       <!-- Audit tab -->
       <section id="tab-audit" class="tabpane" hidden>
-        <table class="grid">
-          <thead><tr><th>Thời gian</th><th>Người làm</th><th>Hành động</th><th>Chi tiết</th></tr></thead>
-          <tbody id="audit-rows"></tbody>
-        </table>
+        <div class="table-container">
+          <table class="grid">
+            <thead><tr><th>Thời gian</th><th>Người làm</th><th>Hành động</th><th>Chi tiết</th></tr></thead>
+            <tbody id="audit-rows"></tbody>
+          </table>
+        </div>
       </section>
 
       <!-- Admins tab -->
@@ -110,10 +133,12 @@
           <input id="admin-email" type="email" placeholder="email admin mới…" />
           <button id="admin-add" class="primary">Thêm admin</button>
         </div>
-        <table class="grid">
-          <thead><tr><th>Email</th><th>Thêm lúc</th><th></th></tr></thead>
-          <tbody id="admin-rows"></tbody>
-        </table>
+        <div class="table-container">
+          <table class="grid">
+            <thead><tr><th>Email</th><th>Thêm lúc</th><th></th></tr></thead>
+            <tbody id="admin-rows"></tbody>
+          </table>
+        </div>
       </section>
     </main>
 
@@ -124,14 +149,14 @@
     
     <!-- Success Modal -->
     <div id="success-modal" class="drawer" style="align-items: center; justify-content: center;" hidden>
-      <div class="card" style="width: 480px; text-align: center; padding: 32px;">
-        <div style="width: 48px; height: 48px; background: rgba(34,197,94,.15); color: #4ade80; border-radius: 50%; display: flex; align-items: center; justify-content: center; margin: 0 auto 16px;">
-          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
+      <div class="card" style="width: 480px; max-width: 90vw; text-align: center; padding: 40px 32px;">
+        <div style="width: 56px; height: 56px; background: var(--ok-bg); color: var(--ok); border-radius: 50%; display: flex; align-items: center; justify-content: center; margin: 0 auto 20px;">
+          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
         </div>
-        <h2 style="margin: 0 0 8px; font-size: 20px;">Cấp key thành công!</h2>
+        <h2 style="margin: 0 0 8px; font-size: 22px;">Cấp key thành công!</h2>
         <p class="muted" style="margin-bottom: 24px;">Key đã được copy tự động vào Clipboard.</p>
-        <div class="keybox" id="success-key" style="margin-bottom: 24px; font-size: 14px; padding: 16px;"></div>
-        <button class="primary" id="success-close" style="width: 100%;">Đóng & Hoàn tất</button>
+        <div class="keybox" id="success-key" style="margin-bottom: 24px;"></div>
+        <button class="primary" id="success-close" style="width: 100%; padding: 12px;">Đóng & Hoàn tất</button>
       </div>
     </div>
 
