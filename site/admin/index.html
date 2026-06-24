@@ -5,6 +5,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="robots" content="noindex" />
     <title>Nabu PDF — Quản lý License</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
     <link rel="stylesheet" href="/admin/styles.css" />
   </head>
   <body>
@@ -38,16 +41,54 @@
     <main id="app" hidden>
       <!-- Licenses tab -->
       <section id="tab-licenses" class="tabpane">
-        <div class="row">
-          <button id="btn-new" class="primary">+ Cấp key mới</button>
-          <input id="search" type="search" placeholder="Tìm theo tên / email / key_id / người nhận…" />
-          <button id="refresh" class="ghost">↻ Tải lại</button>
+        <div class="toolbar">
+          <div class="row filters">
+            <select id="f-plan">
+              <option value="">Tất cả gói</option>
+              <option value="pro">Pro</option>
+              <option value="doanh nghiệp">Doanh nghiệp</option>
+            </select>
+            <select id="f-seats">
+              <option value="">Tất cả số máy</option>
+              <option value="1-2">1 - 2 máy</option>
+              <option value="3-10">3 - 10 máy</option>
+              <option value="11+">&gt; 10 máy</option>
+            </select>
+            <select id="f-issued">
+              <option value="">Tất cả ngày cấp</option>
+              <option value="7">Trong 1 tuần qua</option>
+              <option value="30">Trong 1 tháng qua</option>
+              <option value="90">Trong 3 tháng qua</option>
+              <option value="180">Trong 6 tháng qua</option>
+              <option value="365">Trong 1 năm qua</option>
+            </select>
+            <select id="f-status">
+              <option value="">Tất cả trạng thái</option>
+              <option value="active">Active</option>
+              <option value="expired">Expired</option>
+              <option value="suspended">Suspended</option>
+              <option value="revoked">Revoked</option>
+            </select>
+            <input id="search" type="search" placeholder="Tìm tên / email / key_id…" />
+          </div>
+          <div class="row actions">
+            <button id="btn-new" class="primary">+ Cấp key mới</button>
+            <button id="refresh" class="ghost" title="Tải lại">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/></svg>
+            </button>
+          </div>
         </div>
         <table class="grid">
           <thead>
             <tr>
-              <th>Key ID</th><th>Người dùng</th><th>Gói</th><th>Máy</th>
-              <th>Hạn</th><th>Trạng thái</th><th></th>
+              <th data-sort="key_id" class="sortable">Key ID <span></span></th>
+              <th data-sort="name" class="sortable">Người dùng <span></span></th>
+              <th data-sort="plan" class="sortable">Gói <span></span></th>
+              <th data-sort="seats" class="sortable">Máy <span></span></th>
+              <th data-sort="issued_at" class="sortable">Ngày cấp <span></span></th>
+              <th data-sort="expires_at" class="sortable">Hạn <span></span></th>
+              <th>Trạng thái</th>
+              <th></th>
             </tr>
           </thead>
           <tbody id="lic-rows"></tbody>
@@ -80,6 +121,20 @@
     <div id="drawer" class="drawer" hidden>
       <div class="drawer-card" id="drawer-body"></div>
     </div>
+    
+    <!-- Success Modal -->
+    <div id="success-modal" class="drawer" style="align-items: center; justify-content: center;" hidden>
+      <div class="card" style="width: 480px; text-align: center; padding: 32px;">
+        <div style="width: 48px; height: 48px; background: rgba(34,197,94,.15); color: #4ade80; border-radius: 50%; display: flex; align-items: center; justify-content: center; margin: 0 auto 16px;">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
+        </div>
+        <h2 style="margin: 0 0 8px; font-size: 20px;">Cấp key thành công!</h2>
+        <p class="muted" style="margin-bottom: 24px;">Key đã được copy tự động vào Clipboard.</p>
+        <div class="keybox" id="success-key" style="margin-bottom: 24px; font-size: 14px; padding: 16px;"></div>
+        <button class="primary" id="success-close" style="width: 100%;">Đóng & Hoàn tất</button>
+      </div>
+    </div>
+
     <div id="toast" class="toast" hidden></div>
 
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>

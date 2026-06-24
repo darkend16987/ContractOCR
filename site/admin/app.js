@@ -108,6 +108,9 @@ async function onSession(session) {
 
 // --- licenses ---------------------------------------------------------------
 let LICENSES = [];
+let sortCol = "issued_at";
+let sortAsc = false;
+
 async function loadLicenses() {
   const { data, error } = await sb.from("license_overview").select("*").order("issued_at", { ascending: false });
   if (error) return toast("Tải license lỗi: " + error.message, "bad");
@@ -117,18 +120,50 @@ async function loadLicenses() {
 
 function renderLicenses() {
   const q = $("search").value.trim().toLowerCase();
-  const rows = LICENSES.filter((l) =>
-    !q ||
-    [l.key_id, l.name, l.email, l.assigned_to].some((v) => (v || "").toLowerCase().includes(q)));
+  const fPlan = $("f-plan").value;
+  const fSeats = $("f-seats").value;
+  const fIssued = parseInt($("f-issued").value, 10) || 0;
+  const fStatus = $("f-status").value;
+  const now = Date.now();
+
+  let rows = LICENSES.filter((l) => {
+    if (q && ![l.key_id, l.name, l.email, l.assigned_to].some((v) => (v || "").toLowerCase().includes(q))) return false;
+    if (fPlan && l.plan !== fPlan) return false;
+    if (fSeats === "1-2" && l.max_seats > 2) return false;
+    if (fSeats === "3-10" && (l.max_seats < 3 || l.max_seats > 10)) return false;
+    if (fSeats === "11+" && l.max_seats <= 10) return false;
+    if (fIssued > 0 && (now - new Date(l.issued_at).getTime()) > fIssued * 86400000) return false;
+    const expired = l.expires_at && new Date(l.expires_at).getTime() < now;
+    const state = expired ? "expired" : l.status;
+    if (fStatus && state !== fStatus) return false;
+    return true;
+  });
+
+  rows.sort((a, b) => {
+    let va = a[sortCol];
+    let vb = b[sortCol];
+    if (sortCol === "seats") { va = a.max_seats; vb = b.max_seats; }
+    if (va === vb) return 0;
+    if (va == null) return sortAsc ? 1 : -1;
+    if (vb == null) return sortAsc ? -1 : 1;
+    return (va > vb ? 1 : -1) * (sortAsc ? 1 : -1);
+  });
+
+  document.querySelectorAll(".sortable").forEach(th => {
+    const icon = th.dataset.sort === sortCol ? (sortAsc ? "↑" : "↓") : "";
+    th.querySelector("span").textContent = icon;
+  });
+
   $("lic-empty").hidden = rows.length > 0;
   $("lic-rows").innerHTML = rows.map((l) => {
-    const expired = l.expires_at && new Date(l.expires_at) < new Date();
+    const expired = l.expires_at && new Date(l.expires_at).getTime() < now;
     const state = expired ? "expired" : l.status;
     return `<tr>
       <td class="mono">${esc(l.key_id)}</td>
       <td>${esc(l.name || "—")}<div class="muted small">${esc(l.email || "")}</div></td>
       <td>${esc(l.plan)}</td>
       <td>${l.active_seats}/${l.max_seats}</td>
+      <td>${fmtDate(l.issued_at)}</td>
       <td>${fmtExpiry(l.expires_at)}</td>
       <td><span class="pill ${state}">${state}</span></td>
       <td><button class="ghost" data-detail="${l.id}">Chi tiết</button></td>
@@ -145,7 +180,12 @@ function openIssue() {
     <div class="field"><label>Tên người dùng</label><input id="i-name" placeholder="Nguyễn Văn A" /></div>
     <div class="field"><label>Email</label><input id="i-email" type="email" placeholder="a@x.com" /></div>
     <div class="field-row">
-      <div class="field"><label>Gói</label><input id="i-plan" value="pro" /></div>
+      <div class="field"><label>Gói</label>
+        <select id="i-plan">
+          <option value="pro">Pro (1-2 máy)</option>
+          <option value="doanh nghiệp">Doanh nghiệp</option>
+        </select>
+      </div>
       <div class="field"><label>Số máy (seats)</label><input id="i-seats" type="number" min="1" value="1" /></div>
       <div class="field"><label>Số ngày (0 = vĩnh viễn)</label><input id="i-days" type="number" min="0" value="365" /></div>
     </div>
@@ -154,8 +194,7 @@ function openIssue() {
     <div class="drawer-actions">
       <button class="primary" id="i-submit">Cấp key</button>
       <button class="ghost" id="i-cancel">Đóng</button>
-    </div>
-    <div id="i-result"></div>`;
+    </div>`;
   showDrawer();
   $("i-cancel").onclick = hideDrawer;
   $("i-submit").onclick = async () => {
@@ -170,11 +209,12 @@ function openIssue() {
       });
       $("i-submit").disabled = false;
       if (!r.ok) return toast("Cấp key lỗi: " + (r.reason || "không rõ"), "bad");
-      $("i-result").innerHTML = `<div class="sect"><label class="muted small">Key (gửi cho khách):</label>
-        <div class="keybox" id="i-key">${esc(r.key)}</div>
-        <button class="ghost" id="i-copy" style="margin-top:8px">Copy key</button></div>`;
-      $("i-copy").onclick = () => { navigator.clipboard.writeText(r.key); toast("Đã copy key", "good"); };
-      toast("Đã cấp " + r.license.key_id, "good");
+      
+      hideDrawer();
+      $("success-key").textContent = r.key;
+      $("success-modal").hidden = false;
+      navigator.clipboard.writeText(r.key).catch(()=>{});
+      
       loadLicenses();
     } catch (err) {
       $("i-submit").disabled = false;
@@ -300,6 +340,22 @@ function wire() {
   $("btn-new").onclick = openIssue;
   $("refresh").onclick = loadLicenses;
   $("search").addEventListener("input", renderLicenses);
+  $("f-plan").onchange = renderLicenses;
+  $("f-seats").onchange = renderLicenses;
+  $("f-issued").onchange = renderLicenses;
+  $("f-status").onchange = renderLicenses;
+  
+  document.querySelectorAll(".sortable").forEach(th => {
+    th.onclick = () => {
+      const col = th.dataset.sort;
+      if (sortCol === col) sortAsc = !sortAsc;
+      else { sortCol = col; sortAsc = false; }
+      renderLicenses();
+    };
+  });
+  
+  $("success-close").onclick = () => { $("success-modal").hidden = true; };
+  
   $("drawer").onclick = (e) => { if (e.target === $("drawer")) hideDrawer(); };
   document.querySelectorAll(".tab").forEach((t) => (t.onclick = () => switchTab(t.dataset.tab)));
   $("admin-add").onclick = async () => {
