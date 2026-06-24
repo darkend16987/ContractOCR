@@ -1,0 +1,12 @@
+/* Supplement to Tailwind CDN. Keep minimal. */
+html { -webkit-text-size-adjust: 100%; }
+body { text-rendering: optimizeLegibility; }
+
+/* Respect reduced-motion: disable smooth scroll + transitions. */
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  * { transition-duration: 0.01ms !important; animation-duration: 0.01ms !important; }
+}
+
+/* Anchor offset so fixed navbar doesn't cover section headings. */
+section[id] { scroll-margin-top: 90px; }

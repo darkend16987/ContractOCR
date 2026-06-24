@@ -14,7 +14,10 @@
         <h1>Nabu PDF · License Admin</h1>
         <p class="muted">Chỉ superadmin. Đăng nhập bằng email đã được cấp quyền.</p>
         <input id="login-email" type="email" placeholder="email@cua-ban.com" autocomplete="email" />
-        <button id="login-send" class="primary">Gửi link đăng nhập</button>
+        <input id="login-pass" type="password" placeholder="Mật khẩu (để trống nếu dùng magic link)" autocomplete="current-password" />
+        <button id="login-pass-btn" class="primary">Đăng nhập bằng mật khẩu</button>
+        <div class="login-or"><span>hoặc</span></div>
+        <button id="login-send" class="ghost">Gửi magic link qua email</button>
         <p id="login-msg" class="muted small"></p>
       </div>
     </section>

@@ -60,6 +60,18 @@ async function sendMagicLink() {
     : "Đã gửi link đăng nhập tới " + email + ". Mở email và bấm vào link.";
 }
 
+async function signInWithPassword() {
+  const email = $("login-email").value.trim();
+  const password = $("login-pass").value;
+  if (!email || !password) {
+    $("login-msg").textContent = "Nhập email và mật khẩu (hoặc dùng magic link).";
+    return;
+  }
+  const { error } = await sb.auth.signInWithPassword({ email, password });
+  if (error) $("login-msg").textContent = "Đăng nhập thất bại: " + error.message;
+  // success → onAuthStateChange fires onSession()
+}
+
 async function isAdmin() {
   const { data } = await sb.from("admins").select("email").eq("email", ME).maybeSingle();
   return !!data;
@@ -265,7 +277,9 @@ function switchTab(name) {
 // --- wire -------------------------------------------------------------------
 function wire() {
   $("login-send").onclick = sendMagicLink;
-  $("login-email").addEventListener("keydown", (e) => { if (e.key === "Enter") sendMagicLink(); });
+  $("login-pass-btn").onclick = signInWithPassword;
+  $("login-pass").addEventListener("keydown", (e) => { if (e.key === "Enter") signInWithPassword(); });
+  $("login-email").addEventListener("keydown", (e) => { if (e.key === "Enter") signInWithPassword(); });
   $("signout").onclick = () => sb.auth.signOut();
   $("btn-new").onclick = openIssue;
   $("refresh").onclick = loadLicenses;

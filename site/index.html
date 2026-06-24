@@ -1,0 +1,269 @@
+<!doctype html>
+<html lang="vi" class="scroll-smooth">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Nabu PDF — Chỉnh sửa & bóc tách hợp đồng PDF bằng AI, chạy ngoại tuyến</title>
+    <meta name="description" content="Bộ công cụ PDF tiếng Việt: OCR bóc tách hợp đồng bằng AI, sửa chữ gốc, ghép/tách/nén, ký số, watermark — chạy hoàn toàn trên máy bạn. Miễn phí cho Windows." />
+    <meta property="og:title" content="Nabu PDF — PDF & OCR tiếng Việt, chạy ngoại tuyến" />
+    <meta property="og:description" content="OCR bóc tách hợp đồng bằng AI, sửa chữ gốc, ghép/tách/nén, ký số. Miễn phí cho Windows." />
+    <meta property="og:type" content="website" />
+    <meta property="og:image" content="/assets/nabu-icon-large.png" />
+    <link rel="icon" href="/assets/nabu-icon.png" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&display=swap" rel="stylesheet" />
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+      tailwind.config = {
+        theme: {
+          extend: {
+            fontFamily: { sans: ["Plus Jakarta Sans", "system-ui", "sans-serif"] },
+            colors: {
+              brand: { 50: "#f0fdfa", 100: "#ccfbf1", 200: "#99f6e4", 400: "#2dd4bf", 500: "#14b8a6", 600: "#0d9488", 700: "#0f766e", 800: "#115e59", 900: "#134e4a" },
+              cta: { 500: "#f97316", 600: "#ea580c" },
+              ink: { DEFAULT: "#0f172a", muted: "#475569" },
+            },
+            boxShadow: { soft: "0 10px 40px -12px rgba(13,148,136,.25)", card: "0 1px 3px rgba(15,23,42,.06), 0 10px 30px -18px rgba(15,23,42,.25)" },
+          },
+        },
+      };
+    </script>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body class="font-sans text-ink bg-white antialiased">
+    <!-- Floating navbar -->
+    <header class="fixed top-4 inset-x-4 z-40 mx-auto max-w-6xl">
+      <nav class="flex items-center gap-3 rounded-2xl border border-slate-200/70 bg-white/80 px-4 py-2.5 shadow-card backdrop-blur-md">
+        <a href="#top" class="flex items-center gap-2.5 font-extrabold text-ink">
+          <img src="/assets/nabu-icon.png" alt="Nabu PDF" class="h-8 w-8 rounded-lg" />
+          <span>Nabu PDF</span>
+        </a>
+        <div class="ml-auto hidden items-center gap-1 md:flex">
+          <a href="#features" class="rounded-lg px-3 py-2 text-sm font-medium text-ink-muted transition-colors hover:bg-slate-100 hover:text-ink">Tính năng</a>
+          <a href="#download" class="rounded-lg px-3 py-2 text-sm font-medium text-ink-muted transition-colors hover:bg-slate-100 hover:text-ink">Tải về</a>
+          <a href="#license" class="rounded-lg px-3 py-2 text-sm font-medium text-ink-muted transition-colors hover:bg-slate-100 hover:text-ink">Bản quyền</a>
+          <a href="/chinh-sach.html" class="rounded-lg px-3 py-2 text-sm font-medium text-ink-muted transition-colors hover:bg-slate-100 hover:text-ink">Chính sách</a>
+          <a href="#contact" class="rounded-lg px-3 py-2 text-sm font-medium text-ink-muted transition-colors hover:bg-slate-100 hover:text-ink">Liên hệ</a>
+          <a href="/admin" class="rounded-lg px-3 py-2 text-sm font-medium text-brand-700 transition-colors hover:bg-brand-50">Admin</a>
+        </div>
+        <a href="#download" class="ml-auto inline-flex cursor-pointer items-center gap-2 rounded-xl bg-cta-500 px-4 py-2 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-cta-600 md:ml-0">
+          <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5"/><path d="M12 15V3"/></svg>
+          Tải miễn phí
+        </a>
+      </nav>
+    </header>
+
+    <!-- Hero -->
+    <section id="top" class="relative overflow-hidden pt-32 pb-20 md:pt-40">
+      <div class="pointer-events-none absolute inset-0 -z-10">
+        <div class="absolute left-1/2 top-0 h-[520px] w-[820px] -translate-x-1/2 rounded-full bg-gradient-to-b from-brand-100 to-transparent blur-3xl opacity-70"></div>
+      </div>
+      <div class="mx-auto grid max-w-6xl items-center gap-12 px-5 lg:grid-cols-2">
+        <div>
+          <span class="inline-flex items-center gap-2 rounded-full border border-brand-200 bg-brand-50 px-3 py-1 text-xs font-semibold text-brand-700">
+            <span class="h-1.5 w-1.5 rounded-full bg-brand-500"></span> Miễn phí · Chạy ngoại tuyến · Tiếng Việt
+          </span>
+          <h1 class="mt-5 text-4xl font-extrabold leading-[1.1] tracking-tight text-ink md:text-5xl">
+            Xử lý &amp; bóc tách hợp đồng PDF<br /><span class="text-brand-600">bằng AI, ngay trên máy bạn</span>
+          </h1>
+          <p class="mt-5 max-w-xl text-lg leading-relaxed text-ink-muted">
+            OCR bóc tách hợp đồng tiếng Việt, sửa chữ gốc, ghép/tách/nén, ký số, watermark — tất cả chạy ngoại tuyến,
+            không tải tài liệu lên đám mây. Bảo mật tuyệt đối cho dữ liệu nhạy cảm.
+          </p>
+          <div class="mt-8 flex flex-wrap items-center gap-3">
+            <a href="#download" class="inline-flex cursor-pointer items-center gap-2 rounded-xl bg-cta-500 px-6 py-3.5 font-semibold text-white shadow-soft transition-colors hover:bg-cta-600">
+              <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5"/><path d="M12 15V3"/></svg>
+              Tải cho Windows
+            </a>
+            <a href="#features" class="inline-flex cursor-pointer items-center gap-2 rounded-xl border border-slate-300 bg-white px-6 py-3.5 font-semibold text-ink transition-colors hover:bg-slate-50">
+              Xem tính năng
+            </a>
+          </div>
+          <div class="mt-6 flex flex-wrap items-center gap-x-6 gap-y-2 text-sm text-ink-muted">
+            <span class="inline-flex items-center gap-1.5"><svg class="h-4 w-4 text-brand-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg> Không cần internet</span>
+            <span class="inline-flex items-center gap-1.5"><svg class="h-4 w-4 text-brand-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg> Dữ liệu ở lại trên máy</span>
+            <span class="inline-flex items-center gap-1.5"><svg class="h-4 w-4 text-brand-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg> Bản portable không cần cài</span>
+          </div>
+        </div>
+
+        <!-- App window mockup -->
+        <div class="relative">
+          <div class="absolute -inset-4 -z-10 rounded-3xl bg-gradient-to-tr from-brand-100 via-white to-orange-50 blur-2xl"></div>
+          <div class="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-card">
+            <div class="flex items-center gap-1.5 border-b border-slate-100 bg-slate-50 px-4 py-3">
+              <span class="h-3 w-3 rounded-full bg-red-400"></span>
+              <span class="h-3 w-3 rounded-full bg-amber-400"></span>
+              <span class="h-3 w-3 rounded-full bg-green-400"></span>
+              <span class="ml-3 text-xs font-medium text-ink-muted">Nabu PDF — hop-dong-2026.pdf</span>
+            </div>
+            <div class="flex">
+              <div class="hidden w-20 shrink-0 space-y-2 border-r border-slate-100 bg-slate-50/60 p-2 sm:block">
+                <div class="aspect-[3/4] rounded-md border-2 border-brand-500 bg-white shadow-sm"></div>
+                <div class="aspect-[3/4] rounded-md border border-slate-200 bg-white"></div>
+                <div class="aspect-[3/4] rounded-md border border-slate-200 bg-white"></div>
+              </div>
+              <div class="flex-1 p-4">
+                <div class="mb-3 flex flex-wrap gap-1.5">
+                  <span class="rounded-md bg-brand-600 px-2.5 py-1 text-[11px] font-semibold text-white">Bóc tách AI</span>
+                  <span class="rounded-md bg-slate-100 px-2.5 py-1 text-[11px] font-medium text-ink-muted">Sửa chữ</span>
+                  <span class="rounded-md bg-slate-100 px-2.5 py-1 text-[11px] font-medium text-ink-muted">Ghép</span>
+                  <span class="rounded-md bg-slate-100 px-2.5 py-1 text-[11px] font-medium text-ink-muted">Nén</span>
+                </div>
+                <div class="rounded-lg border border-slate-200 p-4">
+                  <div class="h-2.5 w-2/3 rounded bg-slate-200"></div>
+                  <div class="mt-2.5 h-2 w-full rounded bg-slate-100"></div>
+                  <div class="mt-1.5 h-2 w-11/12 rounded bg-slate-100"></div>
+                  <div class="mt-1.5 h-2 w-4/5 rounded bg-slate-100"></div>
+                  <div class="mt-4 grid grid-cols-2 gap-2">
+                    <div class="rounded-md bg-brand-50 p-2">
+                      <div class="text-[10px] font-medium text-brand-700">Bên A</div>
+                      <div class="mt-1 h-2 w-3/4 rounded bg-brand-200"></div>
+                    </div>
+                    <div class="rounded-md bg-orange-50 p-2">
+                      <div class="text-[10px] font-medium text-cta-600">Giá trị HĐ</div>
+                      <div class="mt-1 h-2 w-2/3 rounded bg-orange-200"></div>
+                    </div>
+                  </div>
+                </div>
+                <div class="mt-3 flex items-center justify-between rounded-lg bg-slate-900 px-3 py-2">
+                  <span class="text-[11px] font-medium text-slate-300">Đã bóc tách 12 trường · xuất Excel</span>
+                  <span class="rounded bg-brand-500 px-2 py-0.5 text-[10px] font-semibold text-white">Xong</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Trust strip -->
+    <section class="border-y border-slate-100 bg-slate-50/60">
+      <div class="mx-auto grid max-w-6xl grid-cols-2 gap-6 px-5 py-10 sm:grid-cols-4">
+        <div><div class="text-2xl font-extrabold text-brand-700">100%</div><div class="text-sm text-ink-muted">Ngoại tuyến</div></div>
+        <div><div class="text-2xl font-extrabold text-brand-700">AI</div><div class="text-sm text-ink-muted">OCR tiếng Việt</div></div>
+        <div><div class="text-2xl font-extrabold text-brand-700">12+</div><div class="text-sm text-ink-muted">Công cụ PDF</div></div>
+        <div><div class="text-2xl font-extrabold text-brand-700">Free</div><div class="text-sm text-ink-muted">Cho Windows</div></div>
+      </div>
+    </section>
+
+    <!-- Features -->
+    <section id="features" class="mx-auto max-w-6xl px-5 py-20 md:py-28">
+      <div class="mx-auto max-w-2xl text-center">
+        <h2 class="text-3xl font-extrabold tracking-tight md:text-4xl">Mọi việc với PDF, trong một app</h2>
+        <p class="mt-4 text-lg text-ink-muted">Từ bóc tách hợp đồng bằng AI đến chỉnh sửa, ký số và nén — không cần nhiều phần mềm rời rạc.</p>
+      </div>
+      <div class="mt-14 grid gap-5 sm:grid-cols-2 lg:grid-cols-3" id="feature-grid"></div>
+    </section>
+
+    <!-- License / serial key -->
+    <section id="license" class="bg-slate-900 py-20 text-white md:py-28">
+      <div class="mx-auto max-w-6xl px-5">
+        <div class="grid items-center gap-12 lg:grid-cols-2">
+          <div>
+            <span class="inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/5 px-3 py-1 text-xs font-semibold text-brand-200">Chính sách bản quyền</span>
+            <h2 class="mt-5 text-3xl font-extrabold tracking-tight md:text-4xl">Miễn phí — chỉ cần serial key</h2>
+            <p class="mt-4 text-lg leading-relaxed text-slate-300">
+              Giai đoạn đầu Nabu PDF <b class="text-white">miễn phí</b>. Serial key chỉ dùng để
+              <b class="text-white">kiểm soát số máy cài đặt</b> — kích hoạt một lần qua mạng rồi chạy ngoại tuyến.
+              Bạn quản lý key, số máy và thu hồi từ xa bất cứ lúc nào.
+            </p>
+            <ul class="mt-6 space-y-3 text-slate-300">
+              <li class="flex gap-3"><svg class="mt-0.5 h-5 w-5 shrink-0 text-brand-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg> Kích hoạt online một lần, sau đó dùng offline</li>
+              <li class="flex gap-3"><svg class="mt-0.5 h-5 w-5 shrink-0 text-brand-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg> Giới hạn số máy theo từng key</li>
+              <li class="flex gap-3"><svg class="mt-0.5 h-5 w-5 shrink-0 text-brand-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg> Khóa theo máy (HWID), không lộ dữ liệu máy</li>
+              <li class="flex gap-3"><svg class="mt-0.5 h-5 w-5 shrink-0 text-brand-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg> Thu hồi / gỡ máy từ xa</li>
+            </ul>
+          </div>
+          <div class="rounded-2xl border border-white/10 bg-white/5 p-6 backdrop-blur">
+            <div class="text-sm font-medium text-slate-400">Kích hoạt trong ứng dụng</div>
+            <div class="mt-3 rounded-xl bg-slate-950/60 p-4 font-mono text-sm">
+              <div class="text-slate-500">⚙ Cài đặt → Bản quyền</div>
+              <div class="mt-2 flex items-center gap-2">
+                <span class="rounded bg-slate-800 px-2 py-1 text-brand-300">NABU1·xxxx·xxxx</span>
+                <span class="rounded bg-brand-500 px-2 py-1 text-white">Kích hoạt</span>
+              </div>
+              <div class="mt-3 text-xs text-slate-500">Mã máy (HWID): <span class="text-slate-300">3f9a1c2b7e4d8a06</span></div>
+            </div>
+            <p class="mt-4 text-sm text-slate-400">Cần key? Liên hệ qua email bên dưới — bạn sẽ nhận key theo số máy cần dùng.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Download -->
+    <section id="download" class="mx-auto max-w-6xl px-5 py-20 md:py-28">
+      <div class="overflow-hidden rounded-3xl border border-slate-200 bg-gradient-to-br from-brand-50 via-white to-orange-50 p-8 shadow-card md:p-12">
+        <div class="grid items-center gap-10 lg:grid-cols-2">
+          <div>
+            <h2 class="text-3xl font-extrabold tracking-tight md:text-4xl">Tải Nabu PDF cho Windows</h2>
+            <p class="mt-4 text-lg text-ink-muted">Phiên bản <span id="dl-version" class="font-semibold text-brand-700">mới nhất</span>. Hỗ trợ Windows 10/11 (64-bit). Lần đầu chạy tải mô hình OCR (~1 lần cần mạng).</p>
+            <div class="mt-7 flex flex-col gap-3 sm:flex-row">
+              <a id="dl-installer" href="https://github.com/darkend16987/NabuPDF/releases/latest" class="inline-flex cursor-pointer items-center justify-center gap-2 rounded-xl bg-cta-500 px-6 py-3.5 font-semibold text-white shadow-soft transition-colors hover:bg-cta-600">
+                <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5"/><path d="M12 15V3"/></svg>
+                Bản cài đặt (.exe)
+              </a>
+              <a id="dl-portable" href="https://github.com/darkend16987/NabuPDF/releases/latest" class="inline-flex cursor-pointer items-center justify-center gap-2 rounded-xl border border-slate-300 bg-white px-6 py-3.5 font-semibold text-ink transition-colors hover:bg-slate-50">
+                Bản portable (không cài)
+              </a>
+            </div>
+            <p class="mt-4 text-sm text-ink-muted">Cập nhật tự động (OTA) cho bản cài đặt · <a href="https://github.com/darkend16987/NabuPDF/releases" class="font-medium text-brand-700 underline-offset-2 hover:underline">Tất cả phiên bản</a></p>
+          </div>
+          <div class="grid grid-cols-2 gap-4">
+            <div class="rounded-xl border border-slate-200 bg-white p-4"><div class="text-sm font-semibold text-ink">Windows 10/11</div><div class="mt-1 text-xs text-ink-muted">64-bit</div></div>
+            <div class="rounded-xl border border-slate-200 bg-white p-4"><div class="text-sm font-semibold text-ink">~400 MB</div><div class="mt-1 text-xs text-ink-muted">Đã gồm engine OCR</div></div>
+            <div class="rounded-xl border border-slate-200 bg-white p-4"><div class="text-sm font-semibold text-ink">Ngoại tuyến</div><div class="mt-1 text-xs text-ink-muted">Sau lần tải model đầu</div></div>
+            <div class="rounded-xl border border-slate-200 bg-white p-4"><div class="text-sm font-semibold text-ink">Miễn phí</div><div class="mt-1 text-xs text-ink-muted">Cần serial key</div></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- About + Contact -->
+    <section id="contact" class="mx-auto max-w-6xl px-5 pb-24">
+      <div class="grid gap-6 lg:grid-cols-2">
+        <div class="rounded-2xl border border-slate-200 bg-white p-8 shadow-card">
+          <h3 class="text-xl font-bold">Về nhà phát triển</h3>
+          <p class="mt-3 leading-relaxed text-ink-muted">
+            Nabu PDF được phát triển bởi <b class="text-ink">Tạ Hoàng Nam</b> — nhà phát triển độc lập (independent developer).
+            Mục tiêu: một bộ công cụ PDF tiếng Việt mạnh, riêng tư, chạy hoàn toàn trên máy người dùng.
+          </p>
+          <a href="https://github.com/darkend16987/NabuPDF" class="mt-5 inline-flex cursor-pointer items-center gap-2 text-sm font-semibold text-brand-700 hover:underline">
+            <svg class="h-4 w-4" viewBox="0 0 24 24" fill="currentColor"><path d="M12 .5C5.7.5.5 5.7.5 12c0 5.1 3.3 9.4 7.9 10.9.6.1.8-.3.8-.6v-2c-3.2.7-3.9-1.5-3.9-1.5-.5-1.3-1.3-1.7-1.3-1.7-1.1-.7.1-.7.1-.7 1.2.1 1.8 1.2 1.8 1.2 1 1.8 2.8 1.3 3.5 1 .1-.8.4-1.3.7-1.6-2.6-.3-5.3-1.3-5.3-5.7 0-1.3.5-2.3 1.2-3.1-.1-.3-.5-1.5.1-3.1 0 0 1-.3 3.3 1.2a11.5 11.5 0 0 1 6 0C17 4.7 18 5 18 5c.6 1.6.2 2.8.1 3.1.8.8 1.2 1.8 1.2 3.1 0 4.4-2.7 5.4-5.3 5.7.4.4.8 1.1.8 2.2v3.3c0 .3.2.7.8.6 4.6-1.5 7.9-5.8 7.9-10.9C23.5 5.7 18.3.5 12 .5Z"/></svg>
+            Mã nguồn &amp; phát hành trên GitHub
+          </a>
+        </div>
+        <div class="rounded-2xl border border-slate-200 bg-white p-8 shadow-card">
+          <h3 class="text-xl font-bold">Liên hệ</h3>
+          <p class="mt-3 text-ink-muted">Cần serial key, báo lỗi hoặc hợp tác? Gửi email:</p>
+          <a href="mailto:hoangnam.mng@gmail.com?subject=Nabu%20PDF%20-%20Li%C3%AAn%20h%E1%BB%87" class="mt-4 inline-flex cursor-pointer items-center gap-2 rounded-xl bg-slate-900 px-5 py-3 font-semibold text-white transition-colors hover:bg-slate-800">
+            <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="16" x="2" y="4" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg>
+            hoangnam.mng@gmail.com
+          </a>
+          <p class="mt-4 text-sm text-ink-muted">Hoặc tạo issue trên GitHub để theo dõi.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- Footer -->
+    <footer class="border-t border-slate-200 bg-slate-50">
+      <div class="mx-auto flex max-w-6xl flex-col gap-4 px-5 py-10 sm:flex-row sm:items-center">
+        <div class="flex items-center gap-2.5">
+          <img src="/assets/nabu-icon.png" alt="" class="h-7 w-7 rounded-md" />
+          <span class="font-bold">Nabu PDF</span>
+          <span class="text-sm text-ink-muted">· developed by Nam Ta</span>
+        </div>
+        <nav class="flex flex-wrap gap-4 text-sm text-ink-muted sm:ml-auto">
+          <a href="#features" class="hover:text-ink">Tính năng</a>
+          <a href="#download" class="hover:text-ink">Tải về</a>
+          <a href="/chinh-sach.html" class="hover:text-ink">Chính sách</a>
+          <a href="/admin" class="hover:text-ink">Admin</a>
+          <a href="mailto:hoangnam.mng@gmail.com" class="hover:text-ink">Liên hệ</a>
+        </nav>
+      </div>
+      <div class="border-t border-slate-200 py-5 text-center text-xs text-ink-muted">© <span id="year"></span> Tạ Hoàng Nam · Nabu PDF. Mọi quyền được bảo lưu.</div>
+    </footer>
+
+    <script src="/app.js"></script>
+  </body>
+</html>

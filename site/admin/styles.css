@@ -25,6 +25,8 @@ input:focus, select:focus { outline: 2px solid var(--accent); }
 .login { min-height: 100vh; display: grid; place-items: center; }
 .login .card { background: var(--panel); border: 1px solid var(--line); border-radius: 14px;
   padding: 28px; width: 360px; display: flex; flex-direction: column; gap: 10px; }
+.login-or { display: flex; align-items: center; gap: 10px; color: var(--muted); font-size: 12px; margin: 2px 0; }
+.login-or::before, .login-or::after { content: ""; flex: 1; height: 1px; background: var(--line); }
 
 /* Topbar */
 .topbar { display: flex; align-items: center; gap: 16px; padding: 10px 18px;
