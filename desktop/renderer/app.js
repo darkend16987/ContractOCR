@@ -1607,6 +1607,11 @@ const LIC_MSG = {
 function renderLicense(s) {
   licState = s;
   updateToolbar();
+  // Free/open build (enforce off): hide the whole activation block — there is no
+  // license to manage.
+  const sec = $("lic-section");
+  if (sec) sec.hidden = !s.enforce;
+  if (!s.enforce) return;
   const badge = $("lic-badge");
   const status = $("lic-status");
   const inputRow = $("lic-input-row");
@@ -1950,6 +1955,19 @@ updateToolbar();
 // license: install the pro-feature gate, then load current status
 installLicenseGuard();
 loadLicense();
+
+// About: open license + source-repo links in the default browser.
+for (const [id, url] of [
+  ["about-license-link", "https://www.gnu.org/licenses/agpl-3.0.html"],
+  ["about-source-link", "https://github.com/darkend16987/NabuPDF"],
+]) {
+  const a = $(id);
+  if (a)
+    a.addEventListener("click", (e) => {
+      e.preventDefault();
+      window.desktop.openExternal(url);
+    });
+}
 
 // ---- auto-update status --------------------------------------------------
 // Only fires for the installed (NSIS) build; portable/dev stay silent. The

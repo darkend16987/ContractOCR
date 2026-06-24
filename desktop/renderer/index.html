@@ -387,29 +387,33 @@
       <div class="modal-card">
         <h3>Cài đặt</h3>
 
-        <div class="set-row-between">
-          <div>
-            <b>Bản quyền</b>
-            <p class="cmp-note" id="lic-status" style="margin:2px 0 0">Đang kiểm tra…</p>
+        <!-- License/activation block. Hidden when enforcement is off (free/open
+             build) by renderLicense(). -->
+        <div id="lic-section" hidden>
+          <div class="set-row-between">
+            <div>
+              <b>Bản quyền</b>
+              <p class="cmp-note" id="lic-status" style="margin:2px 0 0">Đang kiểm tra…</p>
+            </div>
+            <span id="lic-badge" class="badge"></span>
           </div>
-          <span id="lic-badge" class="badge"></span>
-        </div>
-        <div class="key-row" id="lic-input-row">
-          <input id="lic-key" type="text" placeholder="Dán license key (NABU1…)" autocomplete="off" spellcheck="false" />
-          <button id="lic-activate" class="primary">Kích hoạt</button>
-        </div>
-        <button id="lic-remove" class="ghost" hidden style="margin-top:8px">Gỡ bản quyền</button>
-        <div class="set-row-between" id="lic-hwid-row" style="margin-top:10px">
-          <div>
-            <b>Mã máy (HWID)</b>
-            <p class="cmp-note" style="margin:2px 0 0">Gửi mã này cho nhà phát hành để được cấp key khóa theo máy.</p>
+          <div class="key-row" id="lic-input-row">
+            <input id="lic-key" type="text" placeholder="Dán license key (NABU1…)" autocomplete="off" spellcheck="false" />
+            <button id="lic-activate" class="primary">Kích hoạt</button>
           </div>
-          <span class="key-row">
-            <code id="lic-hwid" class="hwid" title="Mã định danh máy này">…</code>
-            <button id="lic-hwid-copy" type="button" class="ghost" title="Sao chép mã máy">Copy</button>
-          </span>
+          <button id="lic-remove" class="ghost" hidden style="margin-top:8px">Gỡ bản quyền</button>
+          <div class="set-row-between" id="lic-hwid-row" style="margin-top:10px">
+            <div>
+              <b>Mã máy (HWID)</b>
+              <p class="cmp-note" style="margin:2px 0 0">Gửi mã này cho nhà phát hành để được cấp key khóa theo máy.</p>
+            </div>
+            <span class="key-row">
+              <code id="lic-hwid" class="hwid" title="Mã định danh máy này">…</code>
+              <button id="lic-hwid-copy" type="button" class="ghost" title="Sao chép mã máy">Copy</button>
+            </span>
+          </div>
+          <hr class="set-div" />
         </div>
-        <hr class="set-div" />
 
         <p class="cmp-note">
           Tính năng <b>Bóc tách</b> dùng AI Google Gemini để đọc hợp đồng nên cần API key.
@@ -460,6 +464,12 @@
             Phát triển bởi <b>Tạ Hoàng Nam</b> — nhà phát triển độc lập (independent developer).
           </p>
           <p class="cmp-note" style="margin:6px 0 0">© 2026 Tạ Hoàng Nam · liên hệ: hoangnam.mng@gmail.com</p>
+          <p class="cmp-note" style="margin:6px 0 0">
+            Phần mềm <b>miễn phí &amp; mã nguồn mở</b> — giấy phép
+            <a href="#" id="about-license-link" title="GNU AGPL v3.0">GNU AGPL v3.0</a>.
+            Mã nguồn:
+            <a href="#" id="about-source-link" title="https://github.com/darkend16987/NabuPDF">github.com/darkend16987/NabuPDF</a>.
+          </p>
         </div>
 
         <div class="modal-actions">

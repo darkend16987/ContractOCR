@@ -27,7 +27,11 @@ const { app, ipcMain } = require("electron");
 const { createHash, createPublicKey, verify } = require("crypto");
 
 // On = renderer locks pro features behind a valid license.
-const ENFORCE = true;
+// OFF since v0.2.0: the app is fully free and open-source (AGPL-3.0). No serial
+// key / machine control. enforce:false propagates to the renderer so every
+// feature is unlocked and the activation UI is hidden. Flip back to true only if
+// a paid/closed edition is ever reintroduced (which AGPL would then constrain).
+const ENFORCE = false;
 
 // License server (Supabase). The anon key is public by design (safe to ship). An
 // empty anon key disables all server calls → pure-offline mode. Override via env

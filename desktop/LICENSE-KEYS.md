@@ -71,9 +71,16 @@ PII + keys). Back it up alongside the private key.
 
 ## Enforcement
 
-Feature-gating is **ON** (`ENFORCE = true` in `src/license.js`). 8 pro features are
-locked until a valid key is activated: bóc tách AI, sửa chữ, chỉnh sửa, ghép, chèn,
-tách, searchable, nén. Free: open/save/rotate/delete/zoom/undo/redo + Settings.
+**OFF since v0.2.0** (`ENFORCE = false` in `src/license.js`). The app is now fully
+free and open-source (AGPL-3.0): no serial key, no machine control, every feature
+unlocked. `enforce:false` propagates to the renderer, which unlocks all gated
+buttons and hides the activation UI (`#lic-section`). The activation/license-server
+code below is retained but dormant — re-enable only if a paid/closed edition is
+reintroduced (which AGPL would then constrain; see repo-root LICENSE).
+
+When it was ON (`ENFORCE = true`), 8 pro features were locked until a valid key was
+activated: bóc tách AI, sửa chữ, chỉnh sửa, ghép, chèn, tách, searchable, nén.
+Free: open/save/rotate/delete/zoom/undo/redo + Settings.
 
 Status shape from `await window.desktop.license.get()`:
 `{ state: "licensed" | "unlicensed" | "expired" | "invalid" | "machine", reason?, enforce }`

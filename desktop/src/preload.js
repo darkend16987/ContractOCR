@@ -57,4 +57,7 @@ contextBridge.exposeInMainWorld("desktop", {
 
   // Reveal a file/folder in the OS file manager (breadcrumb navigation).
   showInFolder: (fullPath) => ipcRenderer.invoke("shell:show-in-folder", fullPath),
+
+  // Open an http(s) URL in the default browser (About: license + source links).
+  openExternal: (url) => ipcRenderer.invoke("shell:open-external", url),
 });

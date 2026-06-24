@@ -175,4 +175,29 @@ gcloud run deploy nabu-pdf \
 
 ## License
 
-MIT
+**GNU Affero General Public License v3.0 (AGPL-3.0)** — see [LICENSE](LICENSE).
+
+© 2026 Tạ Hoàng Nam. Phần mềm **miễn phí & mã nguồn mở**, không có khóa serial /
+kiểm soát máy. Bạn được tự do dùng, sửa, phân phối lại theo điều khoản AGPL-3.0;
+mọi bản phân phối (kể cả dạng dịch vụ mạng) phải kèm/đề nghị mã nguồn tương ứng
+theo cùng giấy phép.
+
+### Vì sao AGPL-3.0?
+
+Ứng dụng nhúng **PyMuPDF** (render, redaction, sửa chữ gốc, OCR text layer…),
+vốn cấp phép **AGPL-3.0** (hoặc giấy phép thương mại từ Artifex). Để phân phối
+hợp lệ mà không mua giấy phép thương mại, toàn bộ tác phẩm kết hợp phải là
+AGPL-3.0 và mở mã nguồn. (Trước đây bản đóng + khóa serial là **vi phạm** AGPL —
+nay đã mở mã + bỏ khóa để tuân thủ.)
+
+### Thư viện bên thứ ba
+
+| Thành phần | Giấy phép |
+|------------|-----------|
+| PyMuPDF (fitz) | AGPL-3.0 / Artifex commercial |
+| PaddleOCR · VietOCR · pdf.js | Apache-2.0 |
+| pdf-lib · Electron | MIT |
+| PyTorch | BSD-3-Clause |
+| matplotlib | Matplotlib (BSD-style) |
+
+Các giấy phép permissive ở trên tương thích khi kết hợp vào tác phẩm AGPL-3.0.

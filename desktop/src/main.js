@@ -271,6 +271,15 @@ ipcMain.handle("shell:show-in-folder", (_e, fullPath) => {
   }
 });
 
+// Open an http(s) link in the user's default browser. Used by the About
+// section (license + source-repo links). Restricted to http/https so a
+// compromised renderer can't open arbitrary local files/protocols.
+ipcMain.handle("shell:open-external", (_e, url) => {
+  if (typeof url !== "string" || !/^https?:\/\//i.test(url)) return false;
+  shell.openExternal(url);
+  return true;
+});
+
 // ---- shutdown ------------------------------------------------------------
 
 app.on("window-all-closed", () => {
