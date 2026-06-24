@@ -677,6 +677,7 @@ function wireThumb(div) {
   div.addEventListener("drop", async (e) => {
     e.preventDefault();
     e.stopPropagation();
+    clearDropCue(); // stopPropagation hides this drop from the window handler
     if (fileDrag(e)) {
       const r = div.getBoundingClientRect();
       const at = e.clientY > r.top + r.height / 2 ? i + 1 : i;
@@ -1912,18 +1913,26 @@ window.desktop.onMenuCommand((cmd) => {
 });
 
 // drag-drop a PDF file onto the window to open it
+const clearDropCue = () => $("viewer").classList.remove("dropping");
 window.addEventListener("dragover", (e) => {
   if (!e.dataTransfer || ![...e.dataTransfer.types].includes("Files")) return;
   e.preventDefault();
   $("viewer").classList.add("dropping");
 });
+// Clear the cue whenever the drag truly leaves the window (relatedTarget null in
+// Chromium) or the drag ends/cancels anywhere. The old check only matched
+// document.documentElement, so leaving via a child element or cancelling left
+// the dashed outline stuck forever.
 window.addEventListener("dragleave", (e) => {
-  if (e.target === document.documentElement) $("viewer").classList.remove("dropping");
+  if (!e.relatedTarget) clearDropCue();
 });
+window.addEventListener("dragend", clearDropCue);
 window.addEventListener("drop", async (e) => {
+  // Always clear the cue first — even for internal/non-file drops, or drops a
+  // child handler stopped propagating, so the outline never gets stranded.
+  clearDropCue();
   if (!e.dataTransfer || ![...e.dataTransfer.types].includes("Files")) return;
   e.preventDefault();
-  $("viewer").classList.remove("dropping");
   const f = [...e.dataTransfer.files].find((x) => x.name.toLowerCase().endsWith(".pdf"));
   if (f) {
     const buf = await f.arrayBuffer();
