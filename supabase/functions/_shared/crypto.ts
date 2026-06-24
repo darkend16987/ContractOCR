@@ -38,12 +38,16 @@ async function getPriv(): Promise<CryptoKey> {
   return privKey;
 }
 
+// Public verify key — not a secret (it's the same one shipped in the desktop
+// app), so it's inlined here. Only LICENSE_PRIVATE_KEY needs to be a secret.
+const PUBLIC_KEY_PEM = `-----BEGIN PUBLIC KEY-----
+MCowBQYDK2VwAyEAlgq1j3lABmH3qzob4J14ZqJYiceLInaoXjvNvrmBD5A=
+-----END PUBLIC KEY-----`;
+
 let pubKey: CryptoKey | null = null;
 async function getPub(): Promise<CryptoKey> {
   if (pubKey) return pubKey;
-  const pem = Deno.env.get("LICENSE_PUBLIC_KEY");
-  if (!pem) throw new Error("LICENSE_PUBLIC_KEY not set");
-  pubKey = await crypto.subtle.importKey("spki", pemToDer(pem), { name: "Ed25519" }, false, ["verify"]);
+  pubKey = await crypto.subtle.importKey("spki", pemToDer(PUBLIC_KEY_PEM), { name: "Ed25519" }, false, ["verify"]);
   return pubKey;
 }
 

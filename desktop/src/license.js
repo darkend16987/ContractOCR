@@ -34,7 +34,9 @@ const ENFORCE = true;
 // for testing. Fill SUPABASE_ANON_KEY once the project keys are known.
 const SERVER = {
   url: process.env.NABU_LICENSE_URL || "https://gaqwijsudxpfydruozmd.supabase.co",
-  anon: process.env.NABU_LICENSE_ANON || "", // <-- paste Supabase anon key here
+  anon:
+    process.env.NABU_LICENSE_ANON ||
+    "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImdhcXdpanN1ZHhwZnlkcnVvem1kIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODIyNTgzOTUsImV4cCI6MjA5NzgzNDM5NX0.l7nna-AwNWq23Ak1VqqwbaBDI08msaFsePsyeacU6C0",
 };
 
 const TTL_REFRESH_WINDOW = 2 * 86400; // refresh when < 2 days of token life left

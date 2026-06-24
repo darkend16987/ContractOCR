@@ -66,7 +66,10 @@ create index if not exists audit_license_idx         on public.audit_log(license
 -- Seat usage view — active activations per license vs the cap.
 -- ---------------------------------------------------------------------------
 
-create or replace view public.license_overview as
+-- security_invoker so the view runs with the QUERYING user's RLS (not the
+-- owner's) — without this the view would bypass is_admin() and leak every row.
+create or replace view public.license_overview
+with (security_invoker = true) as
 select
   l.*,
   coalesce(a.active_seats, 0) as active_seats,
@@ -110,9 +113,6 @@ create policy licenses_admin_read   on public.licenses   for select to authentic
 create policy activations_admin_read on public.activations for select to authenticated using (public.is_admin());
 create policy audit_admin_read       on public.audit_log  for select to authenticated using (public.is_admin());
 create policy admins_admin_read      on public.admins     for select to authenticated using (public.is_admin());
-
--- license_overview is a view; it runs with the querying user's RLS (security
--- invoker by default in PG15+), so the underlying table policies apply.
 
 -- ---------------------------------------------------------------------------
 -- Seed the first superadmin. Sign in to the admin app with this email (magic
