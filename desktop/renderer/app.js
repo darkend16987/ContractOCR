@@ -1567,9 +1567,41 @@ function licReason(r) {
       hwid: "key dành cho máy khác",
       payload: "dữ liệu key hỏng",
       store: "không lưu được key",
+      network: "không kết nối được máy chủ — cần internet để kích hoạt lần đầu",
+      seat_limit: "key đã đạt giới hạn số máy",
+      revoked: "key đã bị thu hồi",
+      suspended: "key đang bị tạm khóa",
+      deactivated: "máy này đã bị gỡ kích hoạt từ xa",
+      unknown: "không tìm thấy key trên máy chủ",
+      not_configured: "chưa cấu hình máy chủ license",
     }[r] || "không rõ"
   );
 }
+
+// Badge label + CSS class per status state.
+const LIC_BADGE = {
+  licensed: ["Đã kích hoạt", "ready"],
+  unlicensed: ["Chưa kích hoạt", "starting"],
+  expired: ["Hết hạn", "error"],
+  machine: ["Sai máy", "error"],
+  revoked: ["Bị thu hồi", "error"],
+  suspended: ["Tạm khóa", "error"],
+  deactivated: ["Gỡ từ xa", "error"],
+  seat: ["Hết slot máy", "error"],
+  invalid: ["Không hợp lệ", "error"],
+};
+
+// Status-line text for non-licensed states.
+const LIC_MSG = {
+  expired: "Bản quyền đã hết hạn — nhập key mới.",
+  machine: "Key này được khóa cho máy khác. Dùng đúng máy đã đăng ký, hoặc xin cấp lại theo mã máy bên dưới.",
+  revoked: "Key đã bị thu hồi. Liên hệ nhà phát hành.",
+  suspended: "Key đang bị tạm khóa. Liên hệ nhà phát hành.",
+  deactivated: "Máy này đã bị gỡ kích hoạt từ xa. Liên hệ nhà phát hành hoặc kích hoạt lại.",
+  seat: "Key đã đạt giới hạn số máy. Gỡ bớt một máy hoặc nâng số máy.",
+  invalid: "Key không hợp lệ — nhập lại key.",
+  unlicensed: "Chưa kích hoạt bản quyền. Dán key để kích hoạt.",
+};
 
 function renderLicense(s) {
   licState = s;
@@ -1579,32 +1611,18 @@ function renderLicense(s) {
   const inputRow = $("lic-input-row");
   const remove = $("lic-remove");
   const licensed = s.state === "licensed";
-  badge.className =
-    "badge " + (licensed ? "ready" : s.state === "unlicensed" ? "starting" : "error");
-  badge.textContent = licensed
-    ? "Đã kích hoạt"
-    : s.state === "expired"
-      ? "Hết hạn"
-      : s.state === "machine"
-        ? "Sai máy"
-        : s.state === "invalid"
-          ? "Không hợp lệ"
-          : "Chưa kích hoạt";
+  const [label, cls] = LIC_BADGE[s.state] || LIC_BADGE.unlicensed;
+  badge.className = "badge " + cls;
+  badge.textContent = label;
   if (licensed) {
     const exp = s.exp ? "hạn " + new Date(s.exp * 1000).toLocaleDateString("vi-VN") : "vĩnh viễn";
     const who = s.name || s.email || "—";
-    status.textContent = `${who} · gói ${s.plan || "—"} · ${exp}`;
+    const grace = s.grace ? " · (ngoại tuyến — sẽ đồng bộ khi có mạng)" : "";
+    status.textContent = `${who} · gói ${s.plan || "—"} · ${exp}${grace}`;
     inputRow.hidden = true;
     remove.hidden = false;
   } else {
-    status.textContent =
-      s.state === "expired"
-        ? "Key đã hết hạn — nhập key mới."
-        : s.state === "machine"
-          ? "Key này được khóa cho máy khác. Dùng đúng máy đã đăng ký, hoặc xin cấp lại key theo mã máy bên dưới."
-          : s.state === "invalid"
-            ? "Key không hợp lệ — nhập lại key."
-            : "Chưa kích hoạt bản quyền. Dán key để kích hoạt.";
+    status.textContent = LIC_MSG[s.state] || LIC_MSG.unlicensed;
     inputRow.hidden = false;
     remove.hidden = true;
   }

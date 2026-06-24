@@ -167,8 +167,11 @@ Mô hình **local-first**: verify hoàn toàn ngoại tuyến, không server b�
   CLI cờ `--hwid`; Settings hiện "Mã máy (HWID)" để user gửi nhà phát hành.
   ⚠️ Vẫn bypass được (client-side patch) + không revoke được — chỉ chặn share thường.
 
-- [ ] **L.3** ▶️ **Hybrid: online activation MỘT lần** (mục tiêu kế). Giữ trải nghiệm offline
-  nhưng thêm sức mạnh thật của server (revoke + đếm seat). Luồng:
+- [~] **L.3** **Hybrid: online activation** — ✅ code trong repo (`/supabase` + `/admin` + client),
+  ⬜ chờ deploy + dán anon key. Stack: Supabase (Postgres+Auth+Edge Fn) + Vercel (admin UI), TTL token 7 ngày.
+  Còn lại: `supabase db push` + deploy 3 function + set 2 secret (LICENSE_PRIVATE/PUBLIC_KEY) +
+  dán anon key vào `desktop/src/license.js` `SERVER.anon` & `admin/config.js` + deploy admin lên Vercel.
+  Xem [supabase/README.md](supabase/README.md) + [admin/README.md](admin/README.md). Luồng thiết kế:
   1. App gửi `key + hwid` lên server activation **một lần** lúc kích hoạt.
   2. Server (DB) kiểm: key hợp lệ? chưa revoke? còn slot máy (seat-cap)? → ghi binding
      `{key → [hwid...]}`, cấp **activation token offline** (Ed25519, TTL dài vd 30–90 ngày, chứa hwid).

@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex" />
+    <title>Nabu PDF — Quản lý License</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <!-- Login -->
+    <section id="login" class="login" hidden>
+      <div class="card">
+        <h1>Nabu PDF · License Admin</h1>
+        <p class="muted">Chỉ superadmin. Đăng nhập bằng email đã được cấp quyền.</p>
+        <input id="login-email" type="email" placeholder="email@cua-ban.com" autocomplete="email" />
+        <button id="login-send" class="primary">Gửi link đăng nhập</button>
+        <p id="login-msg" class="muted small"></p>
+      </div>
+    </section>
+
+    <!-- App -->
+    <header id="topbar" class="topbar" hidden>
+      <b>Nabu PDF · License</b>
+      <nav class="tabs">
+        <button class="tab active" data-tab="licenses">Licenses</button>
+        <button class="tab" data-tab="audit">Nhật ký</button>
+        <button class="tab" data-tab="admins">Admins</button>
+      </nav>
+      <span class="spacer"></span>
+      <span id="who" class="muted small"></span>
+      <button id="signout" class="ghost">Đăng xuất</button>
+    </header>
+
+    <main id="app" hidden>
+      <!-- Licenses tab -->
+      <section id="tab-licenses" class="tabpane">
+        <div class="row">
+          <button id="btn-new" class="primary">+ Cấp key mới</button>
+          <input id="search" type="search" placeholder="Tìm theo tên / email / key_id / người nhận…" />
+          <button id="refresh" class="ghost">↻ Tải lại</button>
+        </div>
+        <table class="grid">
+          <thead>
+            <tr>
+              <th>Key ID</th><th>Người dùng</th><th>Gói</th><th>Máy</th>
+              <th>Hạn</th><th>Trạng thái</th><th></th>
+            </tr>
+          </thead>
+          <tbody id="lic-rows"></tbody>
+        </table>
+        <p id="lic-empty" class="muted" hidden>Chưa có license nào.</p>
+      </section>
+
+      <!-- Audit tab -->
+      <section id="tab-audit" class="tabpane" hidden>
+        <table class="grid">
+          <thead><tr><th>Thời gian</th><th>Người làm</th><th>Hành động</th><th>Chi tiết</th></tr></thead>
+          <tbody id="audit-rows"></tbody>
+        </table>
+      </section>
+
+      <!-- Admins tab -->
+      <section id="tab-admins" class="tabpane" hidden>
+        <div class="row">
+          <input id="admin-email" type="email" placeholder="email admin mới…" />
+          <button id="admin-add" class="primary">Thêm admin</button>
+        </div>
+        <table class="grid">
+          <thead><tr><th>Email</th><th>Thêm lúc</th><th></th></tr></thead>
+          <tbody id="admin-rows"></tbody>
+        </table>
+      </section>
+    </main>
+
+    <!-- Issue / detail drawer -->
+    <div id="drawer" class="drawer" hidden>
+      <div class="drawer-card" id="drawer-body"></div>
+    </div>
+    <div id="toast" class="toast" hidden></div>
+
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
+    <script src="config.js"></script>
+    <script src="app.js"></script>
+  </body>
+</html>

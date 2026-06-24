@@ -1,0 +1,16 @@
+# Supabase project config for the Nabu PDF license server.
+# Project ref: https://gaqwijsudxpfydruozmd.supabase.co
+project_id = "gaqwijsudxpfydruozmd"
+
+# activate + refresh are PUBLIC (the desktop app calls them with the anon key,
+# no user login). admin does its own Supabase-Auth JWT + allowlist check inside
+# the function, so verify_jwt is off here too (lets us return clean JSON 401/403
+# and handle CORS preflight ourselves).
+[functions.activate]
+verify_jwt = false
+
+[functions.refresh]
+verify_jwt = false
+
+[functions.admin]
+verify_jwt = false
