@@ -186,9 +186,8 @@ theo cùng giấy phép.
 
 Ứng dụng nhúng **PyMuPDF** (render, redaction, sửa chữ gốc, OCR text layer…),
 vốn cấp phép **AGPL-3.0** (hoặc giấy phép thương mại từ Artifex). Để phân phối
-hợp lệ mà không mua giấy phép thương mại, toàn bộ tác phẩm kết hợp phải là
-AGPL-3.0 và mở mã nguồn. (Trước đây bản đóng + khóa serial là **vi phạm** AGPL —
-nay đã mở mã + bỏ khóa để tuân thủ.)
+hợp lệ mà không mua giấy phép thương mại, toàn bộ tác phẩm kết hợp được phát
+hành dưới giấy phép AGPL-3.0 với mã nguồn mở.
 
 ### Thư viện bên thứ ba
 
