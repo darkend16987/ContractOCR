@@ -318,8 +318,11 @@ function boot() {
   }
   sb = supabase.createClient(CFG.SUPABASE_URL, CFG.SUPABASE_ANON_KEY);
   wire();
-  sb.auth.getSession().then(({ data }) => onSession(data.session));
-  sb.auth.onAuthStateChange((_e, session) => onSession(session));
+  // IMPORTANT: Defer onSession so it runs outside the Supabase auth
+  // navigator.lock scope. Without this, onSession → isAdmin() → getSession()
+  // tries to re-acquire the same exclusive lock → deadlock → blank page.
+  sb.auth.getSession().then(({ data }) => setTimeout(() => onSession(data.session), 0));
+  sb.auth.onAuthStateChange((_e, session) => setTimeout(() => onSession(session), 0));
 }
 
 boot();
