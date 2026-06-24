@@ -17,6 +17,11 @@ files:
 extraResources:
   - from: ../dist/sidecar
     to: sidecar
+  # License notices shipped alongside the binary (AGPL/Apache/MIT/BSD require it).
+  - from: ../LICENSE
+    to: LICENSE.txt
+  - from: ../THIRD-PARTY-LICENSES.txt
+    to: THIRD-PARTY-LICENSES.txt
 
 # Auto-update feed (electron-updater). Releases are published to GitHub
 # Releases; the NSIS installer self-updates from there. See RELEASE.md.

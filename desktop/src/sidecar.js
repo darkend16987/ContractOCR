@@ -96,9 +96,21 @@ async function startSidecar(token) {
 }
 
 function stopSidecar(sidecar) {
-  if (sidecar && sidecar.child && !sidecar.child.killed) {
-    sidecar.child.kill();
+  const child = sidecar && sidecar.child;
+  if (!child || child.killed) return;
+  // On Windows a plain SIGTERM to the launcher can orphan the real server
+  // process (PyInstaller onedir spawns a child) → a stray sidecar.exe keeps the
+  // resources/sidecar files locked (EBUSY on the next rebuild). taskkill /T kills
+  // the whole process tree. Elsewhere SIGTERM is enough.
+  if (process.platform === "win32" && child.pid) {
+    try {
+      spawn("taskkill", ["/pid", String(child.pid), "/T", "/F"], { stdio: "ignore" });
+      return;
+    } catch {
+      /* fall through to kill() */
+    }
   }
+  child.kill();
 }
 
 module.exports = { startSidecar, stopSidecar };

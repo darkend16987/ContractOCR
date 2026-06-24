@@ -1968,6 +1968,18 @@ for (const [id, url] of [
       window.desktop.openExternal(url);
     });
 }
+// About: open the bundled license notice files in the OS text viewer.
+for (const [id, which] of [
+  ["about-thirdparty-link", "thirdParty"],
+  ["about-agpl-file-link", "agpl"],
+]) {
+  const a = $(id);
+  if (a && window.desktop.openLicenses)
+    a.addEventListener("click", (e) => {
+      e.preventDefault();
+      window.desktop.openLicenses(which);
+    });
+}
 
 // ---- auto-update status --------------------------------------------------
 // Only fires for the installed (NSIS) build; portable/dev stay silent. The
@@ -2004,7 +2016,7 @@ function setUpdateStatusText(s) {
       text = "Bạn đang dùng bản mới nhất" + (s.version ? " (" + s.version + ")" : "") + ".";
       break;
     case "portable":
-      text = "Bản portable không tự cập nhật. Tải bản mới thủ công từ trang Releases trên GitHub.";
+      text = "Bản portable không tự cập nhật. Dùng bản cài đặt (.exe) để bật tự cập nhật, hoặc tải bản mới từ trang Releases trên GitHub.";
       break;
     case "dev":
       text = "Bản chạy thử (dev) không hỗ trợ tự cập nhật.";

@@ -60,4 +60,7 @@ contextBridge.exposeInMainWorld("desktop", {
 
   // Open an http(s) URL in the default browser (About: license + source links).
   openExternal: (url) => ipcRenderer.invoke("shell:open-external", url),
+
+  // Open a bundled license file: which = "agpl" | "thirdParty".
+  openLicenses: (which) => ipcRenderer.invoke("licenses:open", which),
 });

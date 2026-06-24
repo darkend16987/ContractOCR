@@ -49,18 +49,34 @@ TEMPLATE_LABELS = {
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Load OCR engine at startup."""
-    global ocr_engine
-    logger.info("Loading OCR engine (hybrid: PaddleOCR detect + VietOCR recognize)...")
-    try:
-        ocr_engine = create_engine("hybrid")
-        # Warm up by loading the models
-        logger.info("OCR engine ready")
-    except Exception as e:
-        logger.warning("Hybrid engine failed, falling back to auto: %s", e)
-        ocr_engine = create_engine("auto")
+    """No eager work — OCR models load lazily on first use (see _get_ocr).
+
+    Loading PaddleOCR + VietOCR costs ~GB of RAM and several seconds; doing it
+    at startup penalised every session even when the user only touched plain PDF
+    features. The engine now builds on the first OCR-dependent request instead.
+    """
     yield
     logger.info("Shutting down OCR server")
+
+
+def _get_ocr() -> BaseOCREngine:
+    """Lazily build the OCR engine on first use; cache it. Raises 503 on failure."""
+    global ocr_engine
+    if ocr_engine is None:
+        logger.info("Loading OCR engine (hybrid: PaddleOCR detect + VietOCR recognize)...")
+        try:
+            ocr_engine = create_engine("hybrid")
+            logger.info("OCR engine ready")
+        except Exception as e:
+            logger.warning("Hybrid engine failed, falling back to auto: %s", e)
+            try:
+                ocr_engine = create_engine("auto")
+            except Exception as e2:
+                raise HTTPException(
+                    status_code=503,
+                    detail=f"Không khởi tạo được engine OCR: {e2}",
+                )
+    return ocr_engine
 
 
 app = FastAPI(
@@ -144,7 +160,7 @@ class OCRResponse(BaseModel):
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "engine": "hybrid" if ocr_engine else "not_loaded"}
+    return {"status": "ok", "engine": "loaded" if ocr_engine else "lazy"}
 
 
 def _mask_key(key: str) -> str:
@@ -189,14 +205,13 @@ async def run_ocr(request: OCRRequest):
 
     Returns extracted text per page and concatenated full text.
     """
-    if not ocr_engine:
-        raise HTTPException(status_code=503, detail="OCR engine not loaded")
-
     if not request.images:
         raise HTTPException(status_code=400, detail="No images provided")
 
     if len(request.images) > 50:
         raise HTTPException(status_code=400, detail="Too many images (max 50)")
+
+    engine = _get_ocr()
 
     try:
         pages: list[OCRPageResult] = []
@@ -215,7 +230,7 @@ async def run_ocr(request: OCRRequest):
                 continue
 
             # Run OCR
-            text = ocr_engine.recognize(image)
+            text = engine.recognize(image)
             pages.append(OCRPageResult(page_number=page_num, text=text))
             all_texts.append(f"=== Trang {page_num} ===\n{text}")
 
@@ -275,9 +290,6 @@ async def extract(req: ExtractRequest):
     All pages are treated as one contract: their text is concatenated and a
     single record of fields is returned.
     """
-    if not ocr_engine:
-        raise HTTPException(status_code=503, detail="OCR engine not loaded")
-
     fields = _resolve_fields(req.template, req.custom_fields)
 
     # 1. Gather per-page text (from provided texts, or by running OCR).
@@ -291,6 +303,7 @@ async def extract(req: ExtractRequest):
             raise HTTPException(status_code=400, detail="No images or ocr_texts provided")
         if len(req.images) > 50:
             raise HTTPException(status_code=400, detail="Too many images (max 50)")
+        engine = _get_ocr()
         for i, img_base64 in enumerate(req.images):
             pn = req.page_numbers[i] if req.page_numbers and i < len(req.page_numbers) else i + 1
             try:
@@ -299,7 +312,7 @@ async def extract(req: ExtractRequest):
                 logger.error("Failed to decode image %d: %s", pn, e)
                 pages.append(OCRPageResult(page_number=pn, text=f"[Lỗi đọc ảnh: {e}]"))
                 continue
-            pages.append(OCRPageResult(page_number=pn, text=ocr_engine.recognize(img)))
+            pages.append(OCRPageResult(page_number=pn, text=engine.recognize(img)))
 
     full_text = "\n\n".join(p.text for p in pages).strip()
     if not full_text:
@@ -557,13 +570,12 @@ async def searchable(req: SearchableRequest):
     The original page content is preserved; OCR text is laid over each word's box
     with render mode 3 (invisible) so the output looks identical but is searchable.
     """
-    if not ocr_engine:
-        raise HTTPException(status_code=503, detail="OCR engine not loaded")
-
     try:
         import fitz  # PyMuPDF
     except ImportError:
         raise HTTPException(status_code=503, detail="PyMuPDF (fitz) chưa cài — không tạo được searchable PDF.")
+
+    engine = _get_ocr()
 
     font_path = _vietnamese_font()
     if not font_path:
@@ -595,7 +607,7 @@ async def searchable(req: SearchableRequest):
             pix = page.get_pixmap(dpi=dpi, alpha=False)
             image = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
             try:
-                boxes = ocr_engine.recognize_boxes(image)
+                boxes = engine.recognize_boxes(image)
             except NotImplementedError:
                 doc.close()
                 raise HTTPException(status_code=503, detail="Engine OCR hiện tại không hỗ trợ định vị (cần Hybrid/Paddle).")

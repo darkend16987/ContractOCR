@@ -3,7 +3,7 @@
 const path = require("path");
 const fs = require("fs");
 const crypto = require("crypto");
-const { app, BrowserWindow, Menu, ipcMain, dialog, shell } = require("electron");
+const { app, BrowserWindow, Menu, ipcMain, dialog, shell, session } = require("electron");
 const { startSidecar, stopSidecar } = require("./sidecar");
 const { initAutoUpdate } = require("./updater");
 const { initLicense } = require("./license");
@@ -48,6 +48,18 @@ function createWindow() {
 
   // Load the PDF UI immediately — no waiting on the heavy OCR sidecar.
   mainWindow.loadFile(path.join(RENDERER, "index.html"));
+
+  // Navigation hardening: this is a single local page. Block any attempt to
+  // navigate away or open new windows (defence-in-depth if the renderer is ever
+  // compromised, e.g. via a crafted PDF). External http(s) links go through the
+  // explicit shell:open-external IPC instead.
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    if (/^https?:\/\//i.test(url)) shell.openExternal(url);
+    return { action: "deny" };
+  });
+  mainWindow.webContents.on("will-navigate", (e, url) => {
+    if (url !== mainWindow.webContents.getURL()) e.preventDefault();
+  });
 
   mainWindow.on("closed", () => {
     mainWindow = null;
@@ -148,17 +160,53 @@ function bootSidecar() {
     });
 }
 
-app.whenReady().then(() => {
-  buildMenu();
-  createWindow();
-  bootSidecar();
-  initAutoUpdate(mainWindow);
-  initLicense();
-
-  app.on("activate", () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow();
+// Single-instance: a second launch focuses the existing window instead of
+// spawning another app + sidecar (each instance would bind its own port and
+// load the OCR models again).
+if (!app.requestSingleInstanceLock()) {
+  app.quit();
+} else {
+  app.on("second-instance", () => {
+    if (mainWindow) {
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      mainWindow.focus();
+    }
   });
-});
+
+  app.whenReady().then(() => {
+    // Content-Security-Policy for the local renderer (defence-in-depth). Scripts/
+    // styles are 'self'; inline styles are used heavily so style-src needs
+    // 'unsafe-inline'. connect-src must allow the loopback sidecar; worker-src
+    // covers the pdf.js worker.
+    const csp =
+      "default-src 'self'; " +
+      "script-src 'self' 'wasm-unsafe-eval'; " +
+      "style-src 'self' 'unsafe-inline'; " +
+      "img-src 'self' data: blob:; " +
+      "font-src 'self' data:; " +
+      "connect-src 'self' http://127.0.0.1:* http://localhost:*; " +
+      "worker-src 'self' blob:; " +
+      "object-src 'none'; base-uri 'none'; form-action 'none'";
+    session.defaultSession.webRequest.onHeadersReceived((details, cb) => {
+      cb({
+        responseHeaders: {
+          ...details.responseHeaders,
+          "Content-Security-Policy": [csp],
+        },
+      });
+    });
+
+    buildMenu();
+    createWindow();
+    bootSidecar();
+    initAutoUpdate(mainWindow);
+    initLicense();
+
+    app.on("activate", () => {
+      if (BrowserWindow.getAllWindows().length === 0) createWindow();
+    });
+  });
+}
 
 // ---- IPC: sidecar status -------------------------------------------------
 
@@ -277,6 +325,20 @@ ipcMain.handle("shell:show-in-folder", (_e, fullPath) => {
 ipcMain.handle("shell:open-external", (_e, url) => {
   if (typeof url !== "string" || !/^https?:\/\//i.test(url)) return false;
   shell.openExternal(url);
+  return true;
+});
+
+// Open a bundled license file (AGPL text or third-party notices) in the OS
+// default text viewer. Only these two fixed files — no renderer-supplied paths.
+ipcMain.handle("licenses:open", (_e, which) => {
+  const names = { agpl: "LICENSE.txt", thirdParty: "THIRD-PARTY-LICENSES.txt" };
+  const name = names[which];
+  if (!name) return false;
+  // Packaged: extraResources land in resourcesPath. Dev: read from the repo root.
+  const file = app.isPackaged
+    ? path.join(process.resourcesPath, name)
+    : path.join(__dirname, "..", "..", which === "agpl" ? "LICENSE" : "THIRD-PARTY-LICENSES.txt");
+  shell.openPath(file);
   return true;
 });
 
