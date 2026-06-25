@@ -988,10 +988,95 @@ async function loadTemplates() {
       o.textContent = t.label;
       sel.appendChild(o);
     });
+    const co = document.createElement("option");
+    co.value = "custom";
+    co.textContent = "Tùy chỉnh…";
+    sel.appendChild(co);
     templatesLoaded = true;
   } catch (_) {
     /* sidecar may not be ready; retry on next open */
   }
+}
+
+const CUSTOM_FIELDS_KEY = "ext.customFields";
+
+// Turn a Vietnamese label into a safe JSON key: strip diacritics, non-word -> _.
+function slugifyField(label) {
+  const base = label
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .replace(/đ/g, "d")
+    .replace(/Đ/g, "D")
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+  return base || "truong";
+}
+
+function addCustomFieldRow(value = "") {
+  const rows = $("ext-custom-rows");
+  const row = document.createElement("div");
+  row.className = "ext-custom-row";
+  const inp = document.createElement("input");
+  inp.type = "text";
+  inp.placeholder = "Ví dụ: Số tài khoản ngân hàng";
+  inp.value = value;
+  inp.addEventListener("input", saveCustomFields);
+  const del = document.createElement("button");
+  del.className = "link";
+  del.textContent = "✕";
+  del.title = "Xóa trường";
+  del.onclick = () => {
+    row.remove();
+    if (!$("ext-custom-rows").children.length) addCustomFieldRow();
+    saveCustomFields();
+  };
+  row.appendChild(inp);
+  row.appendChild(del);
+  rows.appendChild(row);
+  return inp;
+}
+
+function customFieldLabels() {
+  return [...document.querySelectorAll("#ext-custom-rows input")]
+    .map((i) => i.value.trim())
+    .filter(Boolean);
+}
+
+// Build {key: label} for the backend; de-duplicate keys with a numeric suffix.
+function buildCustomFields() {
+  const out = {};
+  const seen = {};
+  for (const label of customFieldLabels()) {
+    let key = slugifyField(label);
+    if (seen[key]) key = `${key}_${++seen[key]}`;
+    else seen[key] = 1;
+    out[key] = label;
+  }
+  return out;
+}
+
+function saveCustomFields() {
+  try {
+    localStorage.setItem(CUSTOM_FIELDS_KEY, JSON.stringify(customFieldLabels()));
+  } catch (_) {}
+}
+
+function loadCustomFields() {
+  let labels = [];
+  try {
+    labels = JSON.parse(localStorage.getItem(CUSTOM_FIELDS_KEY) || "[]");
+  } catch (_) {}
+  $("ext-custom-rows").innerHTML = "";
+  if (labels.length) labels.forEach((l) => addCustomFieldRow(l));
+  else addCustomFieldRow();
+}
+
+function syncCustomPanel() {
+  const isCustom = $("ext-template").value === "custom";
+  $("ext-custom").hidden = !isCustom;
+  if (isCustom && !$("ext-custom-rows").children.length) loadCustomFields();
 }
 
 function openExtractPanel() {
@@ -1025,13 +1110,24 @@ async function runExtract() {
     return;
   }
   const template = $("ext-template").value || "default";
+  const body = { };
+  if (template === "custom") {
+    const customFields = buildCustomFields();
+    if (!Object.keys(customFields).length) {
+      toast("Chưa khai báo trường tùy chỉnh nào.", "bad");
+      return;
+    }
+    body.custom_fields = customFields;
+  } else {
+    body.template = template;
+  }
   showOverlay(`Đang OCR + bóc tách ${indices.length} trang…`);
   try {
     const { imgs, nums } = await rasterize(indices);
     const res = await sidecarFetch("/extract", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ images: imgs, page_numbers: nums, template }),
+      body: JSON.stringify({ images: imgs, page_numbers: nums, ...body }),
     });
     const data = await res.json();
     if (!data.success) {
@@ -1827,6 +1923,11 @@ $("set-check-update").onclick = async () => {
 };
 $("ext-close").onclick = () => ($("ext-panel").hidden = true);
 $("ext-run").onclick = runExtract;
+$("ext-template").addEventListener("change", syncCustomPanel);
+$("ext-custom-add").onclick = () => {
+  addCustomFieldRow().focus();
+  saveCustomFields();
+};
 $("ext-export").addEventListener("click", (e) => {
   const b = e.target.closest("button[data-fmt]");
   if (b) runExport(b.dataset.fmt);

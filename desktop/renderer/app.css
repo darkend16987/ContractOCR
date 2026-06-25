@@ -261,6 +261,19 @@ button.ghost { background: transparent; }
   border: 1px solid var(--bg-3); border-radius: 8px;
 }
 .ext-controls #ext-run { margin-top: 2px; }
+.ext-custom { padding: 10px 12px; border-bottom: 1px solid var(--line); display: flex; flex-direction: column; gap: 8px; }
+.ext-custom-head { display: flex; flex-direction: column; gap: 2px; font-size: 12px; }
+.ext-custom-head .muted { font-size: 11px; color: var(--muted); font-weight: 400; }
+.ext-custom-rows { display: flex; flex-direction: column; gap: 6px; }
+.ext-custom-row { display: flex; gap: 6px; align-items: center; }
+.ext-custom-row input {
+  flex: 1; font: inherit; font-size: 13px; padding: 6px 8px;
+  background: var(--bg); color: var(--fg);
+  border: 1px solid var(--line); border-radius: 6px;
+}
+.ext-custom-row input:focus { outline: none; border-color: var(--accent); }
+.ext-custom-row button { padding: 4px 9px; line-height: 1; }
+#ext-custom-add { align-self: flex-start; }
 .ext-class { padding: 8px 12px; font-size: 12px; color: var(--accent); min-height: 0; }
 .ext-class:empty { display: none; }
 .ext-fields { flex: 1; overflow: auto; padding: 4px 12px 12px; display: flex; flex-direction: column; gap: 8px; }

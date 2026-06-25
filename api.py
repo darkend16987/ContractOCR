@@ -312,7 +312,14 @@ async def extract(req: ExtractRequest):
                 logger.error("Failed to decode image %d: %s", pn, e)
                 pages.append(OCRPageResult(page_number=pn, text=f"[Lỗi đọc ảnh: {e}]"))
                 continue
-            pages.append(OCRPageResult(page_number=pn, text=engine.recognize(img)))
+            # OCR can raise (e.g. paddle/paddlex dependency errors). Catch here so the
+            # client gets a JSON error body instead of an unhandled 500 ("Internal
+            # Server Error" plaintext, which breaks res.json() in the renderer).
+            try:
+                pages.append(OCRPageResult(page_number=pn, text=engine.recognize(img)))
+            except Exception as e:
+                logger.exception("OCR failed on page %d", pn)
+                return ExtractResponse(success=False, error=f"OCR lỗi: {e}", pages=pages)
 
     full_text = "\n\n".join(p.text for p in pages).strip()
     if not full_text:

@@ -4,7 +4,12 @@
 > [DESIGN.md](DESIGN.md) (kiến trúc), [ROADMAP.md](ROADMAP.md) (tiến độ chi tiết),
 > [SETUP.md](SETUP.md) (dựng môi trường).
 
-_Cập nhật: 2026-06-24 · v0.2.2_
+_Cập nhật: 2026-06-25 · v0.2.3_
+
+> v0.2.3 — **OCR/Extract fixes + Custom fields**:
+> - **Fix bóc tách báo 500 plaintext** ([`api.py`](api.py)): `/extract` nay bọc `engine.recognize()` trong try/except → trả JSON `{success:false,error}` thay vì `Internal Server Error` (vỡ `res.json()` ở renderer → lỗi "Unexpected token 'I'").
+> - **Fix OCR/searchable dependency error đóng gói** ([`sidecar.spec`](sidecar.spec)): PaddleOCR 3.x kiểm tra extra `ocr-core` qua `importlib.metadata.version()`; PyInstaller không bundle `.dist-info` của dependency → `DependencyError` ("A dependency error occurred during pipeline creation"). Thêm `copy_metadata` cho paddlex/paddleocr/paddlepaddle + 6 dep ocr-core (imagesize, opencv-contrib-python, pyclipper, pypdfium2, python-bidi, shapely).
+> - **Form trường tùy chỉnh** (Bóc tách): chọn mẫu "Tùy chỉnh…" → khai báo trường tự do; auto-slug tên VN → key JSON, lưu localStorage. Gửi `custom_fields` cho `/extract` (backend đã sẵn). [`index.html`](desktop/renderer/index.html), [`app.js`](desktop/renderer/app.js), [`app.css`](desktop/renderer/app.css).
 
 > v0.2.2 — **UI/UX Polishing**:
 > - **Two-row Toolbar**: Giao diện toolbar chính được thiết kế lại thành 2 dòng (.tb-row), giúp không gian thoáng và hiện đại hơn. Khắc phục lỗi tràn menu và mất nội dung bên phải khi thay đổi kích thước cửa sổ (bổ sung flex-wrap).
