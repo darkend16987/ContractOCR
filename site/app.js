@@ -13,7 +13,7 @@ const I = {
 };
 
 const FEATURES = [
-  { i: "ai", t: "Bóc tách hợp đồng bằng AI", d: "OCR tiếng Việt + AI đọc hợp đồng, bóc tách các trường (bên A/B, giá trị, ngày…) rồi xuất Excel/JSON." },
+  { i: "ai", t: "Bóc tách hợp đồng bằng AI", d: "OCR tiếng Việt + AI đọc hợp đồng, bóc tách các trường (bên A/B, giá trị, ngày…) rồi xuất Excel/JSON. Tự khai báo trường tùy chỉnh cần bóc tách." },
   { i: "type", t: "Sửa chữ gốc của PDF", d: "Chỉnh trực tiếp văn bản thật trong PDF, dùng cả font hệ thống của máy — không phải vẽ đè." },
   { i: "pages", t: "Ghép · Tách · Chèn trang", d: "Quản lý trang linh hoạt: kéo-thả sắp xếp, ghép nhiều PDF, tách trang chọn, chèn từ file khác." },
   { i: "pen", t: "Chỉnh sửa & chú thích", d: "Watermark, redact (che an toàn), điền form, tô sáng, vẽ, chèn ảnh/chữ ký, ghi chú." },
