@@ -7,7 +7,7 @@
 
 Đã có sẵn (phần khó nhất — **không làm lại**):
 
-- **OCR tiếng Việt**: Hybrid (detection + VietOCR — đúng dấu) mặc định; RapidOCR/PaddleOCR là tuỳ chọn/fallback — `src/ocr/engine.py`
+- **OCR tiếng Việt**: RapidViet (RapidOCR ONNX detect + VietOCR — nhanh & đúng dấu) mặc định; Hybrid/RapidOCR/PaddleOCR là tuỳ chọn — `src/ocr/engine.py`
 - **Bóc tách field bằng AI**: Gemini agent + template field tùy chỉnh — `src/agents/`
 - **Pipeline export**: JSON / Excel / CSV / Markdown / Google Sheet — `src/output/`
 - **2 vỏ ngoài**: FastAPI (`api.py`), Streamlit (`app.py`), CLI (`cli.py`), và web Next.js (`web/`)
@@ -20,7 +20,7 @@ Mục tiêu mở rộng: đọc / merge-split-insert / edit / nén / xuất PDF 
 |---|-----------|-------|
 | D1 | **Sản phẩm = desktop native (Electron), portable .exe** | OCR local chính xác hơn, file không rời máy, gọi binary nén/edit native thuận. Cầm USB cài nhanh. |
 | D2 | **Local-first / self-host** | Hợp đồng nhạy cảm; OCR chạy local. Cloud AI (Gemini) là tùy chọn bật/tắt. |
-| D3 | **OCR mặc định = Hybrid (detect + VietOCR)** (v0.2.6 thu hồi RapidOCR của v0.2.5) | RapidOCR/PaddleOCR 3.x đa ngữ làm hỏng dấu chồng tiếng Việt (ộ/ử/ấ); VietOCR là engine cục bộ duy nhất đúng dấu. Đánh đổi tốc độ tạm thời; v0.2.7 sẽ thay bằng vi-rec ONNX (nhanh+đúng). RapidOCR giữ tuỳ chọn nhanh/latin (`OCR_ENGINE`). |
+| D3 | **OCR mặc định = RapidViet (RapidOCR ONNX detect + VietOCR rec)** (v0.2.7) | Vừa nhanh (~3-4s/trang, detect ONNX không cần paddle) vừa đúng dấu (VietOCR là engine cục bộ duy nhất đọc đúng dấu chồng; dict PP-OCR latin/đa ngữ THIẾU ký tự VN). Thay cho RapidOCR thuần (v0.2.5 sai dấu) và Hybrid-paddle (v0.2.6 chậm). Hybrid/RapidOCR/Paddle giữ tuỳ chọn (`OCR_ENGINE`). |
 | D4 | **"Edit PDF" giai đoạn 1 = overlay editing** | Annotate/watermark/form/redact khả thi & đủ 90% nhu cầu. KHÔNG làm WYSIWYG sửa text gốc (rất khó, để giai đoạn sau). |
 | D5 | **Thao tác PDF nhẹ chạy ở renderer (pdf-lib/pdf.js); chỉ gọi Python khi cần OCR/nén/AI** | App phản hồi tức thì, Python chỉ là "động cơ nặng" khi thật sự cần. |
 | D6 | **Sidecar Python chạy & đóng gói bằng Python 3.12** (không phải 3.13) | vietocr ghim các dep cũ (gdown, Pillow~10.2) chỉ có wheel tới cp312; trên 3.13 phải build nguồn → fail. PyInstaller cũng phải build bằng 3.12. Venv dev: `.venv/` (py -3.12). |
@@ -40,7 +40,7 @@ Mục tiêu mở rộng: đọc / merge-split-insert / edit / nén / xuất PDF 
 │            │ HTTP 127.0.0.1:<port động> (chỉ khi cần)    │
 │  ┌─────────▼─────────────────────────────────────────┐  │
 │  │  PYTHON SIDECAR  (FastAPI = api.py, đóng PyInstaller)│ │
-│  │  • OCR Hybrid detect+VietOCR (engine.py — ĐÃ CÓ) │  │
+│  │  • OCR RapidViet (RapidOCR det+VietOCR — ĐÃ CÓ) │  │
 │  │  • Bóc tách custom fields (gemini_agent — ĐÃ CÓ)   │  │
 │  │  • Nén  → Ghostscript / qpdf (binary bundle)       │  │
 │  │  • Searchable PDF → OCRmyPDF                       │  │

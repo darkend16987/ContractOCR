@@ -12,12 +12,12 @@ chú thích · watermark · redact · sửa chữ · nén · tạo PDF tìm-ki�
 ## Tổng quan
 
 ```
-Image/PDF → OCR (Hybrid: detect + VietOCR) → AI Agent (Gemini) → Structured Output (JSON/Excel/GSheet/Markdown)
+Image/PDF → OCR (RapidViet: RapidOCR detect + VietOCR) → AI Agent (Gemini) → Structured Output (JSON/Excel/GSheet/Markdown)
 ```
 
 **Pipeline:**
 1. **Input**: Upload ảnh scan hoặc PDF hợp đồng
-2. **OCR**: Trích xuất text tiếng Việt bằng Hybrid (detection + VietOCR — đúng dấu; RapidOCR/PaddleOCR là tuỳ chọn/fallback)
+2. **OCR**: Trích xuất text tiếng Việt bằng RapidViet (RapidOCR detect + VietOCR — nhanh & đúng dấu; Hybrid/RapidOCR/PaddleOCR là tuỳ chọn)
 3. **AI Agent**: Gemini phân tích text → trích xuất các trường vào schema cố định
 4. **Output**: Lưu JSON, Excel, Google Sheet, hoặc Markdown
 
@@ -78,7 +78,7 @@ python cli.py scan.png --engine rapidocr --api-key YOUR_KEY --verbose
 **Options:**
 | Flag | Mô tả | Default |
 |------|--------|---------|
-| `--engine` | OCR engine: `auto`, `rapidocr`, `paddleocr`, `vietocr` | `auto` |
+| `--engine` | OCR engine: `auto`, `rapidviet`, `hybrid`, `rapidocr`, `paddleocr`, `vietocr` | `auto` |
 | `--api-key` | Gemini API key | từ `.env` |
 | `--model` | Gemini model | `gemini-3-flash-preview` |
 | `--template` | Template trường: `generic`, `mua_ban`, `lao_dong`, `dich_vu` | `generic` |
@@ -126,28 +126,27 @@ Nabu-PDF/
 
 ## OCR Engines
 
-### Hybrid (mặc định)
-- Detection (PP-OCR) + recognition (**VietOCR**) — VietOCR là engine cục bộ duy nhất
-  có recognizer **chuyên tiếng Việt**, giữ đúng dấu chồng (ộ/ử/ấ/ề/ị)
-- Đánh đổi: chậm hơn trên CPU (VietOCR transformer nhận dạng từng dòng)
-- Đang phát triển: recognizer tiếng Việt chạy **ONNX** để vừa đúng dấu vừa nhanh
+### RapidViet (mặc định) ⭐
+- **Detection bằng RapidOCR (ONNX)** + **recognition bằng VietOCR** — nhanh *và* đúng dấu
+- Detector ONNX tìm dòng ~1s (không cần paddlepaddle, hết crash mkldnn); VietOCR là
+  engine cục bộ duy nhất đọc đúng dấu chồng tiếng Việt (ộ/ử/ấ/ề/ị), chạy crop theo batch
+- ~3-4s/trang (ấm) trên CPU; trả về toạ độ cho searchable PDF
 
 > ⚠️ Recognizer PP-OCR đa ngữ/latin (RapidOCR EN/LATIN, PaddleOCR 3.x) **làm hỏng dấu
-> tiếng Việt** (ộ→o, ử→u, ấ→a). Vì vậy mặc định dùng Hybrid/VietOCR.
+> tiếng Việt** — dict của model **thiếu** ký tự dấu chồng (ạ/ấ/ộ/ợ/ử...). Vì vậy phần
+> recognition luôn dùng VietOCR.
+
+### Hybrid (tuỳ chọn)
+- Như RapidViet nhưng detection bằng **PaddleOCR** (load chậm hơn, kéo theo paddlepaddle)
 
 ### RapidOCR (tuỳ chọn — nhanh, yếu dấu)
-- Model PP-OCR trên **ONNX Runtime** — nhanh ~4-7x, trả về toạ độ (searchable PDF)
-- **Không đọc đúng dấu tiếng Việt** → chỉ dùng cho text latin/nhanh
+- PP-OCR thuần trên ONNX — nhanh nhất nhưng **không đọc đúng dấu tiếng Việt** (chỉ latin)
 
-### PaddleOCR (fallback)
-- Full document OCR: detection + recognition
-- paddlepaddle 3.x: chậm trên CPU (mkldnn tắt do crash) + recognizer đa ngữ yếu dấu VN
-
-### VietOCR
-- Transformer-based, tối ưu tiếng Việt; chính xác cao nhưng nhận dạng theo từng dòng
+### PaddleOCR / VietOCR (fallback)
+- PaddleOCR: full pipeline, recognizer đa ngữ yếu dấu VN; VietOCR: transformer/dòng, đúng dấu
 
 ### Auto mode
-Ưu tiên Hybrid → RapidOCR → PaddleOCR → VietOCR theo khả dụng. Đổi bằng env `OCR_ENGINE`.
+Ưu tiên RapidViet → Hybrid → RapidOCR → PaddleOCR → VietOCR. Đổi bằng env `OCR_ENGINE`.
 
 ## Deploy
 

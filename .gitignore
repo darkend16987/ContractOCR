@@ -40,3 +40,6 @@ settings.json
 dev-stdout.log
 dev-stderr.log
 build-package.log
+
+# local sidecar smoke-test stderr
+scratch_sidecar.err

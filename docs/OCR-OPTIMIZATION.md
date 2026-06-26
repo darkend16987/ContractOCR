@@ -91,6 +91,31 @@ Vấn đề cốt lõi: **paddlepaddle trên CPU Windows = chậm (không mkldnn
 
 ---
 
+## 3d. ✅ GIẢI PHÁP (v0.2.7): RapidViet = RapidOCR detect (ONNX) + VietOCR rec
+
+Đo lại tách bạch det vs rec (CPU, trang 8 dòng tiếng Việt, ấm):
+
+| Bước | Engine | Thời gian |
+|------|--------|-----------|
+| Detection | RapidOCR ONNX (PP-OCRv6 det small) | **~0.9s** |
+| Recognition (8 dòng, batch) | VietOCR | **~2.5s** |
+| **Tổng / trang (ấm)** | RapidViet | **~3.5-4s** ✅ đúng dấu |
+
+So với Hybrid-paddle v0.2.6 (44s cold — paddle det load nặng + tải model). Detection
+không cần ký tự nên onnx dùng được; chỉ recognition cần VietOCR. **Kết quả: nhanh VÀ
+đúng dấu, KHÔNG cần convert model, KHÔNG cần paddlepaddle trong hot path.**
+
+Bằng chứng dứt điểm vì sao recognition không thể dùng PP-OCR onnx: dump
+`session.get_character_list()` của `latin_PP-OCRv5_rec` + `en_PP-OCRv5_rec` → dict
+**thiếu** toàn bộ dấu chồng VN: `ạ ả ấ ầ ẩ ẫ ậ ằ ẳ ẵ ặ ẹ ẻ ẽ ể ệ ỉ ị ọ ộ ợ ụ ử ữ ự ĩ ơ ư`.
+Model không thể xuất ký tự ngoài dict → latin/en vô phương đọc tiếng Việt. (Vì vậy kế
+hoạch "convert paddle 2.x vi → onnx" ở §3c là SAI tiền đề: paddle `lang=vi` cũng dùng
+latin dict thiếu chữ; engine đúng dấu thực sự là VietOCR.)
+
+→ Đặt **RapidViet** làm mặc định v0.2.7. `RapidVietHybridOCREngine` trong `engine.py`,
+env `OCR_ENGINE=rapidviet`. Việc còn lại (tuỳ chọn): bỏ paddlepaddle khỏi bundle (det đã
+chuyển onnx) để giảm installer — giữ torch (VietOCR cần).
+
 ## 3c. ⚠️ ĐÍNH CHÍNH (v0.2.6): RapidOCR đọc SAI dấu tiếng Việt
 
 Test trên **scan thật** (Giấy đề nghị thanh toán) phát hiện RapidOCR `LangRec.EN`

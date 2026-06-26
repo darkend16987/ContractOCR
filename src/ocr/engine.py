@@ -317,18 +317,83 @@ class RapidOCREngine(BaseOCREngine):
         return out
 
 
+class RapidVietHybridOCREngine(BaseOCREngine):
+    """Detection via RapidOCR (ONNX) + recognition via VietOCR.
+
+    The fast + accurate combination: RapidOCR's ONNX detector finds text lines in
+    ~1s (no paddlepaddle, no mkldnn crash), and VietOCR — the only local engine
+    with a true Vietnamese recognizer — reads them with correct stacked diacritics
+    (ộ/ử/ấ/ề/ị). VietOCR runs the crops as a batch, so a typical page is ~3-4s warm
+    on CPU. This is the default engine and keeps paddlepaddle out of the hot path.
+
+    (The plain HybridOCREngine uses PaddleOCR for detection, which loads slower and
+    drags paddlepaddle into the pipeline; this class supersedes it as the default.)
+    """
+
+    def __init__(self, vietocr_model: str = "vgg_transformer"):
+        self._detector = RapidOCREngine()
+        self._recognizer = VietOCREngine(model_name=vietocr_model)
+
+    def _detect_boxes(self, image: Image.Image) -> list:
+        """Run RapidOCR detection; return quad boxes (Nx4x2) in reading order.
+
+        We run the full RapidOCR pipeline and keep only the boxes — its detector
+        returns clean line-level quads. (Detection-only mode over-segments lines
+        into words, which hurts VietOCR's per-line recognition.)
+        """
+        import numpy as np
+        res = self._detector.engine(np.array(image))
+        if res is None or res.boxes is None:
+            return []
+        boxes = [np.asarray(b, dtype=float) for b in res.boxes]
+        # reading order: top-to-bottom, then left-to-right
+        boxes.sort(key=lambda b: (float(b[:, 1].min()), float(b[:, 0].min())))
+        return boxes
+
+    @staticmethod
+    def _crop(image: Image.Image, box) -> Image.Image:
+        x0, y0 = box[:, 0].min(), box[:, 1].min()
+        x1, y1 = box[:, 0].max(), box[:, 1].max()
+        return image.crop((max(0, int(x0)), max(0, int(y0)), int(x1), int(y1)))
+
+    def recognize(self, image: Image.Image) -> str:
+        boxes = self._detect_boxes(image)
+        if not boxes:
+            return ""
+        crops = [self._crop(image, b) for b in boxes]
+        texts = self._recognizer.recognize_batch(crops)
+        return "\n".join(texts)
+
+    def recognize_boxes(self, image: Image.Image) -> list[tuple[str, list[float]]]:
+        """Recognize with positions for the searchable-PDF layer.
+
+        Boxes from RapidOCR (image-pixel coords), text from VietOCR.
+        """
+        boxes = self._detect_boxes(image)
+        if not boxes:
+            return []
+        crops = [self._crop(image, b) for b in boxes]
+        texts = self._recognizer.recognize_batch(crops)
+        out: list[tuple[str, list[float]]] = []
+        for b, t in zip(boxes, texts):
+            out.append((t, [float(b[:, 0].min()), float(b[:, 1].min()),
+                            float(b[:, 0].max()), float(b[:, 1].max())]))
+        return out
+
+
 class AutoOCREngine(BaseOCREngine):
     """Automatic engine selection.
 
     Priority favours Vietnamese accuracy over raw speed: the PP-OCR multilingual
-    recognizers (RapidOCR, PaddleOCR 3.x) mangle stacked diacritics, so the Hybrid
-    engine (detection + VietOCR recognition) is preferred even though it is slower.
+    recognizers (RapidOCR, PaddleOCR 3.x) mangle stacked diacritics, so engines
+    that recognise with VietOCR are preferred.
 
     Priority:
-    1. HybridOCREngine (detection + VietOCR) - correct Vietnamese diacritics
-    2. RapidOCREngine (PP-OCR on ONNX Runtime) - fast full-page, weak diacritics
-    3. PaddleOCREngine (full pipeline) - fallback
-    4. VietOCREngine (recognition only) - last resort, single lines only
+    1. RapidVietHybridOCREngine (RapidOCR detect + VietOCR) - fast AND correct
+    2. HybridOCREngine (PaddleOCR detect + VietOCR) - correct, slower detect
+    3. RapidOCREngine (PP-OCR on ONNX Runtime) - fast full-page, weak diacritics
+    4. PaddleOCREngine (full pipeline) - fallback
+    5. VietOCREngine (recognition only) - last resort, single lines only
     """
 
     def __init__(self, vietocr_model: str = "vgg_transformer"):
@@ -338,12 +403,22 @@ class AutoOCREngine(BaseOCREngine):
     @property
     def engine(self) -> BaseOCREngine:
         if self._engine is None:
-            # Try Hybrid first (detection + VietOCR) — only local engine with a
-            # dedicated Vietnamese recognizer, so diacritics stay correct.
+            # Try RapidViet first (RapidOCR ONNX detect + VietOCR recognize):
+            # fast detection with no paddle, correct Vietnamese diacritics.
+            try:
+                self._engine = RapidVietHybridOCREngine(vietocr_model=self.vietocr_model)
+                _ = self._engine._detector.engine        # load onnx detector
+                _ = self._engine._recognizer.predictor   # load vietocr
+                logger.info("Auto-selected RapidViet engine (RapidOCR detect + VietOCR)")
+                return self._engine
+            except Exception as e:
+                logger.info("RapidViet unavailable: %s", e)
+
+            # Fallback: Hybrid (PaddleOCR detect + VietOCR) — still correct dấu.
             try:
                 self._engine = HybridOCREngine(vietocr_model=self.vietocr_model)
                 _ = self._engine._recognizer.predictor  # force model load
-                logger.info("Auto-selected Hybrid engine (detection + VietOCR)")
+                logger.info("Auto-selected Hybrid engine (PaddleOCR detect + VietOCR)")
                 return self._engine
             except Exception as e:
                 logger.info("Hybrid unavailable: %s", e)
@@ -390,6 +465,7 @@ def create_engine(engine_type: str = "auto", **kwargs) -> BaseOCREngine:
         An OCR engine instance
     """
     engines = {
+        "rapidviet": RapidVietHybridOCREngine,
         "rapidocr": RapidOCREngine,
         "vietocr": VietOCREngine,
         "paddleocr": PaddleOCREngine,

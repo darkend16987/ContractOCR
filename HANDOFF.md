@@ -4,7 +4,13 @@
 > [DESIGN.md](DESIGN.md) (kiến trúc), [ROADMAP.md](ROADMAP.md) (tiến độ chi tiết),
 > [SETUP.md](SETUP.md) (dựng môi trường).
 
-_Cập nhật: 2026-06-26 · v0.2.6_
+_Cập nhật: 2026-06-26 · v0.2.7_
+
+> v0.2.7 — **RapidViet: nhanh VÀ đúng dấu** (RapidOCR ONNX detect + VietOCR rec):
+> - Engine mới `RapidVietHybridOCREngine` ([`engine.py`](src/ocr/engine.py)) = detection bằng RapidOCR (ONNX, ~1s, không cần paddle) + recognition bằng VietOCR (batch, đúng dấu chồng). Đo CPU ấm: **~3-4s/trang** (vs Hybrid-paddle 44s cold/v0.2.6). Trả box cho searchable PDF.
+> - Default OCR `hybrid`→**`rapidviet`** ([`api.py`](api.py) `_get_ocr`); `AutoOCREngine` ưu tiên RapidViet→Hybrid→RapidOCR→Paddle→VietOCR; factory thêm key `rapidviet`.
+> - **Bằng chứng dứt điểm:** dict onnx của PP-OCR latin/đa ngữ (rapidocr/paddle 3.x) **THIẾU** ký tự dấu chồng VN (ạ/ấ/ộ/ợ/ử/ữ/ự...) — kiểm bằng `session.get_character_list()`. Nên recognition PHẢI dùng VietOCR; detection thì onnx dùng được (không cần ký tự).
+> - paddlepaddle giờ KHÔNG nằm trong hot path nữa (chỉ còn ở engine `hybrid`/`paddleocr` tuỳ chọn) → có thể cân nhắc bỏ paddle khỏi bundle ở bản sau để giảm installer (torch vẫn cần cho VietOCR).
 
 > v0.2.6 — **Hotfix: RapidOCR đọc SAI dấu tiếng Việt → đổi mặc định về Hybrid (VietOCR)**:
 > - **Lỗi v0.2.5:** RapidOCR (`LangRec.EN`) làm hỏng dấu trên scan thật (`CỘNG HOÀ`→`CNG HOÀ`, `Cổ phần`→`C phn`). Benchmark v0.2.5 dùng ảnh tổng hợp nên không lộ.
