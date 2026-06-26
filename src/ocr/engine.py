@@ -270,10 +270,12 @@ class RapidOCREngine(BaseOCREngine):
     instead of paddlepaddle. On CPU this is ~4-7x faster (onnxruntime has stable
     oneDNN/MLAS; paddlepaddle 3.3 crashes with mkldnn enabled), it sidesteps the
     paddle DLL/metadata packaging issues entirely, and the wheel is far smaller.
-    Vietnamese accuracy is on par with the PaddleOCR `lang=vi` recognizer.
 
-    Default recognizer is the multilingual Latin model (PP-OCRv6 via lang="EN"),
-    which covers Vietnamese diacritics. Returns boxes for the searchable-PDF layer.
+    WARNING — weak Vietnamese: the bundled recognizers (EN / LATIN PP-OCR) do NOT
+    handle stacked Vietnamese diacritics (ộ/ử/ấ/ề/ị become o/u/a/e/i). Use this for
+    speed on Latin-script text only; for correct Vietnamese use the Hybrid engine.
+    A dedicated Vietnamese ONNX recognizer is planned to fix this. Returns boxes
+    for the searchable-PDF layer.
     """
 
     def __init__(self, lang_rec: str = "EN"):
@@ -318,10 +320,15 @@ class RapidOCREngine(BaseOCREngine):
 class AutoOCREngine(BaseOCREngine):
     """Automatic engine selection.
 
+    Priority favours Vietnamese accuracy over raw speed: the PP-OCR multilingual
+    recognizers (RapidOCR, PaddleOCR 3.x) mangle stacked diacritics, so the Hybrid
+    engine (detection + VietOCR recognition) is preferred even though it is slower.
+
     Priority:
-    1. RapidOCREngine (PP-OCR on ONNX Runtime) - fast, accurate, no paddle crash
-    2. PaddleOCREngine (full pipeline) - fallback
-    3. VietOCREngine (recognition only) - last resort, single lines only
+    1. HybridOCREngine (detection + VietOCR) - correct Vietnamese diacritics
+    2. RapidOCREngine (PP-OCR on ONNX Runtime) - fast full-page, weak diacritics
+    3. PaddleOCREngine (full pipeline) - fallback
+    4. VietOCREngine (recognition only) - last resort, single lines only
     """
 
     def __init__(self, vietocr_model: str = "vgg_transformer"):
@@ -331,7 +338,17 @@ class AutoOCREngine(BaseOCREngine):
     @property
     def engine(self) -> BaseOCREngine:
         if self._engine is None:
-            # Try RapidOCR first (fast onnxruntime PP-OCR, no paddle crash)
+            # Try Hybrid first (detection + VietOCR) — only local engine with a
+            # dedicated Vietnamese recognizer, so diacritics stay correct.
+            try:
+                self._engine = HybridOCREngine(vietocr_model=self.vietocr_model)
+                _ = self._engine._recognizer.predictor  # force model load
+                logger.info("Auto-selected Hybrid engine (detection + VietOCR)")
+                return self._engine
+            except Exception as e:
+                logger.info("Hybrid unavailable: %s", e)
+
+            # Fallback: RapidOCR (fast onnxruntime PP-OCR, weak Vietnamese)
             try:
                 self._engine = RapidOCREngine()
                 _ = self._engine.engine

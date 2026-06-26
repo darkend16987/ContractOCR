@@ -2,7 +2,7 @@
 FastAPI OCR Server for Nabu PDF.
 
 Exposes a /ocr endpoint that accepts base64 images,
-runs RapidOCR (PP-OCR on ONNX Runtime) by default,
+runs the Hybrid engine (text detection + VietOCR recognition) by default,
 and returns extracted Vietnamese text.
 """
 
@@ -62,13 +62,16 @@ async def lifespan(app: FastAPI):
 def _get_ocr() -> BaseOCREngine:
     """Lazily build the OCR engine on first use; cache it. Raises 503 on failure.
 
-    Defaults to RapidOCR (PP-OCR models on ONNX Runtime): ~4-7x faster than
-    PaddleOCR on CPU with on-par Vietnamese accuracy, and no paddlepaddle mkldnn
-    crash. Set OCR_ENGINE=paddleocr/hybrid/auto to switch back.
+    Defaults to the Hybrid engine (text detection + VietOCR recognition).
+    VietOCR is the only local engine with a dedicated Vietnamese recognizer, so it
+    keeps stacked diacritics correct (ộ/ử/ấ/ề/ị); the PP-OCR multilingual/latin
+    recognizers in RapidOCR and PaddleOCR 3.x mangle them. Slower on CPU (per-line
+    transformer) — a fast Vietnamese ONNX recognizer is planned to replace this.
+    Set OCR_ENGINE=rapidocr/paddleocr/auto to switch.
     """
     global ocr_engine
     if ocr_engine is None:
-        engine_type = os.getenv("OCR_ENGINE", "rapidocr")
+        engine_type = os.getenv("OCR_ENGINE", "hybrid")
         logger.info("Loading OCR engine: %s", engine_type)
         try:
             ocr_engine = create_engine(engine_type)
@@ -87,7 +90,7 @@ def _get_ocr() -> BaseOCREngine:
 
 app = FastAPI(
     title="Nabu PDF API",
-    description="Vietnamese OCR API using RapidOCR (ONNX Runtime)",
+    description="Vietnamese OCR API (Hybrid: text detection + VietOCR recognition)",
     lifespan=lifespan,
 )
 

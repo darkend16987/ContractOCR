@@ -91,7 +91,35 @@ Vấn đề cốt lõi: **paddlepaddle trên CPU Windows = chậm (không mkldnn
 
 ---
 
-## 3b. ĐÃ CHỌN: RapidOCR (v0.2.5)
+## 3c. ⚠️ ĐÍNH CHÍNH (v0.2.6): RapidOCR đọc SAI dấu tiếng Việt
+
+Test trên **scan thật** (Giấy đề nghị thanh toán) phát hiện RapidOCR `LangRec.EN`
+làm hỏng dấu nặng: `CỘNG HOÀ` → `CNG HOÀ`, `Độc lập` → `Đc lâp`, `Cổ phần` → `C phn`.
+Số + chữ latin gốc thì đúng.
+
+Điều tra gốc rễ (đo lại trên cùng 1 ảnh tiếng Việt có dấu chồng ộ/ử/ấ/ề/ị):
+
+| Recognizer | Kết quả dấu |
+|------------|-------------|
+| RapidOCR `EN` (`en_PP-OCRv5_rec_mobile`) | ❌ English-only, mất hết dấu |
+| RapidOCR `LATIN` (`latin_PP-OCRv5_rec_mobile`) | ❌ vẫn hỏng dấu chồng |
+| PaddleOCR 3.x `lang="vi"` (→ `PP-OCRv6_medium_rec`) | ❌ hỏng dấu chồng |
+| **Hybrid (detect + VietOCR)** | ✅ **đúng dấu** |
+
+**Phát hiện then chốt:** PaddleOCR **3.x KHÔNG còn recognizer tiếng Việt chuyên dụng**.
+`lang="vi"` ở bản 3.x map sang rec đa ngữ (v6 medium / latin) — không xử lý được dấu
+chồng tiếng Việt. Bản cũ **0.0.x/0.1.x nhanh + chuẩn** vì paddleocr **2.x** có model
+`vi_PP-OCRv3_rec` (CNN, train riêng tiếng Việt) — vừa nhanh vừa đúng dấu. Bản rewrite
+2.x→3.x (PaddleX) đã **bỏ** model này → đây là gốc rễ THẬT của hồi quy (cả tốc độ *lẫn*
+độ chính xác), không chỉ mkldnn.
+
+**Quyết định:** v0.2.6 đổi mặc định về **Hybrid (detect + VietOCR)** — đúng dấu ngay,
+chấp nhận chậm tạm thời. RapidOCR giữ làm tuỳ chọn "nhanh, latin". Bước tiếp (v0.2.7):
+phục hồi recognizer tiếng Việt chuyên dụng dưới dạng **ONNX** (vi_PP-OCRv3/v4_rec →
+paddle2onnx → nạp vào RapidOCR qua `Rec.model_path` + `rec_keys_path` = vi dict) để có
+lại "nhanh **và** đúng dấu" như bản cũ, bỏ hẳn paddlepaddle khỏi hot path.
+
+## 3b. ~~ĐÃ CHỌN: RapidOCR (v0.2.5)~~ — ĐÃ THAY (xem 3c)
 
 Spike RapidOCR đã làm, benchmark thực tế (CPU, trang hợp đồng tiếng Việt):
 

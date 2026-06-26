@@ -4,9 +4,15 @@
 > [DESIGN.md](DESIGN.md) (kiến trúc), [ROADMAP.md](ROADMAP.md) (tiến độ chi tiết),
 > [SETUP.md](SETUP.md) (dựng môi trường).
 
-_Cập nhật: 2026-06-26 · v0.2.5_
+_Cập nhật: 2026-06-26 · v0.2.6_
 
-> v0.2.5 — **Đổi OCR engine sang RapidOCR (ONNX Runtime)**:
+> v0.2.6 — **Hotfix: RapidOCR đọc SAI dấu tiếng Việt → đổi mặc định về Hybrid (VietOCR)**:
+> - **Lỗi v0.2.5:** RapidOCR (`LangRec.EN`) làm hỏng dấu trên scan thật (`CỘNG HOÀ`→`CNG HOÀ`, `Cổ phần`→`C phn`). Benchmark v0.2.5 dùng ảnh tổng hợp nên không lộ.
+> - **Gốc rễ:** PaddleOCR **3.x bỏ recognizer tiếng Việt chuyên dụng** (`vi_PP-OCRv3_rec` của 2.x). Cả RapidOCR EN/LATIN lẫn paddle 3.x `lang="vi"` (→ v6 medium rec) đều không đọc được dấu chồng (ộ/ử/ấ/ề/ị). Đây là gốc rễ THẬT của hồi quy 0.0.x→nay (cả tốc độ lẫn độ chính xác).
+> - **Fix:** mặc định OCR đổi `rapidocr`→**`hybrid`** (detection + VietOCR — engine cục bộ duy nhất đúng dấu) ([`api.py`](api.py) `_get_ocr`, [`engine.py`](src/ocr/engine.py) `AutoOCREngine` ưu tiên Hybrid). RapidOCR giữ tuỳ chọn nhanh/latin. Đánh đổi: chậm hơn (VietOCR transformer/dòng).
+> - **Tiếp theo (v0.2.7):** phục hồi vi-rec dạng **ONNX** (paddle2onnx + dict VN nạp vào RapidOCR) → nhanh **và** đúng dấu, bỏ paddle khỏi hot path. Xem [`docs/OCR-OPTIMIZATION.md`](docs/OCR-OPTIMIZATION.md) §3c.
+
+> v0.2.5 — **Đổi OCR engine sang RapidOCR (ONNX Runtime)** ⚠️ _(đã thu hồi ở v0.2.6 — sai dấu tiếng Việt)_:
 > - Engine mặc định: **RapidOCR** (PP-OCR trên onnxruntime) thay PaddleOCR/hybrid ([`engine.py`](src/ocr/engine.py) `RapidOCREngine`, [`api.py`](api.py) `_get_ocr`). Đo CPU: ~1-3s/trang vs PaddleOCR ~7-19s, độ chính xác dấu tiếng Việt tương đương, vẫn trả box cho searchable. Hết crash mkldnn của paddlepaddle.
 > - paddleocr/paddlepaddle/vietocr giữ làm fallback, chọn qua env `OCR_ENGINE` (rapidocr|paddleocr|hybrid|vietocr|auto).
 > - Deps: thêm `rapidocr>=3.0.0` + `onnxruntime>=1.20.0` ([`requirements.txt`](requirements.txt)); bundle trong [`sidecar.spec`](sidecar.spec). Model RapidOCR tải lần đầu (1 lần cần mạng, như paddle trước đây). **Đã smoke-test frozen sidecar.exe: /ocr OK 5.7s, tiếng Việt chuẩn.**

@@ -1,0 +1,24 @@
+INFO:     Started server process [16496]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://127.0.0.1:8000 (Press CTRL+C to quit)
+INFO:api:Loading OCR engine: hybrid
+INFO:api:OCR engine ready
+INFO:src.ocr.engine:Loading PaddleOCR lang=vi det=PP-OCRv5_mobile_det rec=default
+INFO:matplotlib.font_manager:generated new fontManager
+src\ocr\engine.py:132: UserWarning: `lang` and `ocr_version` will be ignored when model names or model directories are not `None`.
+  self._ocr = PaddleOCR(**kwargs)
+INFO: Could not find files for the given pattern(s).
+paddle\utils\cpp_extension\extension_utils.py:712: UserWarning: No ccache found. Please be aware that recompiling all source files may be required. You can download and install ccache from: https://github.com/ccache/ccache/blob/master/doc/INSTALL.md
+  warnings.warn(warning_message)
+[32mCreating model: ('PP-OCRv5_mobile_det', None, None)[0m
+[32mModel files already exist. Using cached files. To redownload, please delete the directory manually: `C:\Users\MKT-01\.paddlex\official_models\PP-OCRv5_mobile_det`.[0m
+[32mCreating model: ('PP-OCRv6_medium_rec', None, None)[0m
+[32mModel files already exist. Using cached files. To redownload, please delete the directory manually: `C:\Users\MKT-01\.paddlex\official_models\PP-OCRv6_medium_rec`.[0m
+INFO:src.ocr.engine:PaddleOCR loaded successfully
+INFO:src.ocr.engine:Loading VietOCR model: vgg_transformer
+torch\nn\modules\transformer.py:143: UserWarning: enable_nested_tensor is True, but self.use_nested_tensor is False because encoder_layer.self_attn.batch_first was not True(use batch_first for better inference performance)
+  self.encoder = TransformerEncoder(
+INFO:src.ocr.engine:VietOCR model loaded successfully
+INFO:src.ocr.engine:Hybrid OCR: detected 6 regions, recognized 6 texts
+INFO:api:Page 1: 173 characters extracted

@@ -12,12 +12,12 @@ chú thích · watermark · redact · sửa chữ · nén · tạo PDF tìm-ki�
 ## Tổng quan
 
 ```
-Image/PDF → OCR (RapidOCR/ONNX) → AI Agent (Gemini) → Structured Output (JSON/Excel/GSheet/Markdown)
+Image/PDF → OCR (Hybrid: detect + VietOCR) → AI Agent (Gemini) → Structured Output (JSON/Excel/GSheet/Markdown)
 ```
 
 **Pipeline:**
 1. **Input**: Upload ảnh scan hoặc PDF hợp đồng
-2. **OCR**: Trích xuất text tiếng Việt bằng RapidOCR (PP-OCR trên ONNX Runtime; PaddleOCR/VietOCR là fallback)
+2. **OCR**: Trích xuất text tiếng Việt bằng Hybrid (detection + VietOCR — đúng dấu; RapidOCR/PaddleOCR là tuỳ chọn/fallback)
 3. **AI Agent**: Gemini phân tích text → trích xuất các trường vào schema cố định
 4. **Output**: Lưu JSON, Excel, Google Sheet, hoặc Markdown
 
@@ -126,21 +126,28 @@ Nabu-PDF/
 
 ## OCR Engines
 
-### RapidOCR (mặc định)
-- Model PP-OCR chạy trên **ONNX Runtime** — nhanh ~4-7x so với PaddleOCR trên CPU
-- Độ chính xác tiếng Việt tương đương PaddleOCR; trả về cả toạ độ (cho searchable PDF)
-- Không dính bug mkldnn của paddlepaddle, gói runtime nhẹ
+### Hybrid (mặc định)
+- Detection (PP-OCR) + recognition (**VietOCR**) — VietOCR là engine cục bộ duy nhất
+  có recognizer **chuyên tiếng Việt**, giữ đúng dấu chồng (ộ/ử/ấ/ề/ị)
+- Đánh đổi: chậm hơn trên CPU (VietOCR transformer nhận dạng từng dòng)
+- Đang phát triển: recognizer tiếng Việt chạy **ONNX** để vừa đúng dấu vừa nhanh
+
+> ⚠️ Recognizer PP-OCR đa ngữ/latin (RapidOCR EN/LATIN, PaddleOCR 3.x) **làm hỏng dấu
+> tiếng Việt** (ộ→o, ử→u, ấ→a). Vì vậy mặc định dùng Hybrid/VietOCR.
+
+### RapidOCR (tuỳ chọn — nhanh, yếu dấu)
+- Model PP-OCR trên **ONNX Runtime** — nhanh ~4-7x, trả về toạ độ (searchable PDF)
+- **Không đọc đúng dấu tiếng Việt** → chỉ dùng cho text latin/nhanh
 
 ### PaddleOCR (fallback)
-- Full document OCR: detection + recognition, hỗ trợ tiếng Việt (`lang="vi"`)
-- Trên paddlepaddle 3.x: chậm hơn trên CPU (mkldnn tắt do crash)
+- Full document OCR: detection + recognition
+- paddlepaddle 3.x: chậm trên CPU (mkldnn tắt do crash) + recognizer đa ngữ yếu dấu VN
 
-### VietOCR (fallback)
-- Transformer-based, tối ưu tiếng Việt; chính xác cao trên text typed rõ
-- Nhận dạng theo từng dòng → rất chậm trên CPU cho cả trang
+### VietOCR
+- Transformer-based, tối ưu tiếng Việt; chính xác cao nhưng nhận dạng theo từng dòng
 
 ### Auto mode
-Ưu tiên RapidOCR → PaddleOCR → VietOCR theo khả dụng. Đổi bằng env `OCR_ENGINE`.
+Ưu tiên Hybrid → RapidOCR → PaddleOCR → VietOCR theo khả dụng. Đổi bằng env `OCR_ENGINE`.
 
 ## Deploy
 
