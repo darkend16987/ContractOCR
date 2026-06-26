@@ -4,7 +4,13 @@
 > [DESIGN.md](DESIGN.md) (kiến trúc), [ROADMAP.md](ROADMAP.md) (tiến độ chi tiết),
 > [SETUP.md](SETUP.md) (dựng môi trường).
 
-_Cập nhật: 2026-06-25 · v0.2.3_
+_Cập nhật: 2026-06-26 · v0.2.4_
+
+> v0.2.4 — **OCR tăng tốc ~3-4x**:
+> - Engine mặc định đổi từ **hybrid** (PaddleOCR detect + VietOCR recognize) sang **paddleocr** ([`api.py`](api.py) `_get_ocr`, env `OCR_ENGINE` override). Hybrid chạy transformer VietOCR mỗi dòng trên CPU → ~76s/trang; paddleocr 1 pass nhanh hơn nhiều, độ chính xác tiếng Việt vẫn tốt.
+> - PaddleOCR đổi detector sang **PP-OCRv5_mobile_det** ([`engine.py`](src/ocr/engine.py)): detector server mặc định là phần nặng nhất (~42s → ~18s/trang, cùng số dòng). Giữ recognizer lang="vi" mặc định (mobile rec làm hỏng dấu: "Công"→"Cong"). Tắt `use_textline_orientation`. Override qua env `PADDLE_DET_MODEL`/`PADDLE_REC_MODEL`.
+> - `enable_mkldnn` vẫn TẮT: paddlepaddle 3.3.1 crash `ConvertPirAttribute2RuntimeAttribute` kể cả khi tắt PIR — chờ nâng cấp paddle.
+> - Đo (CPU, trang ~20-30 dòng): hybrid 76s → paddleocr warm ~10-18s.
 
 > v0.2.3 — **OCR/Extract fixes + Custom fields**:
 > - **Fix bóc tách báo 500 plaintext** ([`api.py`](api.py)): `/extract` nay bọc `engine.recognize()` trong try/except → trả JSON `{success:false,error}` thay vì `Internal Server Error` (vỡ `res.json()` ở renderer → lỗi "Unexpected token 'I'").

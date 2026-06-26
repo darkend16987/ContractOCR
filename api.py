@@ -60,15 +60,22 @@ async def lifespan(app: FastAPI):
 
 
 def _get_ocr() -> BaseOCREngine:
-    """Lazily build the OCR engine on first use; cache it. Raises 503 on failure."""
+    """Lazily build the OCR engine on first use; cache it. Raises 503 on failure.
+
+    Defaults to PaddleOCR-only (detection + recognition in one fast pass). The
+    previous default — Hybrid (PaddleOCR detect + VietOCR recognize) — ran the
+    VietOCR transformer once per text line on CPU, ~3-4x slower per page for a
+    marginal accuracy gain. Set OCR_ENGINE=hybrid to restore it.
+    """
     global ocr_engine
     if ocr_engine is None:
-        logger.info("Loading OCR engine (hybrid: PaddleOCR detect + VietOCR recognize)...")
+        engine_type = os.getenv("OCR_ENGINE", "paddleocr")
+        logger.info("Loading OCR engine: %s", engine_type)
         try:
-            ocr_engine = create_engine("hybrid")
+            ocr_engine = create_engine(engine_type)
             logger.info("OCR engine ready")
         except Exception as e:
-            logger.warning("Hybrid engine failed, falling back to auto: %s", e)
+            logger.warning("%s engine failed, falling back to auto: %s", engine_type, e)
             try:
                 ocr_engine = create_engine("auto")
             except Exception as e2:

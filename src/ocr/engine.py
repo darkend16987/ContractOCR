@@ -89,26 +89,47 @@ class PaddleOCREngine(BaseOCREngine):
     Handles full document layout: text detection + recognition in one pass.
     """
 
-    def __init__(self, lang: str = "vi"):
+    # PP-OCRv5 ships "server" (heavy) and "mobile" (light) models. lang="vi"
+    # defaults to the SERVER detection model, which dominated CPU runtime in
+    # profiling (~42s/page vs ~18s with the mobile detector, same line count).
+    # We swap ONLY the detector to mobile: it's the expensive stage and accuracy
+    # is unchanged. The recognizer is left at the lang="vi" default — the mobile
+    # recognizer mangles Vietnamese diacritics ("Công"->"Cong", "giữa"->"gia")
+    # for only ~4s extra, not worth it. Both overridable via env.
+    _DEFAULT_DET_MODEL = "PP-OCRv5_mobile_det"
+    _DEFAULT_REC_MODEL = None  # None -> PaddleOCR picks the lang-specific recognizer
+
+    def __init__(self, lang: str = "vi", det_model: str | None = None, rec_model: str | None = None):
+        import os
         self.lang = lang
+        self.det_model = det_model or os.getenv("PADDLE_DET_MODEL") or self._DEFAULT_DET_MODEL
+        self.rec_model = rec_model or os.getenv("PADDLE_REC_MODEL") or self._DEFAULT_REC_MODEL
         self._ocr = None
 
     @property
     def ocr(self):
         if self._ocr is None:
-            logger.info("Loading PaddleOCR with lang=%s", self.lang)
+            logger.info("Loading PaddleOCR lang=%s det=%s rec=%s", self.lang, self.det_model, self.rec_model or "default")
             from paddleocr import PaddleOCR
             # PaddleOCR 3.x API: `use_angle_cls`/`show_log` removed. Disable the
-            # doc-orientation and unwarping sub-pipelines we don't need (faster load).
+            # doc-orientation, unwarping and textline-orientation sub-pipelines we
+            # don't need (faster load + inference; profiling showed orientation had
+            # negligible accuracy benefit on typed contracts).
             # enable_mkldnn=False avoids a paddlepaddle 3.3 PIR+oneDNN bug
-            # (NotImplementedError: ConvertPirAttribute2RuntimeAttribute) on CPU.
-            self._ocr = PaddleOCR(
+            # (NotImplementedError: ConvertPirAttribute2RuntimeAttribute) on CPU —
+            # re-tested with mobile models and PIR disabled, still crashes, so it
+            # stays off until paddlepaddle is upgraded.
+            kwargs = dict(
                 lang=self.lang,
-                use_textline_orientation=True,
+                text_detection_model_name=self.det_model,
+                use_textline_orientation=False,
                 use_doc_orientation_classify=False,
                 use_doc_unwarping=False,
                 enable_mkldnn=False,
             )
+            if self.rec_model:
+                kwargs["text_recognition_model_name"] = self.rec_model
+            self._ocr = PaddleOCR(**kwargs)
             logger.info("PaddleOCR loaded successfully")
         return self._ocr
 
