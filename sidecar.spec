@@ -17,6 +17,8 @@ from PyInstaller.utils.hooks import collect_all, copy_metadata
 # at runtime on those features. collect_all("matplotlib") bundles mpl-data/fonts/ttf/
 # DejaVuSans.ttf (the font _vietnamese_font() looks up).
 HEAVY_PACKAGES = (
+    "rapidocr",  # default engine: PP-OCR on onnxruntime (bundles default config yaml)
+    "onnxruntime",  # native inference runtime for rapidocr; ships its own DLLs
     "torch",
     "torchvision",
     "paddle",
@@ -54,6 +56,8 @@ for pkg in HEAVY_PACKAGES:
 # the .dist-info metadata for every package paddlex inspects. Names are the
 # *distribution* names (as on PyPI), not import names.
 METADATA_PACKAGES = (
+    "rapidocr",
+    "onnxruntime",
     "paddlex",
     "paddleocr",
     "paddlepaddle",

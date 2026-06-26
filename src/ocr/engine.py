@@ -263,13 +263,65 @@ class HybridOCREngine(BaseOCREngine):
         return out
 
 
+class RapidOCREngine(BaseOCREngine):
+    """OCR using RapidOCR (PP-OCR models on ONNX Runtime).
+
+    Same detection + recognition models as PaddleOCR but run through onnxruntime
+    instead of paddlepaddle. On CPU this is ~4-7x faster (onnxruntime has stable
+    oneDNN/MLAS; paddlepaddle 3.3 crashes with mkldnn enabled), it sidesteps the
+    paddle DLL/metadata packaging issues entirely, and the wheel is far smaller.
+    Vietnamese accuracy is on par with the PaddleOCR `lang=vi` recognizer.
+
+    Default recognizer is the multilingual Latin model (PP-OCRv6 via lang="EN"),
+    which covers Vietnamese diacritics. Returns boxes for the searchable-PDF layer.
+    """
+
+    def __init__(self, lang_rec: str = "EN"):
+        self.lang_rec = lang_rec
+        self._engine = None
+
+    @property
+    def engine(self):
+        if self._engine is None:
+            logger.info("Loading RapidOCR (onnxruntime) lang_rec=%s", self.lang_rec)
+            from rapidocr import RapidOCR, LangRec
+            self._engine = RapidOCR(params={"Rec.lang_type": LangRec[self.lang_rec]})
+            logger.info("RapidOCR loaded successfully")
+        return self._engine
+
+    def recognize(self, image: Image.Image) -> str:
+        """Recognize text; returns lines joined in detection (reading) order."""
+        import numpy as np
+        res = self.engine(np.array(image))
+        if res is None or res.txts is None:
+            return ""
+        return "\n".join(res.txts)
+
+    def recognize_boxes(self, image: Image.Image) -> list[tuple[str, list[float]]]:
+        """Recognize text with positions: [(text, [x0,y0,x1,y1]), ...].
+
+        RapidOCR returns quadrilateral boxes (N,4,2) in image-pixel coords; we
+        reduce each to an axis-aligned bbox for the invisible PDF text layer.
+        """
+        import numpy as np
+        res = self.engine(np.array(image))
+        if res is None or res.txts is None or res.boxes is None:
+            return []
+        out: list[tuple[str, list[float]]] = []
+        for text, poly in zip(res.txts, res.boxes):
+            p = np.asarray(poly, dtype=float)
+            out.append((text, [float(p[:, 0].min()), float(p[:, 1].min()),
+                               float(p[:, 0].max()), float(p[:, 1].max())]))
+        return out
+
+
 class AutoOCREngine(BaseOCREngine):
     """Automatic engine selection.
 
     Priority:
-    1. HybridOCREngine (PaddleOCR detection + VietOCR recognition) - best accuracy
-    2. PaddleOCREngine (full pipeline) - if VietOCR unavailable
-    3. VietOCREngine (recognition only) - fallback, limited to single lines
+    1. RapidOCREngine (PP-OCR on ONNX Runtime) - fast, accurate, no paddle crash
+    2. PaddleOCREngine (full pipeline) - fallback
+    3. VietOCREngine (recognition only) - last resort, single lines only
     """
 
     def __init__(self, vietocr_model: str = "vgg_transformer"):
@@ -279,16 +331,14 @@ class AutoOCREngine(BaseOCREngine):
     @property
     def engine(self) -> BaseOCREngine:
         if self._engine is None:
-            # Try Hybrid first (best accuracy for Vietnamese)
+            # Try RapidOCR first (fast onnxruntime PP-OCR, no paddle crash)
             try:
-                self._engine = HybridOCREngine(vietocr_model=self.vietocr_model)
-                # Test if both engines load
-                _ = self._engine._detector.ocr
-                _ = self._engine._recognizer.predictor
-                logger.info("Auto-selected Hybrid engine (PaddleOCR detection + VietOCR recognition)")
+                self._engine = RapidOCREngine()
+                _ = self._engine.engine
+                logger.info("Auto-selected RapidOCR engine (ONNX Runtime)")
                 return self._engine
             except Exception as e:
-                logger.info("Hybrid engine unavailable: %s", e)
+                logger.info("RapidOCR unavailable: %s", e)
 
             # Fallback to PaddleOCR only
             try:
@@ -316,13 +366,14 @@ def create_engine(engine_type: str = "auto", **kwargs) -> BaseOCREngine:
     """Factory function to create an OCR engine.
 
     Args:
-        engine_type: "vietocr", "paddleocr", "hybrid", or "auto"
+        engine_type: "rapidocr", "vietocr", "paddleocr", "hybrid", or "auto"
         **kwargs: Additional arguments passed to engine constructor
 
     Returns:
         An OCR engine instance
     """
     engines = {
+        "rapidocr": RapidOCREngine,
         "vietocr": VietOCREngine,
         "paddleocr": PaddleOCREngine,
         "hybrid": HybridOCREngine,

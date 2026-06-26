@@ -1,5 +1,11 @@
 # OCR Engines
 # NOTE: Requires Python 3.12 (NOT 3.13 — vietocr's pinned deps have no cp313 wheels).
+#
+# Default engine = RapidOCR (PP-OCR models on ONNX Runtime): ~4-7x faster than
+# PaddleOCR on CPU, on-par Vietnamese accuracy, and no paddlepaddle mkldnn crash.
+rapidocr>=3.0.0
+onnxruntime>=1.20.0
+# paddleocr/paddlepaddle + vietocr kept as selectable fallbacks (OCR_ENGINE env).
 # torch is needed by VietOCR but is NOT pulled in automatically, so list it here.
 # On Windows torch must import before paddle (handled in src/ocr/engine.py).
 vietocr>=0.3.5
