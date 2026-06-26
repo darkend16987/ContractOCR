@@ -6,7 +6,7 @@ Their licenses require that these notices accompany the distributed binary.
 The application itself, including the PyMuPDF dependency, is licensed under
 the GNU Affero General Public License v3.0 — see the LICENSE file.
 
-Generated: 2026-06-24
+Generated: 2026-06-26
 
 ==============================================================================
 pymupdf-1.27.2.3  —  Dual Licensed - GNU AFFERO GPL 3.0 or Artifex Commercial License

@@ -2,7 +2,7 @@
 FastAPI OCR Server for Nabu PDF.
 
 Exposes a /ocr endpoint that accepts base64 images,
-runs PaddleOCR detection + VietOCR recognition,
+runs RapidOCR (PP-OCR on ONNX Runtime) by default,
 and returns extracted Vietnamese text.
 """
 
@@ -51,8 +51,8 @@ TEMPLATE_LABELS = {
 async def lifespan(app: FastAPI):
     """No eager work — OCR models load lazily on first use (see _get_ocr).
 
-    Loading PaddleOCR + VietOCR costs ~GB of RAM and several seconds; doing it
-    at startup penalised every session even when the user only touched plain PDF
+    Loading the OCR engine + models costs RAM and a few seconds; doing it at
+    startup penalised every session even when the user only touched plain PDF
     features. The engine now builds on the first OCR-dependent request instead.
     """
     yield
@@ -87,7 +87,7 @@ def _get_ocr() -> BaseOCREngine:
 
 app = FastAPI(
     title="Nabu PDF API",
-    description="Vietnamese OCR API using PaddleOCR + VietOCR",
+    description="Vietnamese OCR API using RapidOCR (ONNX Runtime)",
     lifespan=lifespan,
 )
 

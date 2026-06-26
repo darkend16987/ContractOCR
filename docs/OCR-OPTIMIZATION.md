@@ -91,9 +91,24 @@ Vấn đề cốt lõi: **paddlepaddle trên CPU Windows = chậm (không mkldnn
 
 ---
 
+## 3b. ĐÃ CHỌN: RapidOCR (v0.2.5)
+
+Spike RapidOCR đã làm, benchmark thực tế (CPU, trang hợp đồng tiếng Việt):
+
+| Engine | Thời gian | Dấu tiếng Việt | Box | Deps |
+|--------|-----------|----------------|-----|------|
+| **RapidOCR3 (EN/onnx, PP-OCRv6)** | **1.7–2.7s** | = paddle | ✅ | onnxruntime ~28MB |
+| PaddleOCR v0.2.4 (mobile-det + vi-rec) | 6.9–18.6s | = rapid | ✅ | paddlepaddle hàng trăm MB |
+| RapidOCR v4 onnx default (ch) | 5.1s | ❌ mất dấu | ✅ | — |
+
+→ RapidOCR (rapidocr 3.x, `LangRec.EN` = PP-OCRv6 latin) **nhanh 4-7x, chính xác ngang PaddleOCR, có box, không crash**. Đặt làm **mặc định v0.2.5**; paddle/vietocr giữ làm fallback qua `OCR_ENGINE`. Đã smoke-test frozen sidecar.exe OK.
+
+Việc còn lại (chưa làm): nếu RapidOCR ổn trên scan thật, **bỏ hẳn paddlepaddle + torch/vietocr** khỏi bundle → giảm mạnh kích thước installer (hiện ~400MB phần lớn do paddle+torch).
+
 ## 4. Lộ trình đề xuất
 
 1. **v0.2.4 (đã ship)**: mobile det + paddle-only. Giảm ~3-4x. Quick win an toàn.
+1b. **v0.2.5 (đã ship)**: đổi mặc định sang RapidOCR/ONNX. Nhanh 4-7x, hết crash. ⭐
 2. **Tiếp theo — thấp rủi ro**: tiền xử lý ảnh (deskew/binarize) + downscale đầu vào + timeout/trang. Tăng cả tốc độ lẫn chính xác mà không đổi engine.
 3. **Spike RapidOCR**: prototype `RapidOCREngine` (cùng interface `BaseOCREngine`, có `recognize_boxes`), benchmark đối chứng paddle trên bộ ảnh thật. Nếu nhanh hơn rõ + chính xác tương đương → đặt làm mặc định, giữ paddle làm fallback.
 4. **Vision-LLM cho Bóc tách**: thêm chế độ gửi ảnh trực tiếp cho Gemini đa phương thức; để người dùng chọn (chính xác cao, cần mạng/API).

@@ -4,7 +4,13 @@
 > [DESIGN.md](DESIGN.md) (kiến trúc), [ROADMAP.md](ROADMAP.md) (tiến độ chi tiết),
 > [SETUP.md](SETUP.md) (dựng môi trường).
 
-_Cập nhật: 2026-06-26 · v0.2.4_
+_Cập nhật: 2026-06-26 · v0.2.5_
+
+> v0.2.5 — **Đổi OCR engine sang RapidOCR (ONNX Runtime)**:
+> - Engine mặc định: **RapidOCR** (PP-OCR trên onnxruntime) thay PaddleOCR/hybrid ([`engine.py`](src/ocr/engine.py) `RapidOCREngine`, [`api.py`](api.py) `_get_ocr`). Đo CPU: ~1-3s/trang vs PaddleOCR ~7-19s, độ chính xác dấu tiếng Việt tương đương, vẫn trả box cho searchable. Hết crash mkldnn của paddlepaddle.
+> - paddleocr/paddlepaddle/vietocr giữ làm fallback, chọn qua env `OCR_ENGINE` (rapidocr|paddleocr|hybrid|vietocr|auto).
+> - Deps: thêm `rapidocr>=3.0.0` + `onnxruntime>=1.20.0` ([`requirements.txt`](requirements.txt)); bundle trong [`sidecar.spec`](sidecar.spec). Model RapidOCR tải lần đầu (1 lần cần mạng, như paddle trước đây). **Đã smoke-test frozen sidecar.exe: /ocr OK 5.7s, tiếng Việt chuẩn.**
+> - Nghiên cứu đầy đủ + benchmark: [`docs/OCR-OPTIMIZATION.md`](docs/OCR-OPTIMIZATION.md).
 
 > v0.2.4 — **OCR tăng tốc ~3-4x**:
 > - Engine mặc định đổi từ **hybrid** (PaddleOCR detect + VietOCR recognize) sang **paddleocr** ([`api.py`](api.py) `_get_ocr`, env `OCR_ENGINE` override). Hybrid chạy transformer VietOCR mỗi dòng trên CPU → ~76s/trang; paddleocr 1 pass nhanh hơn nhiều, độ chính xác tiếng Việt vẫn tốt.

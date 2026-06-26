@@ -12,12 +12,12 @@ chú thích · watermark · redact · sửa chữ · nén · tạo PDF tìm-ki�
 ## Tổng quan
 
 ```
-Image/PDF → OCR (VietOCR/PaddleOCR) → AI Agent (Gemini) → Structured Output (JSON/Excel/GSheet/Markdown)
+Image/PDF → OCR (RapidOCR/ONNX) → AI Agent (Gemini) → Structured Output (JSON/Excel/GSheet/Markdown)
 ```
 
 **Pipeline:**
 1. **Input**: Upload ảnh scan hoặc PDF hợp đồng
-2. **OCR**: Trích xuất text tiếng Việt bằng PaddleOCR hoặc VietOCR
+2. **OCR**: Trích xuất text tiếng Việt bằng RapidOCR (PP-OCR trên ONNX Runtime; PaddleOCR/VietOCR là fallback)
 3. **AI Agent**: Gemini phân tích text → trích xuất các trường vào schema cố định
 4. **Output**: Lưu JSON, Excel, Google Sheet, hoặc Markdown
 
@@ -72,13 +72,13 @@ python cli.py contract_scan.jpg
 python cli.py file1.jpg file2.pdf --template mua_ban --output-format all
 
 # Chỉ định engine và API key
-python cli.py scan.png --engine paddleocr --api-key YOUR_KEY --verbose
+python cli.py scan.png --engine rapidocr --api-key YOUR_KEY --verbose
 ```
 
 **Options:**
 | Flag | Mô tả | Default |
 |------|--------|---------|
-| `--engine` | OCR engine: `auto`, `paddleocr`, `vietocr` | `auto` |
+| `--engine` | OCR engine: `auto`, `rapidocr`, `paddleocr`, `vietocr` | `auto` |
 | `--api-key` | Gemini API key | từ `.env` |
 | `--model` | Gemini model | `gemini-3-flash-preview` |
 | `--template` | Template trường: `generic`, `mua_ban`, `lao_dong`, `dich_vu` | `generic` |
@@ -107,7 +107,7 @@ Nabu-PDF/
 ├── src/
 │   ├── pipeline.py           # Pipeline orchestrator
 │   ├── ocr/
-│   │   └── engine.py         # OCR engines (VietOCR, PaddleOCR, Auto)
+│   │   └── engine.py         # OCR engines (RapidOCR, PaddleOCR, VietOCR, Auto)
 │   ├── agents/
 │   │   ├── gemini_agent.py   # Gemini AI extraction agent
 │   │   └── field_templates.py # Predefined field templates
@@ -126,19 +126,21 @@ Nabu-PDF/
 
 ## OCR Engines
 
-### PaddleOCR (khuyến nghị cho production)
-- Full document OCR: detection + recognition
-- Hỗ trợ tiếng Việt (`lang="vi"`)
-- Xử lý layout, bảng biểu
-- GPU acceleration
+### RapidOCR (mặc định)
+- Model PP-OCR chạy trên **ONNX Runtime** — nhanh ~4-7x so với PaddleOCR trên CPU
+- Độ chính xác tiếng Việt tương đương PaddleOCR; trả về cả toạ độ (cho searchable PDF)
+- Không dính bug mkldnn của paddlepaddle, gói runtime nhẹ
 
-### VietOCR
-- Transformer-based, tối ưu cho tiếng Việt
-- Độ chính xác rất cao trên text typed rõ ràng
-- Hoạt động trên từng dòng text
+### PaddleOCR (fallback)
+- Full document OCR: detection + recognition, hỗ trợ tiếng Việt (`lang="vi"`)
+- Trên paddlepaddle 3.x: chậm hơn trên CPU (mkldnn tắt do crash)
+
+### VietOCR (fallback)
+- Transformer-based, tối ưu tiếng Việt; chính xác cao trên text typed rõ
+- Nhận dạng theo từng dòng → rất chậm trên CPU cho cả trang
 
 ### Auto mode
-Tự động chọn PaddleOCR (full document). Fallback sang VietOCR nếu PaddleOCR không khả dụng.
+Ưu tiên RapidOCR → PaddleOCR → VietOCR theo khả dụng. Đổi bằng env `OCR_ENGINE`.
 
 ## Deploy
 
