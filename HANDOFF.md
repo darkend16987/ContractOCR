@@ -4,7 +4,12 @@
 > [DESIGN.md](DESIGN.md) (kiến trúc), [ROADMAP.md](ROADMAP.md) (tiến độ chi tiết),
 > [SETUP.md](SETUP.md) (dựng môi trường).
 
-_Cập nhật: 2026-06-26 · v0.2.7_
+_Cập nhật: 2026-06-26 · v0.2.8_
+
+> v0.2.8 — **Installer nhẹ ~400MB + fix font khi sửa chữ**:
+> - **Bỏ paddle khỏi bundle** ([`sidecar.spec`](sidecar.spec)): RapidViet là hot path duy nhất được đóng gói nên gỡ `paddle`/`paddleocr`/`paddlex` (~392+19+2MB) khỏi `HEAVY_PACKAGES` + `METADATA_PACKAGES`, thêm vào `excludes` để chắc chắn không bị kéo lại. `AutoOCREngine` vẫn fallback an toàn (RapidViet→RapidOCR→VietOCR). Giữ `scipy`/`scikit-image` (vietocr cần qua albumentations/imgaug) + `shapely`/`pyclipper` (post-process detection của RapidOCR). [`requirements.txt`](requirements.txt): paddle chuyển sang khối tuỳ chọn (không cài mặc định).
+> - **Fix font tính năng Sửa chữ** ([`api.py`](api.py) `_resolve_local_font`): matplotlib 3.11 `findfont()` trả về `FontPath` (subclass `str` kèm face-index) mà PyMuPDF `insert_font` từ chối (`bad fontfile`) → lỗi bị nuốt → **mọi** font cục bộ (chọn từ máy *hoặc* giữ font gốc) rơi về DejaVu. Sửa: coerce `str(found)` + thêm index tên font chuẩn hoá để khớp tên PDF dạng `TimesNewRomanPSMT`→`Times New Roman`. Đã kiểm chứng e2e qua `/edit-text`: giữ đúng font gốc & áp đúng font chọn.
+> - ⚠️ Build venv: cần `pip install -r requirements.txt` (đã gồm `rapidocr`/`onnxruntime`, bỏ paddle) trước `build:sidecar`.
 
 > v0.2.7 — **RapidViet: nhanh VÀ đúng dấu** (RapidOCR ONNX detect + VietOCR rec):
 > - Engine mới `RapidVietHybridOCREngine` ([`engine.py`](src/ocr/engine.py)) = detection bằng RapidOCR (ONNX, ~1s, không cần paddle) + recognition bằng VietOCR (batch, đúng dấu chồng). Đo CPU ấm: **~3-4s/trang** (vs Hybrid-paddle 44s cold/v0.2.6). Trả box cho searchable PDF.

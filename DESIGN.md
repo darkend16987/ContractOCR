@@ -73,8 +73,9 @@ mới phụ thuộc badge `ready`. Đóng app → kill sidecar.
 - **WYSIWYG sửa text gốc + reflow**: PDF lưu glyph theo tọa độ tuyệt đối, không phải dòng text.
   Cực khó, ngay cả Acrobat/Stirling để mức alpha. Với PDF scan thì bất khả thi nếu không OCR lại.
   → KHÔNG nằm trong phạm vi gần. Chỉ làm overlay.
-- **Footprint ML**: torch + paddle nặng GB, có native lib + tải weights runtime → khâu đóng gói khó nhất.
+- **Footprint ML**: torch nặng GB, có native lib + tải weights runtime → khâu đóng gói khó nhất.
   Giảm rủi ro bằng cách giải quyết ở **Phase 0** trước mọi feature.
+  _(v0.2.8: paddle đã bỏ khỏi bundle — chỉ đóng gói RapidViet = torch + onnxruntime + vietocr.)_
 
 ## 6. Khâu đóng gói — điểm rủi ro cao nhất
 
@@ -83,7 +84,7 @@ mới phụ thuộc badge `ready`. Đóng app → kill sidecar.
 | Vỏ Electron + UI | 🟢 Dễ | `electron-builder` → portable + nsis |
 | FastAPI sidecar | 🟡 TB | PyInstaller onedir (`sidecar.spec`) |
 | Ghostscript / qpdf | 🟢 Dễ | Bundle binary, gọi subprocess |
-| **torch + paddle** | 🔴 Khó | `collect_all` trong spec; iterate theo ModuleNotFoundError |
+| **torch + onnxruntime** | 🔴 Khó | `collect_all` trong spec; iterate theo ModuleNotFoundError (paddle đã loại) |
 | Model weights | 🟡 TB | P0: tải lần đầu (cần net). P5: bundle cache để offline tuyệt đối. |
 
 Xem chi tiết thực thi ở [ROADMAP.md](ROADMAP.md).

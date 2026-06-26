@@ -524,6 +524,31 @@ def _clean_font_name(name: str) -> str:
     return name.strip() or name
 
 
+# Normalised index of installed families: {alnum-lowercased name: real family}.
+# A PDF font name like "TimesNewRomanPSMT" cleans to "TimesNewRoman" (no spaces),
+# which matplotlib can't match against the installed "Times New Roman". Normalising
+# both sides (drop spaces/case) lets us recover the real family so findfont resolves.
+_FAM_INDEX: dict[str, str] | None = None
+
+
+def _norm_fam(s: str) -> str:
+    return _re.sub(r"[^a-z0-9]", "", s.lower())
+
+
+def _family_index() -> dict[str, str]:
+    global _FAM_INDEX
+    if _FAM_INDEX is None:
+        idx: dict[str, str] = {}
+        try:
+            from matplotlib import font_manager as fm
+            for f in fm.fontManager.ttflist:
+                idx.setdefault(_norm_fam(f.name), f.name)
+        except Exception as fe:
+            logger.debug("build family index failed: %s", fe)
+        _FAM_INDEX = idx
+    return _FAM_INDEX
+
+
 def _resolve_local_font(name: str, bold: bool, italic: bool) -> str | None:
     """Resolve a font family name + style to a local TTF path, or None.
 
@@ -538,14 +563,20 @@ def _resolve_local_font(name: str, bold: bool, italic: bool) -> str | None:
     try:
         from matplotlib import font_manager as fm
 
+        cleaned = _clean_font_name(name)
+        # Map the cleaned name onto a real installed family when possible (handles
+        # space-collapsed PDF names like "TimesNewRoman" -> "Times New Roman").
+        family = _family_index().get(_norm_fam(cleaned), cleaned)
         fp = fm.FontProperties(
-            family=_clean_font_name(name),
+            family=family,
             weight="bold" if bold else "normal",
             style="italic" if italic else "normal",
         )
         found = fm.findfont(fp, fallback_to_default=False)
+        # findfont returns a FontPath (a str subclass carrying a face index) that
+        # PyMuPDF's insert_font rejects as "bad fontfile" — coerce to a plain str.
         if found and Path(found).is_file():
-            path = found
+            path = str(found)
     except Exception as fe:  # ValueError when no family matches
         logger.debug("resolve local font '%s' failed: %s", name, fe)
         path = ""

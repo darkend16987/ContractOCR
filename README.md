@@ -136,7 +136,10 @@ Nabu-PDF/
 > tiếng Việt** — dict của model **thiếu** ký tự dấu chồng (ạ/ấ/ộ/ợ/ử...). Vì vậy phần
 > recognition luôn dùng VietOCR.
 
-### Hybrid (tuỳ chọn)
+> ℹ️ **Bản desktop (.exe) chỉ đóng gói RapidViet** để installer nhẹ (~400MB tiết kiệm).
+> Các engine `hybrid`/`paddleocr` cần cài thêm paddle: `pip install paddleocr paddlepaddle`.
+
+### Hybrid (tuỳ chọn — cần cài paddle)
 - Như RapidViet nhưng detection bằng **PaddleOCR** (load chậm hơn, kéo theo paddlepaddle)
 
 ### RapidOCR (tuỳ chọn — nhanh, yếu dấu)

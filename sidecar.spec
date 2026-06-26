@@ -3,7 +3,7 @@
 # Build:  pyinstaller sidecar.spec --noconfirm
 # Output: dist/sidecar/sidecar.exe  (onedir — bundled by electron-builder)
 #
-# NOTE: torch / paddle / paddleocr / vietocr ship large native libs and data
+# NOTE: torch / rapidocr / onnxruntime / vietocr ship large native libs and data
 # files. collect_all() pulls binaries + datas + hidden imports for each package.
 # Expect to iterate: build, run `dist/sidecar/sidecar.exe --port 8000`, read the
 # ModuleNotFoundError, then add the missing module to `extra_hiddenimports` below.
@@ -16,14 +16,17 @@ from PyInstaller.utils.hooks import collect_all, copy_metadata
 # static analysis misses them — they MUST be collected here or the packaged app fails
 # at runtime on those features. collect_all("matplotlib") bundles mpl-data/fonts/ttf/
 # DejaVuSans.ttf (the font _vietnamese_font() looks up).
+# Default engine = RapidViet (RapidOCR ONNX detect + VietOCR recognise). The
+# paddle stack is intentionally NOT bundled: it's only a manual fallback
+# (OCR_ENGINE=paddleocr/hybrid), AutoOCREngine degrades gracefully without it, and
+# dropping it shaves ~400MB off the installer/portable (paddlepaddle ~392MB +
+# paddlex ~19MB + paddleocr). shapely + pyclipper feed RapidOCR's detection
+# post-process; skimage/scipy arrive via vietocr (albumentations/imgaug) so stay.
 HEAVY_PACKAGES = (
     "rapidocr",  # default engine: PP-OCR on onnxruntime (bundles default config yaml)
     "onnxruntime",  # native inference runtime for rapidocr; ships its own DLLs
     "torch",
     "torchvision",
-    "paddle",
-    "paddleocr",
-    "paddlex",  # paddleocr 3.x runs all inference through paddlex — must be bundled
     "vietocr",
     "cv2",
     "shapely",
@@ -47,21 +50,14 @@ for pkg in HEAVY_PACKAGES:
     except Exception as exc:  # package may be optional / not importable at build time
         print(f"[sidecar.spec] skipped {pkg}: {exc}")
 
-# CRITICAL: paddlex gates every inference pipeline behind a dependency check that
-# reads each package's *installed metadata* via importlib.metadata.version() (see
-# paddlex/utils/deps.py). collect_all() bundles a package's own metadata but NOT
-# its dependencies', so in the frozen app these lookups return None and paddlex
-# raises DependencyError -> PaddleOCR reports "A dependency error occurred during
-# pipeline creation". The OCR pipeline needs the paddlex `ocr-core` extra; bundle
-# the .dist-info metadata for every package paddlex inspects. Names are the
-# *distribution* names (as on PyPI), not import names.
+# Some packages probe their dependencies' *installed metadata* at runtime via
+# importlib.metadata.version(). collect_all() bundles a package's own metadata but
+# NOT its dependencies', so in the frozen app those lookups return None and the
+# probe fails. Bundle the .dist-info metadata for the rapidocr pipeline's deps.
+# Names are the *distribution* names (as on PyPI), not import names.
 METADATA_PACKAGES = (
     "rapidocr",
     "onnxruntime",
-    "paddlex",
-    "paddleocr",
-    "paddlepaddle",
-    # paddlex `ocr-core` extra (required by the OCR detection+recognition pipeline)
     "imagesize",
     "opencv-contrib-python",
     "pyclipper",
@@ -93,7 +89,12 @@ a = Analysis(
     hiddenimports=hiddenimports + extra_hiddenimports,
     hookspath=[],
     runtime_hooks=[],
-    excludes=["streamlit", "tkinter", "matplotlib.tests", "PyQt5"],
+    # Hard-exclude the paddle stack so a build host that still has it installed
+    # doesn't drag ~400MB back in via some transitive collect. RapidViet is default.
+    excludes=[
+        "streamlit", "tkinter", "matplotlib.tests", "PyQt5",
+        "paddle", "paddleocr", "paddlex", "paddlepaddle",
+    ],
     noarchive=False,
 )
 
@@ -114,6 +115,6 @@ coll = COLLECT(
     a.binaries,
     a.datas,
     strip=False,
-    upx=False,  # UPX corrupts some torch/paddle DLLs — leave off.
+    upx=False,  # UPX corrupts some torch/onnxruntime DLLs — leave off.
     name="sidecar",
 )
