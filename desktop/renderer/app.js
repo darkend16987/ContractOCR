@@ -502,13 +502,18 @@ async function addNoteMarkers(i, m) {
   } catch (_) {
     return;
   }
-  const notes = (annots || []).filter((a) => a.subtype === "Text" && a.contents);
+  // pdf.js ≥3.x exposes a markup annotation's text as `contentsObj.str`
+  // ({str, dir}); the old plain `contents` string was removed. Reading the old
+  // field made `notes` always empty, so comments stayed invisible in our viewer.
+  const noteText = (a) => (a.contentsObj && a.contentsObj.str) || a.contents || "";
+  const notes = (annots || []).filter((a) => a.subtype === "Text" && noteText(a));
   if (!notes.length) return;
   const layer = document.createElement("div");
   layer.className = "note-layer";
   layer.style.width = (parseFloat(canvas.style.width) || cw) + "px";
   layer.style.height = (parseFloat(canvas.style.height) || ch) + "px";
   for (const an of notes) {
+    const text = noteText(an);
     const r = vp.convertToViewportRectangle(an.rect);
     const x = Math.min(r[0], r[2]);
     const y = Math.min(r[1], r[3]);
@@ -518,10 +523,10 @@ async function addNoteMarkers(i, m) {
     el.style.top = y + "px";
     el.style.width = Math.max(16, Math.abs(r[2] - r[0])) + "px";
     el.style.height = Math.max(16, Math.abs(r[3] - r[1])) + "px";
-    el.title = an.contents;
+    el.title = text;
     el.onclick = (e) => {
       e.stopPropagation();
-      showNotePopup(an.contents, e.clientX, e.clientY);
+      showNotePopup(text, e.clientX, e.clientY);
     };
     layer.appendChild(el);
   }

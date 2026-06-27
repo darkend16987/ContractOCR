@@ -4,7 +4,12 @@
 > [DESIGN.md](DESIGN.md) (kiến trúc), [ROADMAP.md](ROADMAP.md) (tiến độ chi tiết),
 > [SETUP.md](SETUP.md) (dựng môi trường).
 
-_Cập nhật: 2026-06-26 · v0.2.8_
+_Cập nhật: 2026-06-27 · v0.2.9_
+
+> v0.2.9 — **Fix THỰC SỰ: ghi chú (note) đọc được trong app**:
+> - Note bake ra PDF `Text` annotation, nội dung nằm ở `/Contents`. `addNoteMarkers()` ([`app.js`](desktop/renderer/app.js)) đọc `a.contents` — nhưng **pdf.js 3.x đã bỏ trường này**, chuyển text sang `a.contentsObj.str` ({str,dir}). Nên `notes` luôn rỗng → marker không bao giờ hiện (Foxit/Acrobat tự parse `/Contents` nên vẫn đọc được). Lần "fix" v0.2.x trước chưa từng chạy.
+> - Sửa: đọc `a.contentsObj?.str || a.contents` (giữ fallback cũ) cho cả filter, tooltip và popup. Kiểm chứng bằng pdf.js 3.11 thật trên PDF có note: `a.contents=undefined`, `a.contentsObj.str="Ghi chú…"`. Filter giữ subtype `Text` nên annotation `Popup` đi kèm không tạo marker trùng.
+> - Sidecar KHÔNG đổi — chỉ đóng gói lại Electron.
 
 > v0.2.8 — **Installer nhẹ ~400MB + fix font khi sửa chữ**:
 > - **Bỏ paddle khỏi bundle** ([`sidecar.spec`](sidecar.spec)): RapidViet là hot path duy nhất được đóng gói nên gỡ `paddle`/`paddleocr`/`paddlex` (~392+19+2MB) khỏi `HEAVY_PACKAGES` + `METADATA_PACKAGES`, thêm vào `excludes` để chắc chắn không bị kéo lại. `AutoOCREngine` vẫn fallback an toàn (RapidViet→RapidOCR→VietOCR). Giữ `scipy`/`scikit-image` (vietocr cần qua albumentations/imgaug) + `shapely`/`pyclipper` (post-process detection của RapidOCR). [`requirements.txt`](requirements.txt): paddle chuyển sang khối tuỳ chọn (không cài mặc định).
