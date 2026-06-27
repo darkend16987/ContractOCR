@@ -427,6 +427,53 @@ body.editing .note-marker, body.text-editing .note-marker { pointer-events: none
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
 }
 
+/* ---- find-in-document (Ctrl+F) ---- */
+.find-bar {
+  position: absolute; top: 12px; right: 22px; z-index: 45;
+  display: flex; align-items: center; gap: 4px;
+  background: var(--panel); border: 1px solid var(--border);
+  border-radius: 10px; padding: 5px 6px;
+  box-shadow: 0 6px 22px rgba(0, 0, 0, 0.35);
+}
+.find-bar .find-ic { opacity: 0.6; margin: 0 2px; }
+.find-bar input {
+  width: 220px; border: none; outline: none; background: transparent;
+  color: var(--fg); font-size: 13px; padding: 2px 4px;
+}
+.find-bar input.no-hit { color: #e5484d; }
+.find-count {
+  font-size: 12px; color: var(--muted);
+  min-width: 46px; text-align: center; font-variant-numeric: tabular-nums;
+}
+.find-bar .find-up { transform: rotate(180deg); }
+.search-layer { position: absolute; left: 0; top: 0; pointer-events: none; z-index: 3; }
+.search-hl {
+  position: absolute; background: rgba(255, 213, 74, 0.45);
+  border-radius: 2px; mix-blend-mode: multiply;
+}
+.search-hl.current { background: rgba(255, 138, 0, 0.6); }
+
+/* ---- selectable text layer (text-based PDFs) ---- */
+.text-layer {
+  position: absolute; left: 0; top: 0;
+  overflow: hidden;
+  line-height: 1;
+  forced-color-adjust: none;
+}
+.text-layer span, .text-layer br {
+  color: transparent;
+  position: absolute;
+  white-space: pre;
+  cursor: text;
+  transform-origin: 0% 0%;
+}
+.text-layer span.markedContent { top: 0; height: 0; }
+.text-layer ::selection { background: rgba(0, 120, 215, 0.35); }
+/* don't let the text layer swallow clicks meant for the active editors */
+body.editing .text-layer, body.text-editing .text-layer {
+  pointer-events: none; user-select: none;
+}
+
 /* ---- P6 native text editing (span boxes over the real text) ---- */
 .tedit-layer {
   position: absolute;

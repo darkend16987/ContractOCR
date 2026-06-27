@@ -598,6 +598,7 @@ class SearchableRequest(BaseModel):
     """Request body for building a searchable PDF (invisible OCR text layer)."""
     pdf_b64: str  # the source PDF, base64 (no data URL prefix)
     dpi: int = 200  # rasterisation DPI for OCR
+    force_ocr: bool = False  # OCR every page even if it already has a text layer
 
 
 class SearchableResponse(BaseModel):
@@ -606,6 +607,8 @@ class SearchableResponse(BaseModel):
     data_b64: str = ""
     pages: int = 0
     words: int = 0
+    ocr_pages: int = 0      # pages actually OCR'd (scanned)
+    skipped_pages: int = 0  # pages skipped because they already had real text
     error: str | None = None
 
 
@@ -621,11 +624,13 @@ async def searchable(req: SearchableRequest):
     except ImportError:
         raise HTTPException(status_code=503, detail="PyMuPDF (fitz) chưa cài — không tạo được searchable PDF.")
 
-    engine = _get_ocr()
-
+    # Engine + font are loaded lazily on the first page that actually needs OCR:
+    # a fully digital PDF (every page already has a text layer) then returns
+    # instantly without paying the engine warm-up cost.
     font_path = _vietnamese_font()
     if not font_path:
         raise HTTPException(status_code=503, detail="Không tìm thấy font Unicode (DejaVu Sans) để nhúng lớp text.")
+    engine = None
 
     if len(req.pdf_b64) > _MAX_PDF_B64:
         raise HTTPException(status_code=400, detail="PDF quá lớn (tối đa ~200MB).")
@@ -646,37 +651,82 @@ async def searchable(req: SearchableRequest):
         doc.close()
         raise HTTPException(status_code=400, detail="PDF quá nhiều trang (tối đa 100).")
 
+    # One reusable font object for width measurement (text_length) — the same TTF
+    # the invisible layer embeds, so measured widths match what gets drawn.
+    ocr_font = fitz.Font(fontfile=font_path)
+
     total_words = 0
+    ocr_pages = 0
+    skipped_pages = 0
     try:
         for page in doc:
-            page.insert_font(fontname="vnocr", fontfile=font_path)
-            pix = page.get_pixmap(dpi=dpi, alpha=False)
-            image = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
-            try:
-                boxes = engine.recognize_boxes(image)
-            except NotImplementedError:
-                doc.close()
-                raise HTTPException(status_code=503, detail="Engine OCR hiện tại không hỗ trợ định vị (cần Hybrid/Paddle).")
-
-            for text, (x0, y0, x1, y1) in boxes:
-                t = (text or "").strip()
-                if not t:
+            # Skip pages that already carry a real (selectable) text layer: a
+            # mixed text+scan document then only OCRs its scanned pages — far
+            # faster — and we avoid stacking a second OCR layer on top of clean
+            # text (which garbled copy/search). force_ocr overrides this.
+            if not req.force_ocr:
+                existing = page.get_text("text") or ""
+                if len(existing.strip()) >= 20:
+                    skipped_pages += 1
                     continue
-                # Box in PDF points; baseline near the box bottom.
-                bx0, by1 = x0 * scale, y1 * scale
-                box_h = (y1 - y0) * scale
-                fontsize = max(2.0, box_h * 0.8)
+
+            # One bad page must not sink the whole document: isolate per-page so a
+            # blank/odd page is skipped instead of failing the entire request.
+            try:
+                if engine is None:
+                    engine = _get_ocr()
+                pix = page.get_pixmap(dpi=dpi, alpha=False)
+                image = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
                 try:
-                    page.insert_text(
-                        (bx0, by1 - box_h * 0.15),
-                        t,
-                        fontname="vnocr",
-                        fontsize=fontsize,
-                        render_mode=3,  # invisible
-                    )
-                    total_words += 1
-                except Exception as e:
-                    logger.debug("skip text box: %s", e)
+                    boxes = engine.recognize_boxes(image)
+                except NotImplementedError:
+                    doc.close()
+                    raise HTTPException(status_code=503, detail="Engine OCR hiện tại không hỗ trợ định vị (cần Hybrid/Paddle).")
+
+                for text, (x0, y0, x1, y1) in boxes:
+                    t = (text or "").strip()
+                    if not t:
+                        continue
+                    # Drop degenerate boxes (a thin/zero detection yields a junk
+                    # crop and would only add a misplaced invisible glyph).
+                    if (x1 - x0) < 3 or (y1 - y0) < 3:
+                        continue
+                    # Box in PDF points.
+                    bx0 = x0 * scale
+                    box_w = (x1 - x0) * scale
+                    box_h = (y1 - y0) * scale
+                    by1 = y1 * scale
+                    # Fontsize from box height (correct vertical extent), then scale
+                    # the text horizontally so its rendered width fills the box — so
+                    # the invisible glyphs line up with the visual word and a viewer's
+                    # selection/search highlight sits exactly over it (OCRmyPDF-style).
+                    # Height-only sizing (the old way) ignored width, so selection on
+                    # an OCR'd page landed off the text.
+                    fontsize = max(2.0, box_h * 0.85)
+                    natural_w = ocr_font.text_length(t, fontsize=fontsize)
+                    if natural_w <= 0:
+                        continue
+                    sx = box_w / natural_w
+                    sx = max(0.05, min(sx, 20.0))  # guard against bad-OCR extremes
+                    baseline = fitz.Point(bx0, by1 - box_h * 0.18)
+                    try:
+                        tw = fitz.TextWriter(page.rect)
+                        tw.append(baseline, t, font=ocr_font, fontsize=fontsize)
+                        # morph: scale x by sx about the line's left baseline point.
+                        tw.write_text(
+                            page,
+                            morph=(baseline, fitz.Matrix(sx, 1)),
+                            render_mode=3,  # invisible
+                        )
+                        total_words += 1
+                    except Exception as e:
+                        logger.debug("skip text box: %s", e)
+                ocr_pages += 1
+            except HTTPException:
+                raise
+            except Exception as e:
+                logger.warning("Searchable: bỏ qua trang %d do lỗi: %s", page.number, e)
+                continue
 
         out_bytes = doc.tobytes(deflate=True, garbage=3)
         page_count = doc.page_count
@@ -695,6 +745,8 @@ async def searchable(req: SearchableRequest):
         data_b64=base64.b64encode(out_bytes).decode("ascii"),
         pages=page_count,
         words=total_words,
+        ocr_pages=ocr_pages,
+        skipped_pages=skipped_pages,
     )
 
 

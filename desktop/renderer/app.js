@@ -29,6 +29,17 @@ const state = {
   dragSrc: null,
 };
 
+// Find-in-document state. `docItems` caches each page's text runs (str + folded
+// + geometry) so re-searching is instant; it's keyed to the loaded pdf so a
+// reload/edit rebuilds it. `matches` is a flat, reading-order list.
+const search = {
+  query: "",
+  docItems: null,
+  docToken: null,
+  matches: [],
+  current: -1,
+};
+
 const sidecar = { state: "starting", base: null, token: null };
 
 // fetch() against the sidecar, carrying the per-launch auth token. Use this for
@@ -294,6 +305,7 @@ function promptPassword() {
 
 async function renderAll() {
   showOverlay("Đang tải tài liệu…");
+  closeFind(); // a fresh document invalidates any open search
   try {
     if (state.pdf) {
       try { await state.pdf.destroy(); } catch (_) {}
@@ -482,10 +494,46 @@ async function renderPageCanvas(i) {
       viewport: vp,
       transform: dpr !== 1 ? [dpr, 0, 0, dpr, 0, 0] : undefined,
     }).promise;
+    await addTextLayer(i, m);  // selectable/​highlightable text for text-based pages
     await addNoteMarkers(i, m); // surface baked sticky-note comments (readable in-app)
+    if (search.matches.length) drawSearchLayer(i); // repaint find highlights on (re)render
   } catch (_) {
     m.wrap.dataset.rendered = "0"; // let it retry on the next intersection
   }
+}
+
+// Overlay a transparent, selectable pdf.js text layer on a page that has real
+// (digital) text. Scanned pages return no text content → no layer (correct: you
+// can't select pixels). Lets the user drag-select / Ctrl+F-style highlight like
+// Foxit. The layer sits above the canvas but below the note markers; it's
+// disabled (pointer-events:none) while annotating or text-editing so it never
+// fights those tools. pdf.js 3.x positions spans via the `--scale-factor` var.
+async function addTextLayer(i, m) {
+  const { page, vp, wrap, canvas, cw, ch } = m;
+  const existing = wrap.querySelector(".text-layer");
+  if (existing) existing.remove();
+  let tc;
+  try {
+    tc = await page.getTextContent();
+  } catch (_) {
+    return;
+  }
+  if (!tc || !tc.items || !tc.items.length) return; // scanned/empty page
+  const layer = document.createElement("div");
+  layer.className = "text-layer";
+  layer.style.width = (parseFloat(canvas.style.width) || cw) + "px";
+  layer.style.height = (parseFloat(canvas.style.height) || ch) + "px";
+  layer.style.setProperty("--scale-factor", String(state.scale));
+  try {
+    await pdfjsLib.renderTextLayer({
+      textContentSource: tc,
+      container: layer,
+      viewport: vp,
+    }).promise;
+  } catch (_) {
+    return;
+  }
+  wrap.appendChild(layer);
 }
 
 // Baked notes (from the editor) are real PDF `Text` annotations — pdf.js paints
@@ -551,6 +599,162 @@ function showNotePopup(text, cx, cy) {
   pop.hidden = false;
   pop.style.left = Math.min(cx + 8, window.innerWidth - 280) + "px";
   pop.style.top = Math.min(cy + 8, window.innerHeight - 140) + "px";
+}
+
+// ---- find in document (Ctrl+F) -------------------------------------------
+
+// Fold to a case- AND diacritic-insensitive form so "dieu khoan" finds "Điều
+// khoản" (very handy when typing Vietnamese without dấu). NFD splits the base
+// letter from its combining marks, which we strip; đ/Đ don't decompose so they're
+// mapped by hand.
+function foldText(s) {
+  return s
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .replace(/đ/g, "d")
+    .replace(/Đ/g, "D")
+    .toLowerCase();
+}
+
+// Build (once per loaded document) each page's text runs with the geometry needed
+// to draw highlight boxes: pdf.js text items carry `transform` (baseline origin in
+// unscaled PDF space) and `width` (advance, unscaled), which we project per zoom.
+async function ensureSearchIndex() {
+  if (search.docItems && search.docToken === state.pdf) return search.docItems;
+  const docItems = [];
+  for (let i = 0; i < state.numPages; i++) {
+    const page =
+      (state.pageMetas && state.pageMetas[i] && state.pageMetas[i].page) ||
+      (await state.pdf.getPage(i + 1));
+    let tc;
+    try {
+      tc = await page.getTextContent();
+    } catch (_) {
+      tc = { items: [] };
+    }
+    const items = [];
+    for (const it of tc.items || []) {
+      if (typeof it.str !== "string" || !it.str) continue;
+      items.push({ folded: foldText(it.str), transform: it.transform, width: it.width });
+    }
+    docItems.push(items);
+  }
+  search.docItems = docItems;
+  search.docToken = state.pdf;
+  return docItems;
+}
+
+async function runSearch(q) {
+  search.query = q || "";
+  const matches = [];
+  const fq = foldText((q || "").trim());
+  if (fq) {
+    const docItems = await ensureSearchIndex();
+    for (let i = 0; i < docItems.length; i++) {
+      for (const it of docItems[i]) {
+        const hay = it.folded;
+        const L = hay.length || 1;
+        let from = 0;
+        let idx;
+        while ((idx = hay.indexOf(fq, from)) !== -1) {
+          matches.push({
+            page: i,
+            transform: it.transform,
+            width: it.width,
+            fracStart: idx / L,
+            fracEnd: (idx + fq.length) / L,
+          });
+          from = idx + Math.max(1, fq.length);
+        }
+      }
+    }
+  }
+  search.matches = matches;
+  search.current = matches.length ? 0 : -1;
+  // Repaint highlights on every page already on screen.
+  if (state.pageMetas) {
+    for (let i = 0; i < state.numPages; i++) {
+      if (state.pageMetas[i].wrap.dataset.rendered === "1") drawSearchLayer(i);
+    }
+  }
+  updateFindCount();
+  if (search.current >= 0) await gotoMatch(0);
+  $("find-input").classList.toggle("no-hit", !!fq && !matches.length);
+}
+
+// Paint (or clear) the highlight boxes for one page from the current matches.
+function drawSearchLayer(i) {
+  const m = state.pageMetas && state.pageMetas[i];
+  if (!m) return;
+  const { wrap, vp, canvas, cw, ch } = m;
+  const old = wrap.querySelector(".search-layer");
+  if (old) old.remove();
+  const here = [];
+  for (let gi = 0; gi < search.matches.length; gi++) {
+    if (search.matches[gi].page === i) here.push(gi);
+  }
+  if (!here.length) return;
+  const layer = document.createElement("div");
+  layer.className = "search-layer";
+  layer.style.width = (parseFloat(canvas.style.width) || cw) + "px";
+  layer.style.height = (parseFloat(canvas.style.height) || ch) + "px";
+  for (const gi of here) {
+    const mt = search.matches[gi];
+    const tx = pdfjsLib.Util.transform(vp.transform, mt.transform);
+    const fontH = Math.hypot(tx[2], tx[3]);
+    const wdev = mt.width * vp.scale;
+    const el = document.createElement("div");
+    el.className = "search-hl" + (gi === search.current ? " current" : "");
+    el.dataset.mi = String(gi);
+    el.style.left = tx[4] + mt.fracStart * wdev + "px";
+    el.style.top = tx[5] - fontH + "px";
+    el.style.width = Math.max(2, (mt.fracEnd - mt.fracStart) * wdev) + "px";
+    el.style.height = fontH + "px";
+    layer.appendChild(el);
+  }
+  wrap.appendChild(layer);
+}
+
+// Move to the n-th match (wraps around), rendering its page if needed, then
+// scroll the highlight into view and mark it as current.
+async function gotoMatch(idx) {
+  const n = search.matches.length;
+  if (!n) return;
+  search.current = ((idx % n) + n) % n;
+  const page = search.matches[search.current].page;
+  await renderPageCanvas(page); // no-op if already drawn; also (re)draws its layer
+  drawSearchLayer(page);
+  document.querySelectorAll(".search-hl.current").forEach((e) => e.classList.remove("current"));
+  const el = document.querySelector(`.search-layer .search-hl[data-mi="${search.current}"]`);
+  if (el) {
+    el.classList.add("current");
+    el.scrollIntoView({ behavior: "smooth", block: "center" });
+  } else {
+    scrollToPage(page);
+  }
+  updateFindCount();
+}
+
+function updateFindCount() {
+  const c = $("find-count");
+  if (c) c.textContent = search.matches.length ? `${search.current + 1}/${search.matches.length}` : "0/0";
+}
+
+function openFind() {
+  if (!state.pdf) return;
+  $("find-bar").hidden = false;
+  const inp = $("find-input");
+  inp.focus();
+  inp.select();
+  if (inp.value.trim()) runSearch(inp.value);
+}
+
+function closeFind() {
+  $("find-bar").hidden = true;
+  search.matches = [];
+  search.current = -1;
+  search.query = "";
+  document.querySelectorAll(".search-layer").forEach((e) => e.remove());
 }
 
 // Re-render after an in-place edit (overlay bake / native text edit) WITHOUT the
@@ -1257,7 +1461,12 @@ async function makeSearchable() {
     const bytes = Uint8Array.from(atob(data.data_b64), (ch) => ch.charCodeAt(0));
     const name = `${baseName(state.name)}-searchable.pdf`;
     const r = await window.desktop.savePdf(bytes, name);
-    if (r.saved) toast(`Đã lưu PDF tìm-kiếm-được (${data.words} cụm text): ` + r.path, "good");
+    if (r.saved) {
+      const skip = data.skipped_pages
+        ? ` · bỏ qua ${data.skipped_pages} trang đã có text`
+        : "";
+      toast(`Đã lưu PDF tìm-kiếm-được (OCR ${data.ocr_pages || 0} trang, ${data.words} cụm text${skip}): ` + r.path, "good");
+    }
   } catch (err) {
     toast("Lỗi tạo searchable: " + err.message, "bad");
   } finally {
@@ -1813,6 +2022,26 @@ $("btn-zoom-out").onclick = () => zoom(-0.2);
 $("btn-ocr").onclick = openExtractPanel;
 $("btn-searchable").onclick = makeSearchable;
 $("btn-compress").onclick = openCompress;
+
+// ---- find-in-document controls ----
+let findTimer;
+$("find-input").addEventListener("input", (e) => {
+  clearTimeout(findTimer);
+  const v = e.target.value;
+  findTimer = setTimeout(() => runSearch(v), 180);
+});
+$("find-input").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") {
+    e.preventDefault();
+    gotoMatch(search.current + (e.shiftKey ? -1 : 1));
+  } else if (e.key === "Escape") {
+    e.preventDefault();
+    closeFind();
+  }
+});
+$("find-next").onclick = () => gotoMatch(search.current + 1);
+$("find-prev").onclick = () => gotoMatch(search.current - 1);
+$("find-close").onclick = closeFind;
 $("cmp-cancel").onclick = () => ($("cmp-modal").hidden = true);
 $("cmp-ok").onclick = runCompress;
 
@@ -1979,6 +2208,9 @@ window.addEventListener("keydown", (e) => {
     } else if (e.key === "0") {
       e.preventDefault();
       zoomReset();
+    } else if (k === "f") {
+      e.preventDefault();
+      openFind();
     }
     return;
   }

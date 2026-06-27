@@ -193,6 +193,16 @@
         <div class="thumbs" id="thumbs"></div>
       </aside>
 
+      <!-- Find-in-document bar (Ctrl+F). Floats over the viewer's top-right. -->
+      <div class="find-bar" id="find-bar" hidden>
+        <svg class="ic find-ic"><use href="#ic-file-search"/></svg>
+        <input type="text" id="find-input" placeholder="Tìm trong tài liệu…" spellcheck="false" />
+        <span id="find-count" class="find-count">0/0</span>
+        <button id="find-prev" class="icon-only" title="Kết quả trước (Shift+Enter)"><svg class="ic find-up"><use href="#ic-chevron"/></svg></button>
+        <button id="find-next" class="icon-only" title="Kết quả tiếp (Enter)"><svg class="ic"><use href="#ic-chevron"/></svg></button>
+        <button id="find-close" class="icon-only" title="Đóng (Esc)"><svg class="ic"><use href="#ic-plus" style="transform:rotate(45deg);transform-origin:center"/></svg></button>
+      </div>
+
       <section class="viewer" id="viewer">
         <div class="empty" id="empty-state">
           <div class="empty-icon"><svg class="ic"><use href="#ic-file-search"/></svg></div>

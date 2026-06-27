@@ -4,7 +4,14 @@
 > [DESIGN.md](DESIGN.md) (kiến trúc), [ROADMAP.md](ROADMAP.md) (tiến độ chi tiết),
 > [SETUP.md](SETUP.md) (dựng môi trường).
 
-_Cập nhật: 2026-06-27 · v0.2.9_
+_Cập nhật: 2026-06-28 · v0.2.10_
+
+> v0.2.10 — **Tìm kiếm (Ctrl+F) + bôi đen text + searchable doc trộn nhanh hơn**:
+> - **Tìm kiếm trong tài liệu** ([`app.js`](desktop/renderer/app.js)): thanh Ctrl+F (input + ‹/› + đếm `n/total` + Esc), highlight vàng, kết quả hiện màu cam, cuộn tới. **Không dấu vẫn tìm ra có dấu** (`foldText`: NFD bỏ combining + đ→d, case-insensitive) — gõ "dieu khoan" thấy "Điều khoản". Index cache theo `state.pdf`; vẽ box từ `item.transform`+`width` qua `pdfjsLib.Util.transform` nên đúng ở mọi mức zoom.
+> - **Bôi đen/chọn text** ([`app.js`](desktop/renderer/app.js) `addTextLayer`): phủ `pdfjsLib.renderTextLayer()` lên trang text-based → kéo chọn/copy như Foxit. Trang scan không có text → bỏ qua (đúng). **Bẫy pdf.js 3.x: phải set CSS var `--scale-factor`** trên container, dùng tham số `textContentSource`.
+> - **Searchable doc trộn text+scan** ([`api.py`](api.py) `/searchable`): bỏ qua OCR trang đã có text layer (`get_text >= 20 ký tự`) → nhanh hẳn + hết chồng 2 lớp text; cờ `force_ocr` để ép. Cô lập lỗi **từng trang** (1 trang lỗi không giết cả tài liệu). Engine load lười (doc thuần digital trả ngay). Bỏ box rác <3px.
+> - **Fix B — lớp text vô hình fit bề rộng box** ([`api.py`](api.py)): chuyển `insert_text` (fontsize chỉ theo chiều cao) → `TextWriter` + `Font.text_length()` + `morph=fitz.Matrix(sx,1)` scale ngang cho khớp box (kiểu OCRmyPDF). Kiểm chứng: text trích xuất ra rộng 227.7pt vs box 228pt → bôi đen/tìm trên trang OCR không còn lệch.
+> - Sidecar **CÓ đổi** (Fix B + skip + isolate) → phải rebuild sidecar cho OTA.
 
 > v0.2.9 — **Fix THỰC SỰ: ghi chú (note) đọc được trong app**:
 > - Note bake ra PDF `Text` annotation, nội dung nằm ở `/Contents`. `addNoteMarkers()` ([`app.js`](desktop/renderer/app.js)) đọc `a.contents` — nhưng **pdf.js 3.x đã bỏ trường này**, chuyển text sang `a.contentsObj.str` ({str,dir}). Nên `notes` luôn rỗng → marker không bao giờ hiện (Foxit/Acrobat tự parse `/Contents` nên vẫn đọc được). Lần "fix" v0.2.x trước chưa từng chạy.
