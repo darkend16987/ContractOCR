@@ -22,7 +22,7 @@
 
 (function () {
   const PDFLib = window.PDFLib;
-  const { PDFDocument, rgb, PDFName, PDFHexString } = PDFLib;
+  const { PDFDocument, rgb, PDFName, PDFHexString, degrees } = PDFLib;
 
   const ed = {
     active: false,
@@ -698,6 +698,15 @@
     };
   }
 
+  // Pages with a /Rotate entry (common in scans) display rotated, but pdf-lib
+  // draws images in *unrotated* user space. Without compensating, baked PNGs
+  // (text comment, image, watermark) come out rotated 90/180/270°. We pin the
+  // image's visual lower-left to the already-mapped anchor and spin the glyphs
+  // back by the page rotation so they read upright after the viewer applies it.
+  function pageRotate(page) {
+    return degrees(page.getRotation().angle);
+  }
+
   async function drawAnnots(doc, page, anns, vp1, mode) {
     const map = makeMap(vp1, mode);
     let failed = 0;
@@ -740,7 +749,7 @@
         // where the overlay (zero-padding) showed them.
         const padPt = a.fontSize * 0.15;
         const [bx, by] = map(a.x - padPt, a.y - padPt + hPt);
-        page.drawImage(img, { x: bx, y: by, width: wPt, height: hPt });
+        page.drawImage(img, { x: bx, y: by, width: wPt, height: hPt, rotate: pageRotate(page) });
       } else if (a.kind === "box") {
         const [x1, y1] = map(a.x, a.y);
         const [x2, y2] = map(a.x + a.w, a.y + a.h);
@@ -825,7 +834,7 @@
         const fmt = a.fmt || sniffImage(bytes);
         const img = fmt === "png" ? await doc.embedPng(bytes) : await doc.embedJpg(bytes);
         const [bx, by] = map(a.x, a.y + a.h);
-        page.drawImage(img, { x: bx, y: by, width: a.w, height: a.h });
+        page.drawImage(img, { x: bx, y: by, width: a.w, height: a.h, rotate: pageRotate(page) });
       }
   }
 
@@ -836,7 +845,7 @@
     const cx = (vp1.width - wPt) / 2;
     const cy = (vp1.height - hPt) / 2;
     const [bx, by] = map(cx, cy + hPt);
-    page.drawImage(img, { x: bx, y: by, width: wPt, height: hPt, opacity: ed.watermark.opacity });
+    page.drawImage(img, { x: bx, y: by, width: wPt, height: hPt, opacity: ed.watermark.opacity, rotate: pageRotate(page) });
   }
 
   async function bakeInPlace() {

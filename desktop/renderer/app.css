@@ -427,25 +427,25 @@ body.editing .note-marker, body.text-editing .note-marker { pointer-events: none
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
 }
 
-/* ---- find-in-document (Ctrl+F) ---- */
-.find-bar {
-  position: absolute; top: 12px; right: 22px; z-index: 45;
+/* ---- find-in-document (persistent toolbar box; also Ctrl+F) ---- */
+.find-box {
   display: flex; align-items: center; gap: 4px;
   background: var(--panel); border: 1px solid var(--border);
-  border-radius: 10px; padding: 5px 6px;
-  box-shadow: 0 6px 22px rgba(0, 0, 0, 0.35);
+  border-radius: 10px; padding: 3px 6px;
 }
-.find-bar .find-ic { opacity: 0.6; margin: 0 2px; }
-.find-bar input {
-  width: 220px; border: none; outline: none; background: transparent;
+.find-box .find-ic { opacity: 0.6; margin: 0 2px; }
+.find-box input {
+  width: 200px; border: none; outline: none; background: transparent;
   color: var(--fg); font-size: 13px; padding: 2px 4px;
 }
-.find-bar input.no-hit { color: #e5484d; }
+.find-box input.no-hit { color: #e5484d; }
+.find-box input:disabled { cursor: not-allowed; }
+.find-box.is-disabled { opacity: 0.5; }
 .find-count {
   font-size: 12px; color: var(--muted);
   min-width: 46px; text-align: center; font-variant-numeric: tabular-nums;
 }
-.find-bar .find-up { transform: rotate(180deg); }
+.find-box .find-up { transform: rotate(180deg); }
 .search-layer { position: absolute; left: 0; top: 0; pointer-events: none; z-index: 3; }
 .search-hl {
   position: absolute; background: rgba(255, 213, 74, 0.45);

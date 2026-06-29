@@ -740,21 +740,29 @@ function updateFindCount() {
   if (c) c.textContent = search.matches.length ? `${search.current + 1}/${search.matches.length}` : "0/0";
 }
 
+// The find box lives permanently in the toolbar; Ctrl+F just focuses it.
 function openFind() {
   if (!state.pdf) return;
-  $("find-bar").hidden = false;
   const inp = $("find-input");
   inp.focus();
   inp.select();
   if (inp.value.trim()) runSearch(inp.value);
 }
 
+// Escape (or a fresh document) clears the query + highlights but leaves the box
+// in place — it's part of the toolbar now, not a dismissible popover.
 function closeFind() {
-  $("find-bar").hidden = true;
+  const inp = $("find-input");
+  if (inp) {
+    inp.value = "";
+    inp.classList.remove("no-hit");
+    inp.blur();
+  }
   search.matches = [];
   search.current = -1;
   search.query = "";
   document.querySelectorAll(".search-layer").forEach((e) => e.remove());
+  updateFindCount();
 }
 
 // Re-render after an in-place edit (overlay bake / native text edit) WITHOUT the
@@ -1974,6 +1982,12 @@ function updateToolbar() {
     .querySelectorAll("[data-needs-doc] button")
     .forEach((b) => (b.disabled = !has || editing));
   $("btn-select-all").disabled = !has || editing;
+  // Find box: the [data-needs-doc] sweep only touches <button>s, so toggle the
+  // <input> (and the box's dimmed look) explicitly.
+  const fi = $("find-input");
+  if (fi) fi.disabled = !has || editing;
+  const fb = $("find-box");
+  if (fb) fb.classList.toggle("is-disabled", !has || editing);
   $("btn-ocr").disabled = !(ready && has) || editing;
   const bs = $("btn-searchable");
   if (bs) bs.disabled = !(ready && has) || editing;
@@ -2041,7 +2055,6 @@ $("find-input").addEventListener("keydown", (e) => {
 });
 $("find-next").onclick = () => gotoMatch(search.current + 1);
 $("find-prev").onclick = () => gotoMatch(search.current - 1);
-$("find-close").onclick = closeFind;
 $("cmp-cancel").onclick = () => ($("cmp-modal").hidden = true);
 $("cmp-ok").onclick = runCompress;
 
