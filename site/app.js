@@ -13,10 +13,10 @@ const I = {
 };
 
 const FEATURES = [
-  { i: "ai", t: "Bóc tách hợp đồng bằng AI", d: "OCR tiếng Việt + AI đọc hợp đồng, bóc tách các trường (bên A/B, giá trị, ngày…) rồi xuất Excel/JSON. Tự khai báo trường tùy chỉnh cần bóc tách." },
+  { i: "ai", t: "Bóc tách dữ liệu bằng AI", d: "OCR tiếng Việt + AI đọc mọi loại văn bản (hợp đồng, hóa đơn, biểu mẫu…), bóc tách các trường rồi xuất Excel/JSON. Tự khai báo trường tùy chỉnh cần bóc tách." },
   { i: "type", t: "Sửa chữ gốc của PDF", d: "Chỉnh trực tiếp văn bản thật trong PDF, dùng cả font hệ thống của máy — không phải vẽ đè." },
-  { i: "pages", t: "Ghép · Tách · Chèn trang", d: "Quản lý trang linh hoạt: kéo-thả sắp xếp, ghép nhiều PDF, tách trang chọn, chèn từ file khác." },
-  { i: "pen", t: "Chỉnh sửa & chú thích", d: "Watermark, redact (che an toàn), điền form, tô sáng, vẽ, chèn ảnh/chữ ký, ghi chú." },
+  { i: "pages", t: "Ghép · Tách · Chèn · Trang trắng", d: "Quản lý trang linh hoạt: kéo-thả sắp xếp, ghép nhiều PDF, tách trang chọn, chèn từ file khác, thêm trang trắng." },
+  { i: "pen", t: "Chỉnh sửa & chú thích", d: "Hộp văn bản (chọn font, cỡ, đậm/nghiêng/gạch chân), che thông tin (redact chọn màu, an toàn), watermark, điền form, tô sáng, vẽ, chèn ảnh/chữ ký, ghi chú." },
   { i: "search", t: "Tạo PDF tìm-kiếm-được", d: "OCR thêm lớp text vô hình để PDF scan có thể tìm kiếm và bôi chọn chữ." },
   { i: "archive", t: "Nén PDF", d: "Giảm dung lượng file (tối ưu ảnh) với nhiều mức nén, giữ chất lượng đọc tốt." },
   { i: "shield", t: "Khóa & mã hóa", d: "Đặt mật khẩu, mã hóa, trích xuất ảnh — bảo vệ tài liệu nhạy cảm." },
