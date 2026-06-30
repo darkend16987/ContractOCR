@@ -1,8 +1,10 @@
 # Nabu PDF
 
-Bộ công cụ **PDF desktop** (Electron) cho tiếng Việt: xem · ghép · tách · xoay ·
-chú thích · watermark · redact · sửa chữ · nén · tạo PDF tìm-kiếm-được, kèm
-**OCR + bóc tách hợp đồng** bằng AI. Chạy hoàn toàn trên máy (local-first).
+Bộ công cụ **PDF desktop** (Electron) cho tiếng Việt: xem · ghép · tách · chèn ·
+thêm trang trắng · xoay · chú thích · hộp văn bản (font/đậm/nghiêng/gạch chân) ·
+watermark · redact (che thông tin chọn màu) · sửa chữ · nén · tạo PDF
+tìm-kiếm-được, kèm **OCR + bóc tách hợp đồng** bằng AI. Chạy hoàn toàn trên máy
+(local-first).
 
 > **Ứng dụng desktop** nằm trong [`desktop/`](desktop/) — xem
 > [desktop/README.md](desktop/README.md) để build bản `.exe` / portable.

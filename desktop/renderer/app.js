@@ -1089,6 +1089,31 @@ async function insertBuffersAt(buffers, at) {
   }
 }
 
+async function addBlankPage() {
+  if (gateProFeature()) return;
+  if (!state.bytes) return;
+  const at = await choosePosition("Thêm trang trắng — chọn vị trí");
+  if (at == null) return; // cancelled
+  const where = posLabel(at);
+  showOverlay("Đang thêm trang trắng…");
+  pushUndo();
+  try {
+    const doc = await PDFDocument.load(state.bytes);
+    // Size the blank page like the page it follows so it blends in (fallback A4).
+    const pages = doc.getPages();
+    const refIdx = Math.min(Math.max(at - 1, 0), pages.length - 1);
+    const ref = pages[refIdx];
+    const size = ref ? ref.getSize() : { width: 595.28, height: 841.89 };
+    doc.insertPage(at, [size.width, size.height]);
+    state.bytes = await doc.save();
+    state.selected = new Set([at]); // land on the new blank page
+    await renderAll();
+    toast(`Đã thêm 1 trang trắng ${where}.`, "good");
+  } finally {
+    hideOverlay();
+  }
+}
+
 async function extractSelected() {
   if (gateProFeature()) return;
   if (state.selected.size === 0) {
@@ -1820,6 +1845,7 @@ const GATED_BTNS = [
   "btn-text-edit",
   "btn-merge",
   "btn-insert",
+  "btn-blank",
   "btn-extract",
 ];
 
@@ -2027,6 +2053,7 @@ $("btn-undo").onclick = undo;
 $("btn-redo").onclick = redo;
 $("btn-merge").onclick = mergeFiles;
 $("btn-insert").onclick = insertFile;
+$("btn-blank").onclick = addBlankPage;
 $("btn-extract").onclick = extractSelected;
 $("btn-rotate-l").onclick = () => rotateSelected(-90);
 $("btn-rotate-r").onclick = () => rotateSelected(90);

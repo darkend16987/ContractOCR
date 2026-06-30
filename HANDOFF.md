@@ -4,7 +4,14 @@
 > [DESIGN.md](DESIGN.md) (kiến trúc), [ROADMAP.md](ROADMAP.md) (tiến độ chi tiết),
 > [SETUP.md](SETUP.md) (dựng môi trường).
 
-_Cập nhật: 2026-06-28 · v0.2.10_
+_Cập nhật: 2026-06-30 · v0.2.13_
+
+> v0.2.13 — **Che thông tin chọn màu + Hộp văn bản có font/đậm/nghiêng/gạch chân + Thêm trang trắng** (renderer-only, sidecar KHÔNG đổi):
+> - **Redact chọn màu** ([`editor.js`](desktop/renderer/editor.js)): redact không còn cứng màu đen. Thêm color picker riêng `#ed-redact-color` (mặc định `#000000`), state `ed.redactColor`. Annot redact lưu `color` của nó; overlay vẽ `el.style.background = a.color`; `rasterRedacted()` tô **từng box theo màu của nó** (vẫn bảo mật — xoá pixel gốc, không chỉ phủ). Bỏ `fillStyle="#000"` cứng.
+> - **Hộp văn bản giàu định dạng** ([`editor.js`](desktop/renderer/editor.js)): text annot thêm `font`/`bold`/`italic`/`underline`. Có picker Font (`#ed-font`: Sans/Serif/Mono + optgroup "Font máy" nạp lười từ `/fonts`) và 3 nút B/I/U (`te-fmt`). `textFont(px, opts)` dựng CSS font shorthand; `renderTextPng()` vẽ gạch chân thủ công (canvas không có underline) — bake bằng canvas→PNG nên **không cần đụng backend** (khác "Sửa chữ" gửi sidecar). Overlay + textarea soạn thảo phản ánh đúng style.
+> - **Thanh công cụ ngữ cảnh** ([`editor.js`](desktop/renderer/editor.js) `syncCtlVisibility` + `index.html` `data-ctl`): mỗi control chỉ hiện với tool liên quan (vd redact→chỉ "Màu che"; text→Font/Cỡ/B I U). CSS `.edit-bar [data-ctl][hidden]{display:none!important}` để `hidden` thắng `display:flex`.
+> - **Thêm trang trắng** ([`app.js`](desktop/renderer/app.js) `addBlankPage`): nút "Trang trắng" cạnh "Chèn"; dùng `choosePosition()` chung, `doc.insertPage(at,[w,h])` cỡ theo trang liền trước (fallback A4). Có trong `[data-needs-doc]` + `GATED_BTNS`.
+> - Có lệnh phát hành mới: [`.claude/commands/deploy.md`](.claude/commands/deploy.md) (`/deploy`).
 
 > v0.2.10 — **Tìm kiếm (Ctrl+F) + bôi đen text + searchable doc trộn nhanh hơn**:
 > - **Tìm kiếm trong tài liệu** ([`app.js`](desktop/renderer/app.js)): thanh Ctrl+F (input + ‹/› + đếm `n/total` + Esc), highlight vàng, kết quả hiện màu cam, cuộn tới. **Không dấu vẫn tìm ra có dấu** (`foldText`: NFD bỏ combining + đ→d, case-insensitive) — gõ "dieu khoan" thấy "Điều khoản". Index cache theo `state.pdf`; vẽ box từ `item.transform`+`width` qua `pdfjsLib.Util.transform` nên đúng ở mọi mức zoom.

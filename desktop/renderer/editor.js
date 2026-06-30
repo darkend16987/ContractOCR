@@ -28,7 +28,12 @@
     active: false,
     tool: "select",
     color: "#ffd54a", // highlight / draw / new-text colour
+    redactColor: "#000000", // redaction fill colour (separate from `color`)
     fontSize: 16, // points
+    font: "sans", // text-box font family key (see FONT_STACKS)
+    bold: false,
+    italic: false,
+    underline: false,
     penWidth: 2,
     annots: {}, // pageIndex -> [annot]
     watermark: null, // { text, size, angle, opacity, color }
@@ -75,17 +80,36 @@
     if (!_measureCtx) _measureCtx = document.createElement("canvas").getContext("2d");
     return _measureCtx;
   }
-  function textFont(fontSizePx) {
-    return `${fontSizePx}px system-ui, "Segoe UI", Arial, sans-serif`;
+  // Built-in font-family keys → a CSS font-family stack. Any other value is taken
+  // as a literal system family name (from the /fonts picker) and quoted as-is.
+  const FONT_STACKS = {
+    sans: 'system-ui, "Segoe UI", Arial, sans-serif',
+    serif: '"Times New Roman", Times, serif',
+    mono: '"Courier New", Courier, monospace',
+  };
+  function fontFamily(key) {
+    return FONT_STACKS[key] || `"${(key || "sans").replace(/"/g, "")}", sans-serif`;
   }
-  function measureText(text, fontSizePt) {
+  // CSS `font` shorthand from a size (px) and an optional style object
+  // ({ font, bold, italic }). Defaults match a plain sans-serif text box.
+  function textFont(fontSizePx, opts) {
+    const o = opts || {};
+    const style = o.italic ? "italic " : "";
+    const weight = o.bold ? "700 " : "";
+    return `${style}${weight}${fontSizePx}px ${fontFamily(o.font)}`;
+  }
+  function measureText(text, fontSizePt, opts) {
     const ctx = measureCtx();
-    ctx.font = textFont(fontSizePt);
+    ctx.font = textFont(fontSizePt, opts);
     const lines = (text || "").split("\n");
     let w = 1;
     for (const ln of lines) w = Math.max(w, ctx.measureText(ln || " ").width);
     const lh = fontSizePt * 1.3;
     return { w: Math.ceil(w) + 4, h: Math.ceil(lh * lines.length) + 4 };
+  }
+  // The style bundle stored on / read from a text annotation.
+  function textStyle(a) {
+    return { font: a.font, bold: a.bold, italic: a.italic };
   }
 
   function hexRgb(hex) {
@@ -230,7 +254,13 @@
     if (a.kind === "text") {
       el.style.fontSize = a.fontSize * s + "px";
       el.style.color = a.color;
+      el.style.fontFamily = fontFamily(a.font);
+      el.style.fontWeight = a.bold ? "700" : "400";
+      el.style.fontStyle = a.italic ? "italic" : "normal";
+      el.style.textDecoration = a.underline ? "underline" : "none";
       el.textContent = a.text;
+    } else if (a.kind === "redact") {
+      el.style.background = a.color || "#000";
     } else if (a.kind === "highlight") {
       el.style.background = a.color;
     } else if (a.kind === "box") {
@@ -297,9 +327,23 @@
     const hit = findAnnot(ed.sel);
     if (!hit) return;
     const a = hit.a;
-    if (a.color) $("ed-color").value = toHex(a.color);
-    if (a.kind === "text") $("ed-fontsize").value = String(a.fontSize);
+    if (a.kind === "redact") {
+      $("ed-redact-color").value = toHex(a.color || "#000000");
+    } else if (a.color) {
+      $("ed-color").value = toHex(a.color);
+    }
+    if (a.kind === "text") {
+      $("ed-fontsize").value = String(a.fontSize);
+      $("ed-font").value = a.font || "sans";
+      setFmtBtn("ed-bold", a.bold);
+      setFmtBtn("ed-italic", a.italic);
+      setFmtBtn("ed-underline", a.underline);
+    }
     if (["draw", "box", "ellipse", "arrow"].includes(a.kind) && a.width) $("ed-penwidth").value = String(a.width);
+  }
+  function setFmtBtn(id, on) {
+    const b = $(id);
+    if (b) b.classList.toggle("active", !!on);
   }
   function toHex(c) {
     return /^#/.test(c) ? c : c;
@@ -363,7 +407,8 @@
     }
 
     if (ed.tool === "highlight" || ed.tool === "redact" || ed.tool === "box" || ed.tool === "ellipse") {
-      const a = { id: ed.seq++, kind: ed.tool, x: p.x, y: p.y, w: 1, h: 1, color: ed.color, width: ed.penWidth };
+      const col = ed.tool === "redact" ? ed.redactColor : ed.color;
+      const a = { id: ed.seq++, kind: ed.tool, x: p.x, y: p.y, w: 1, h: 1, color: col, width: ed.penWidth };
       annotsFor(i).push(a);
       ed.sel = a.id;
       drag = { type: "rect", page: i, id: a.id, layer, sx: p.x, sy: p.y };
@@ -480,10 +525,17 @@
     const ta = document.createElement("textarea");
     ta.className = "annot-text-edit";
     const fs = existing ? existing.fontSize : ed.fontSize;
+    const st = existing
+      ? { font: existing.font, bold: existing.bold, italic: existing.italic, underline: existing.underline }
+      : { font: ed.font, bold: ed.bold, italic: ed.italic, underline: ed.underline };
     ta.style.left = p.x * state.scale + "px";
     ta.style.top = p.y * state.scale + "px";
     ta.style.fontSize = fs * state.scale + "px";
     ta.style.color = existing ? existing.color : ed.color;
+    ta.style.fontFamily = fontFamily(st.font);
+    ta.style.fontWeight = st.bold ? "700" : "400";
+    ta.style.fontStyle = st.italic ? "italic" : "normal";
+    ta.style.textDecoration = st.underline ? "underline" : "none";
     ta.value = existing ? existing.text : "";
     layer.appendChild(ta);
     ta.focus();
@@ -497,12 +549,12 @@
       if (existing) {
         if (text) {
           existing.text = text;
-          const m = measureText(text, existing.fontSize);
+          const m = measureText(text, existing.fontSize, textStyle(existing));
           existing.w = m.w;
           existing.h = m.h;
         }
       } else if (text) {
-        const m = measureText(text, ed.fontSize);
+        const m = measureText(text, ed.fontSize, { font: ed.font, bold: ed.bold, italic: ed.italic });
         annotsFor(i).push({
           id: ed.seq++,
           kind: "text",
@@ -513,6 +565,10 @@
           text,
           fontSize: ed.fontSize,
           color: ed.color,
+          font: ed.font,
+          bold: ed.bold,
+          italic: ed.italic,
+          underline: ed.underline,
         });
       }
       renderLayer(layer, i);
@@ -625,12 +681,12 @@
 
   // ---- PNG rasterisation for baking ---------------------------------------
 
-  function renderTextPng(text, fontSizePt, colorHex) {
+  function renderTextPng(text, fontSizePt, colorHex, opts) {
     const RS = 3; // supersample for crisp text
     const lines = (text || "").split("\n");
     const ctx = measureCtx();
     const fpx = fontSizePt * RS;
-    ctx.font = textFont(fpx);
+    ctx.font = textFont(fpx, opts);
     let maxW = 1;
     for (const ln of lines) maxW = Math.max(maxW, ctx.measureText(ln || " ").width);
     const lh = fpx * 1.3;
@@ -641,10 +697,23 @@
     c.width = cw;
     c.height = chh;
     const cx = c.getContext("2d");
-    cx.font = textFont(fpx);
+    cx.font = textFont(fpx, opts);
     cx.fillStyle = colorHex;
     cx.textBaseline = "top";
     lines.forEach((ln, k) => cx.fillText(ln, pad, pad + k * lh));
+    // Canvas has no underline — draw it manually under each line's glyphs.
+    if (opts && opts.underline) {
+      cx.strokeStyle = colorHex;
+      cx.lineWidth = Math.max(1, fpx * 0.06);
+      lines.forEach((ln, k) => {
+        const w = ctx.measureText(ln || " ").width;
+        const y = pad + k * lh + fpx * 1.02;
+        cx.beginPath();
+        cx.moveTo(pad, y);
+        cx.lineTo(pad + w, y);
+        cx.stroke();
+      });
+    }
     return { bytes: dataUrlToBytes(c.toDataURL("image/png")), wPt: cw / RS, hPt: chh / RS };
   }
 
@@ -683,8 +752,11 @@
     c.height = Math.floor(vp.height);
     const cx = c.getContext("2d");
     await page.render({ canvasContext: cx, viewport: vp }).promise;
-    cx.fillStyle = "#000";
-    for (const r of redacts) cx.fillRect(r.x * RS, r.y * RS, r.w * RS, r.h * RS);
+    // Burn each box in *its own* colour so the original pixels are gone for good.
+    for (const r of redacts) {
+      cx.fillStyle = r.color || "#000";
+      cx.fillRect(r.x * RS, r.y * RS, r.w * RS, r.h * RS);
+    }
     return dataUrlToBytes(c.toDataURL("image/png"));
   }
 
@@ -743,7 +815,12 @@
           page.drawLine({ start: { x: sx, y: sy }, end: { x: ex, y: ey }, thickness: a.width, color: c });
         }
       } else if (a.kind === "text") {
-        const { bytes, wPt, hPt } = renderTextPng(a.text, a.fontSize, a.color);
+        const { bytes, wPt, hPt } = renderTextPng(a.text, a.fontSize, a.color, {
+          font: a.font,
+          bold: a.bold,
+          italic: a.italic,
+          underline: a.underline,
+        });
         const img = await doc.embedPng(bytes);
         // The PNG carries ~0.15em padding; offset so the glyphs line up with
         // where the overlay (zero-padding) showed them.
@@ -1053,9 +1130,31 @@
 
   // ---- mode + palette wiring ----------------------------------------------
 
+  // Which palette controls (data-ctl) are relevant per tool. `select` shows them
+  // all so any selected annotation stays editable.
+  const TOOL_CTLS = {
+    select: ["color", "redact", "font", "fontsize", "biu", "penwidth"],
+    text: ["color", "font", "fontsize", "biu"],
+    highlight: ["color"],
+    draw: ["color", "penwidth"],
+    box: ["color", "penwidth"],
+    ellipse: ["color", "penwidth"],
+    arrow: ["color", "penwidth"],
+    note: ["color"],
+    image: [],
+    redact: ["redact"],
+  };
+  function syncCtlVisibility(tool) {
+    const show = TOOL_CTLS[tool] || [];
+    document.querySelectorAll("#edit-bar [data-ctl]").forEach((el) => {
+      el.hidden = !show.includes(el.dataset.ctl);
+    });
+  }
+
   function setTool(tool) {
     ed.tool = tool;
     document.querySelectorAll("#ed-tools .tool").forEach((b) => b.classList.toggle("active", b.dataset.tool === tool));
+    syncCtlVisibility(tool);
     const hints = {
       select: "Kéo để di chuyển; góc để đổi cỡ; Delete để xoá.",
       text: "Bấm lên trang để thêm hộp văn bản (Ctrl+Enter để xong).",
@@ -1071,6 +1170,32 @@
     $("ed-hint").textContent = hints[tool] || "";
   }
 
+  // Fill the text-box "Font máy" optgroup from the sidecar's /fonts list. Runs
+  // once; silently no-ops if the engine isn't ready or the call fails (built-in
+  // choices still work). Mirrors text-edit.js's loader but targets #ed-font.
+  let fontsLoaded = false;
+  async function loadSystemFonts() {
+    if (fontsLoaded) return;
+    const grp = $("ed-font-system");
+    if (!grp || typeof sidecar === "undefined" || sidecar.state !== "ready" || !sidecar.base) return;
+    try {
+      const res = await sidecarFetch("/fonts", { method: "GET" });
+      const data = await res.json();
+      if (!data.success || !Array.isArray(data.families)) return;
+      const frag = document.createDocumentFragment();
+      for (const name of data.families) {
+        const o = document.createElement("option");
+        o.value = name;
+        o.textContent = name;
+        frag.appendChild(o);
+      }
+      grp.appendChild(frag);
+      fontsLoaded = true;
+    } catch (_) {
+      /* keep built-in font choices */
+    }
+  }
+
   function enter() {
     if (!state.bytes) return;
     ed.active = true;
@@ -1079,6 +1204,7 @@
     setTool("select");
     updateToolbar();
     syncOverlays();
+    loadSystemFonts();
   }
   async function exit() {
     if (hasAny()) await bakePending();
@@ -1130,19 +1256,63 @@
       }
     }
   };
+  $("ed-redact-color").oninput = (e) => {
+    ed.redactColor = e.target.value;
+    if (ed.sel != null) {
+      const hit = findAnnot(ed.sel);
+      if (hit && hit.a.kind === "redact") {
+        hit.a.color = ed.redactColor;
+        syncOverlays();
+      }
+    }
+  };
   $("ed-fontsize").oninput = (e) => {
     ed.fontSize = Math.max(6, +e.target.value || 16);
     if (ed.sel != null) {
       const hit = findAnnot(ed.sel);
       if (hit && hit.a.kind === "text") {
         hit.a.fontSize = ed.fontSize;
-        const m = measureText(hit.a.text, ed.fontSize);
+        const m = measureText(hit.a.text, ed.fontSize, textStyle(hit.a));
         hit.a.w = m.w;
         hit.a.h = m.h;
         syncOverlays();
       }
     }
   };
+  $("ed-font").onchange = (e) => {
+    ed.font = e.target.value || "sans";
+    if (ed.sel != null) {
+      const hit = findAnnot(ed.sel);
+      if (hit && hit.a.kind === "text") {
+        hit.a.font = ed.font;
+        const m = measureText(hit.a.text, hit.a.fontSize, textStyle(hit.a));
+        hit.a.w = m.w;
+        hit.a.h = m.h;
+        syncOverlays();
+      }
+    }
+  };
+  // B / I / U toggles. preventDefault on mousedown keeps an open text editor
+  // focused; the click toggles the flag and (for the selected text) re-measures.
+  [["ed-bold", "bold"], ["ed-italic", "italic"], ["ed-underline", "underline"]].forEach(([id, prop]) => {
+    const b = $(id);
+    if (!b) return;
+    b.addEventListener("mousedown", (ev) => ev.preventDefault());
+    b.addEventListener("click", () => {
+      b.classList.toggle("active");
+      ed[prop] = b.classList.contains("active");
+      if (ed.sel != null) {
+        const hit = findAnnot(ed.sel);
+        if (hit && hit.a.kind === "text") {
+          hit.a[prop] = ed[prop];
+          const m = measureText(hit.a.text, hit.a.fontSize, textStyle(hit.a));
+          hit.a.w = m.w;
+          hit.a.h = m.h;
+          syncOverlays();
+        }
+      }
+    });
+  });
   $("ed-penwidth").oninput = (e) => {
     ed.penWidth = Math.max(1, +e.target.value || 2);
     if (ed.sel != null) {

@@ -103,6 +103,7 @@
         <div class="group" data-needs-doc>
           <button id="btn-merge" disabled title="Ghép PDF khác vào — chọn vị trí (đầu/cuối/sau trang)"><svg class="ic"><use href="#ic-copy"/></svg>Ghép</button>
           <button id="btn-insert" disabled title="Chèn trang từ PDF khác — chọn vị trí (đầu/cuối/sau trang)"><svg class="ic"><use href="#ic-file-plus"/></svg>Chèn</button>
+          <button id="btn-blank" disabled title="Thêm một trang trắng — chọn vị trí (đầu/cuối/sau trang)"><svg class="ic"><use href="#ic-file"/></svg>Trang trắng</button>
           <button id="btn-extract" disabled title="Tách các trang đang chọn ra PDF mới"><svg class="ic"><use href="#ic-scissors"/></svg>Tách</button>
         </div>
 
@@ -149,9 +150,21 @@
         <button class="tool" data-tool="redact" title="Che thông tin (an toàn — xoá nội dung gốc)"><svg class="ic fill"><use href="#ic-redact"/></svg></button>
       </div>
       <div class="sep"></div>
-      <label class="ctl" title="Màu (tô sáng / chữ / nét vẽ)">Màu <input type="color" id="ed-color" value="#ffd54a" /></label>
-      <label class="ctl" title="Cỡ chữ (điểm)">Cỡ <input type="number" id="ed-fontsize" min="6" max="120" value="16" /></label>
-      <label class="ctl" title="Độ dày nét vẽ">Nét <input type="number" id="ed-penwidth" min="1" max="24" value="2" /></label>
+      <label class="ctl" data-ctl="color" title="Màu (tô sáng / chữ / nét vẽ)">Màu <input type="color" id="ed-color" value="#ffd54a" /></label>
+      <label class="ctl" data-ctl="redact" title="Màu che thông tin">Màu che <input type="color" id="ed-redact-color" value="#000000" /></label>
+      <label class="ctl" data-ctl="font" title="Font chữ">Font
+        <select id="ed-font">
+          <option value="sans">Sans (mặc định)</option>
+          <option value="serif">Serif (Times)</option>
+          <option value="mono">Mono (Courier)</option>
+          <optgroup id="ed-font-system" label="Font máy"></optgroup>
+        </select>
+      </label>
+      <label class="ctl" data-ctl="fontsize" title="Cỡ chữ (điểm)">Cỡ <input type="number" id="ed-fontsize" min="6" max="120" value="16" /></label>
+      <button id="ed-bold" class="icon-only te-fmt" data-ctl="biu" title="In đậm" style="font-weight:800">B</button>
+      <button id="ed-italic" class="icon-only te-fmt" data-ctl="biu" title="In nghiêng" style="font-style:italic">I</button>
+      <button id="ed-underline" class="icon-only te-fmt" data-ctl="biu" title="Gạch chân" style="text-decoration:underline">U</button>
+      <label class="ctl" data-ctl="penwidth" title="Độ dày nét vẽ">Nét <input type="number" id="ed-penwidth" min="1" max="24" value="2" /></label>
       <div class="sep"></div>
       <button id="ed-watermark" title="Đóng dấu mờ lên mọi trang">Watermark</button>
       <button id="ed-form" title="Điền các trường biểu mẫu PDF">Điền form</button>
