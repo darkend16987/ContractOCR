@@ -1634,7 +1634,9 @@ class CompareRequest(BaseModel):
 
 class CompareResponse(BaseModel):
     success: bool
-    pages: list[Any] = []
+    a_boxes: dict[str, Any] = {}
+    b_boxes: dict[str, Any] = {}
+    changes: list[Any] = []
     summary: dict[str, Any] = {}
     error: str | None = None
 
@@ -1675,7 +1677,11 @@ async def compare(req: CompareRequest):
         return CompareResponse(success=False, error=str(e))
 
     return CompareResponse(
-        success=True, pages=report["pages"], summary=report["summary"]
+        success=True,
+        a_boxes=report["a_boxes"],
+        b_boxes=report["b_boxes"],
+        changes=report["changes"],
+        summary=report["summary"],
     )
 
 

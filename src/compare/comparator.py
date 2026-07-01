@@ -1,13 +1,17 @@
-"""Compare two PDFs page-by-page and line-by-line.
+"""Compare two PDFs as professional document-diff tools do.
 
-Text-layer pages are diffed from their embedded text (fast, exact, with per-line
-bounding boxes for on-screen highlighting). Scanned pages fall back to OCR — text
-is still diffed, and boxes are provided when the page is upright (rotation 0).
+Instead of aligning page N of A against page N of B (which falls apart the moment
+one version inserts or removes content and shifts every later page), this treats
+each document as a single **word stream** in reading order — every word tagged
+with the page and bounding box it came from. The two streams are diffed with an
+LCS/Myers-style sequence matcher (``difflib``), exactly like ``git diff`` over
+tokens. Each changed run is mapped back to the page + box of its words, so a
+change is highlighted on whatever page it actually lands on, in either document.
 
-The diff itself is stdlib ``difflib.SequenceMatcher`` on whitespace-normalised
-line text, so pure layout reflow is not reported as a change. Line boxes are
-returned in the same scale-1 coordinate space the renderer already uses for text
-spans, so the UI overlays them with a plain ``bbox * scale`` transform.
+Text-layer pages take their words from PyMuPDF (real per-word boxes). Scanned
+pages are OCR'd; each recognised line is split into words that share the line box
+(coarser highlight, still on the right page). The result is robust to page shifts,
+reflow, and font/margin changes — the failure modes of naïve per-page line diff.
 """
 
 from __future__ import annotations
@@ -19,34 +23,34 @@ from typing import Any, Callable
 
 logger = logging.getLogger(__name__)
 
-# Render zoom used when OCR'ing a scanned page; boxes are scaled back by this to
-# land in PDF-point (scale-1) space.
+# OCR render zoom; boxes are scaled back by this to land in PDF-point space.
 _OCR_ZOOM = 2.0
-# Hard cap on pages compared per document — bounds OCR time and payload size.
-_MAX_PAGES = 500
+# Bound work: pages per doc and total tokens (SequenceMatcher is ~quadratic worst
+# case). Typical contracts are well under these; huge inputs degrade gracefully.
+_MAX_PAGES = 1000
+_MAX_TOKENS = 300_000
 
 
-def _normalize(text: str) -> str:
-    """Collapse runs of whitespace so reflowed-but-identical text isn't flagged."""
-    return " ".join(text.split())
+def _text_words(page) -> list[dict[str, Any]]:
+    """Words from a page's text layer, in reading order: ``[{t, bbox}]``.
 
-
-def _lines_from_text_layer(page) -> list[dict[str, Any]]:
-    """Lines from a page's embedded text: ``[{text, bbox:[x0,y0,x1,y1]}]``."""
+    PyMuPDF ``get_text("words")`` yields ``(x0,y0,x1,y1, word, block, line, wno)``.
+    Sorting by (block, line, word-in-line) keeps a stable reading order even for
+    multi-block layouts.
+    """
+    ws = page.get_text("words")
+    ws.sort(key=lambda w: (w[5], w[6], w[7]))
     out: list[dict[str, Any]] = []
-    data = page.get_text("dict")
-    for block in data.get("blocks", []):
-        for line in block.get("lines", []):
-            text = "".join(sp.get("text", "") for sp in line.get("spans", []))
-            if not text.strip():
-                continue
-            x0, y0, x1, y1 = line["bbox"]
-            out.append({"text": text, "bbox": [x0, y0, x1, y1]})
+    for w in ws:
+        word = w[4]
+        if not word.strip():
+            continue
+        out.append({"t": word, "bbox": [w[0], w[1], w[2], w[3]]})
     return out
 
 
-def _lines_from_ocr(page, get_ocr: Callable[[], Any]) -> list[dict[str, Any]]:
-    """OCR a scanned page. Boxes only when upright (rotation 0); else text-only."""
+def _ocr_words(page, get_ocr: Callable[[], Any]) -> list[dict[str, Any]]:
+    """OCR a scanned page → words. Each word inherits its line's box (upright only)."""
     import fitz  # PyMuPDF
     from PIL import Image
 
@@ -57,76 +61,47 @@ def _lines_from_ocr(page, get_ocr: Callable[[], Any]) -> list[dict[str, Any]]:
 
     out: list[dict[str, Any]] = []
     try:
-        for text, box in engine.recognize_boxes(img):
-            if not text.strip():
-                continue
-            bbox = None
-            if upright and box and len(box) == 4:
-                bbox = [c / _OCR_ZOOM for c in box]
-            out.append({"text": text, "bbox": bbox})
+        lines = engine.recognize_boxes(img)
     except NotImplementedError:
-        # Recognition-only engine (no layout) — plain full-page text, split by line.
+        # Recognition-only engine: no layout — one box-less token per word.
         for ln in engine.recognize(img).splitlines():
-            if ln.strip():
-                out.append({"text": ln, "bbox": None})
+            for word in ln.split():
+                out.append({"t": word, "bbox": None})
+        return out
+
+    for text, box in lines:
+        bbox = None
+        if upright and box and len(box) == 4:
+            bbox = [c / _OCR_ZOOM for c in box]
+        for word in text.split():
+            if word.strip():
+                out.append({"t": word, "bbox": bbox})
     return out
 
 
-def _page_lines(page, mode: str, get_ocr: Callable[[], Any]) -> tuple[list[dict], str]:
-    """Return ``(lines, used_mode)`` for one page under the requested mode.
-
-    mode: ``"text"`` (embedded text only), ``"ocr"`` (force OCR), or ``"auto"``
-    (OCR only when the page has no usable text layer).
-    """
+def _page_words(page, mode: str, get_ocr: Callable[[], Any] | None) -> list[dict[str, Any]]:
     has_text = bool((page.get_text("text") or "").strip())
     if mode == "ocr" or (mode == "auto" and not has_text):
+        if get_ocr is None:
+            return _text_words(page)
         try:
-            return _lines_from_ocr(page, get_ocr), "ocr"
+            return _ocr_words(page, get_ocr)
         except Exception:
-            logger.exception("OCR failed on a page; falling back to text layer")
-            return _lines_from_text_layer(page), "text"
-    lines = _lines_from_text_layer(page)
-    return lines, ("text" if lines else "empty")
+            logger.exception("OCR failed on a page; using text layer instead")
+            return _text_words(page)
+    return _text_words(page)
 
 
-def _word_diff(a: str, b: str) -> dict[str, list[dict[str, str]]]:
-    """Inline word-level diff of two lines, for the detail panel.
-
-    Returns ``{"a": [{t, op}], "b": [{t, op}]}`` where op is ``equal`` or ``change``.
-    """
-    aw, bw = a.split(), b.split()
-    sm = difflib.SequenceMatcher(None, aw, bw, autojunk=False)
-    a_segs: list[dict[str, str]] = []
-    b_segs: list[dict[str, str]] = []
-    for tag, i1, i2, j1, j2 in sm.get_opcodes():
-        op = "equal" if tag == "equal" else "change"
-        if i1 < i2:
-            a_segs.append({"t": " ".join(aw[i1:i2]), "op": op})
-        if j1 < j2:
-            b_segs.append({"t": " ".join(bw[j1:j2]), "op": op})
-    return {"a": a_segs, "b": b_segs}
-
-
-def _diff_lines(a_lines: list[dict], b_lines: list[dict]) -> list[dict[str, Any]]:
-    """Diff two line lists → list of ops, each carrying the source/target lines."""
-    a_norm = [_normalize(l["text"]) for l in a_lines]
-    b_norm = [_normalize(l["text"]) for l in b_lines]
-    sm = difflib.SequenceMatcher(None, a_norm, b_norm, autojunk=False)
-
-    ops: list[dict[str, Any]] = []
-    for tag, i1, i2, j1, j2 in sm.get_opcodes():
-        if tag == "equal":
-            continue
-        entry: dict[str, Any] = {
-            "type": tag,  # "replace" | "delete" | "insert"
-            "a": a_lines[i1:i2],
-            "b": b_lines[j1:j2],
-        }
-        # Inline word diff when a single line was edited into a single line.
-        if tag == "replace" and (i2 - i1) == 1 and (j2 - j1) == 1:
-            entry["words"] = _word_diff(a_lines[i1]["text"], b_lines[j1]["text"])
-        ops.append(entry)
-    return ops
+def _doc_tokens(doc, mode: str, get_ocr: Callable[[], Any] | None) -> list[dict[str, Any]]:
+    """Flatten a whole document into one word stream: ``[{t, page, bbox}]``."""
+    tokens: list[dict[str, Any]] = []
+    n = min(doc.page_count, _MAX_PAGES)
+    for i in range(n):
+        if len(tokens) >= _MAX_TOKENS:
+            break
+        for w in _page_words(doc[i], mode, get_ocr):
+            tokens.append({"t": w["t"], "page": i, "bbox": w["bbox"]})
+    return tokens
 
 
 def _open(pdf_bytes: bytes):
@@ -135,9 +110,10 @@ def _open(pdf_bytes: bytes):
     return fitz.open(stream=pdf_bytes, filetype="pdf")
 
 
-def _page_meta(page) -> dict[str, Any]:
-    r = page.rect
-    return {"width": r.width, "height": r.height, "rotation": int(page.rotation)}
+def _snippet(tokens: list[dict[str, Any]], limit: int = 60) -> str:
+    """Readable text for a run of tokens (trimmed for the change list)."""
+    s = " ".join(t["t"] for t in tokens)
+    return s if len(s) <= limit else s[: limit - 1] + "…"
 
 
 def compare_pdfs(
@@ -146,81 +122,74 @@ def compare_pdfs(
     mode: str = "auto",
     get_ocr: Callable[[], Any] | None = None,
 ) -> dict[str, Any]:
-    """Compare two PDFs. Returns a JSON-serialisable diff report.
+    """Compare two PDFs via whole-document word-stream diff.
 
-    ``mode``: ``"text"`` | ``"ocr"`` | ``"auto"`` (default). ``get_ocr`` is a
-    zero-arg callable returning the OCR engine; required only for ocr/auto on
-    scanned pages.
+    Returns a JSON-serialisable report:
+
+    - ``a_boxes`` / ``b_boxes``: ``{page_index: [[x0,y0,x1,y1, kind], ...]}`` where
+      kind is ``"del"`` (removed, red on A), ``"ins"`` (added, green on B), or
+      ``"rep"`` (changed, yellow on both). Boxes are in scale-1 PDF-point space.
+    - ``changes``: ordered runs ``[{type, a_text, b_text, a_page, b_page}]`` for the
+      change list / navigation. ``type`` is ``delete|insert|replace``; ``a_page`` /
+      ``b_page`` is the first page of that run in each doc (null if absent there).
+    - ``summary``: page counts, changed-page lists per side, change count, identical.
     """
     doc_a = _open(pdf_a)
     doc_b = _open(pdf_b)
     try:
-        n_a = min(doc_a.page_count, _MAX_PAGES)
-        n_b = min(doc_b.page_count, _MAX_PAGES)
-        n = max(n_a, n_b)
+        toks_a = _doc_tokens(doc_a, mode, get_ocr)
+        toks_b = _doc_tokens(doc_b, mode, get_ocr)
+        words_a = [t["t"] for t in toks_a]
+        words_b = [t["t"] for t in toks_b]
 
-        pages: list[dict[str, Any]] = []
-        changed_pages: list[int] = []
+        sm = difflib.SequenceMatcher(None, words_a, words_b, autojunk=False)
 
-        for i in range(n):
-            has_a = i < n_a
-            has_b = i < n_b
+        a_boxes: dict[int, list] = {}
+        b_boxes: dict[int, list] = {}
+        changes: list[dict[str, Any]] = []
 
-            if has_a and has_b:
-                pa, pb = doc_a[i], doc_b[i]
-                a_lines, mode_a = _page_lines(pa, mode, get_ocr)
-                b_lines, mode_b = _page_lines(pb, mode, get_ocr)
-                ops = _diff_lines(a_lines, b_lines)
-                status = "differ" if ops else "same"
-                page = {
-                    "index": i,
-                    "status": status,
-                    "mode_a": mode_a,
-                    "mode_b": mode_b,
-                    "meta_a": _page_meta(pa),
-                    "meta_b": _page_meta(pb),
-                    "diffs": ops,
+        def add_boxes(store: dict[int, list], tokens: list[dict[str, Any]], kind: str):
+            for tk in tokens:
+                if not tk["bbox"]:
+                    continue
+                x0, y0, x1, y1 = tk["bbox"]
+                store.setdefault(tk["page"], []).append([x0, y0, x1, y1, kind])
+
+        for tag, i1, i2, j1, j2 in sm.get_opcodes():
+            if tag == "equal":
+                continue
+            at = toks_a[i1:i2]
+            bt = toks_b[j1:j2]
+            if tag == "delete":
+                add_boxes(a_boxes, at, "del")
+            elif tag == "insert":
+                add_boxes(b_boxes, bt, "ins")
+            else:  # replace
+                add_boxes(a_boxes, at, "rep")
+                add_boxes(b_boxes, bt, "rep")
+            changes.append(
+                {
+                    "type": tag,
+                    "a_text": _snippet(at),
+                    "b_text": _snippet(bt),
+                    "a_page": at[0]["page"] if at else None,
+                    "b_page": bt[0]["page"] if bt else None,
                 }
-            elif has_a:
-                pa = doc_a[i]
-                a_lines, mode_a = _page_lines(pa, mode, get_ocr)
-                status = "only_a"
-                page = {
-                    "index": i,
-                    "status": status,
-                    "mode_a": mode_a,
-                    "mode_b": None,
-                    "meta_a": _page_meta(pa),
-                    "meta_b": None,
-                    "diffs": [{"type": "delete", "a": a_lines, "b": []}],
-                }
-            else:
-                pb = doc_b[i]
-                b_lines, mode_b = _page_lines(pb, mode, get_ocr)
-                status = "only_b"
-                page = {
-                    "index": i,
-                    "status": status,
-                    "mode_a": None,
-                    "mode_b": mode_b,
-                    "meta_a": None,
-                    "meta_b": _page_meta(pb),
-                    "diffs": [{"type": "insert", "a": [], "b": b_lines}],
-                }
-
-            if status != "same":
-                changed_pages.append(i)
-            pages.append(page)
+            )
 
         return {
             "success": True,
-            "pages": pages,
+            "a_boxes": {str(k): v for k, v in a_boxes.items()},
+            "b_boxes": {str(k): v for k, v in b_boxes.items()},
+            "changes": changes,
             "summary": {
                 "pages_a": doc_a.page_count,
                 "pages_b": doc_b.page_count,
-                "compared": n,
-                "changed_pages": changed_pages,
-                "identical": not changed_pages,
+                "changes": len(changes),
+                "changed_pages_a": sorted(a_boxes.keys()),
+                "changed_pages_b": sorted(b_boxes.keys()),
+                "identical": not changes,
+                "truncated": len(toks_a) >= _MAX_TOKENS or len(toks_b) >= _MAX_TOKENS,
             },
         }
     finally:

@@ -1,16 +1,20 @@
 "use strict";
 
 /**
- * Nabu PDF — PDF compare view.
+ * Nabu PDF — PDF compare view (word-stream model).
  *
- * Self-contained overlay feature. Picks two PDFs, POSTs them to the sidecar
- * /compare endpoint (page + line diff), then renders them side-by-side with the
- * differing lines boxed on the page and listed in a detail panel.
+ * The sidecar /compare endpoint diffs the two documents as one continuous word
+ * stream (not page-by-page), so a change is reported on whatever page it truly
+ * lands on in each file — robust to inserted/removed content shifting pages.
  *
- * Reuses globals declared at the top level of app.js (classic scripts share the
- * global lexical scope): sidecarFetch, toast, showOverlay, hideOverlay, u8ToB64,
- * toU8, sidecar, pdfjsLib. Nothing here touches the main viewer `state`, so the
- * open document and every existing tool are unaffected.
+ * This view renders both documents in their own lazily-rendered scroll pane,
+ * highlights each changed word on its page (red = removed, green = added, yellow
+ * = changed), and lists the changes in document order. Picking a change jumps
+ * both panes to the pages it touches.
+ *
+ * Reuses globals from app.js (classic scripts share global scope): sidecarFetch,
+ * toast, showOverlay, hideOverlay, u8ToB64, toU8, sidecar, pdfjsLib. Nothing here
+ * touches the main viewer `state`, so existing tools are unaffected.
  */
 (function () {
   const el = (id) => document.getElementById(id);
@@ -19,18 +23,28 @@
     a: null, // { name, bytes: Uint8Array }
     b: null,
     report: null,
-    pages: null,
-    idx: 0, // current aligned page index (0-based)
-    pdfA: null, // pdfjs document proxy
+    changes: null,
+    aBoxes: null, // { "pageIndex": [[x0,y0,x1,y1,kind], ...] }
+    bBoxes: null,
+    pdfA: null,
     pdfB: null,
     scale: 1.1,
+    changeIdx: -1,
+    wrapsA: [], // per-page slot elements
+    wrapsB: [],
+    obsA: null,
+    obsB: null,
   };
 
   function reset() {
-    cmp.a = cmp.b = cmp.report = cmp.pages = null;
-    cmp.idx = 0;
+    if (cmp.obsA) { try { cmp.obsA.disconnect(); } catch (_) {} cmp.obsA = null; }
+    if (cmp.obsB) { try { cmp.obsB.disconnect(); } catch (_) {} cmp.obsB = null; }
     if (cmp.pdfA) { try { cmp.pdfA.destroy(); } catch (_) {} cmp.pdfA = null; }
     if (cmp.pdfB) { try { cmp.pdfB.destroy(); } catch (_) {} cmp.pdfB = null; }
+    cmp.a = cmp.b = cmp.report = cmp.changes = cmp.aBoxes = cmp.bBoxes = null;
+    cmp.changeIdx = -1;
+    cmp.wrapsA = [];
+    cmp.wrapsB = [];
   }
 
   // ---- pick-files modal ----------------------------------------------------
@@ -92,12 +106,12 @@
         return;
       }
       cmp.report = data;
-      cmp.pages = data.pages;
+      cmp.changes = data.changes || [];
+      cmp.aBoxes = data.a_boxes || {};
+      cmp.bBoxes = data.b_boxes || {};
       // Copy the bytes for pdf.js — getDocument may detach the passed buffer.
       cmp.pdfA = await pdfjsLib.getDocument({ data: cmp.a.bytes.slice(), isEvalSupported: false }).promise;
       cmp.pdfB = await pdfjsLib.getDocument({ data: cmp.b.bytes.slice(), isEvalSupported: false }).promise;
-      const changed = data.summary.changed_pages || [];
-      cmp.idx = changed.length ? changed[0] : 0;
       openView();
     } catch (err) {
       toast("Lỗi so sánh: " + err.message, "bad");
@@ -110,9 +124,18 @@
 
   function openView() {
     el("compare-view").hidden = false;
+    el("compare-a-h").textContent = "A · " + cmp.a.name;
+    el("compare-b-h").textContent = "B · " + cmp.b.name;
     renderSummary();
-    renderPageList();
-    renderCurrent();
+    renderChangeList();
+    buildPane("a", cmp.pdfA, cmp.aBoxes);
+    buildPane("b", cmp.pdfB, cmp.bBoxes);
+    if (cmp.changes.length) {
+      cmp.changeIdx = 0;
+      jumpToChange(0, false);
+    } else {
+      el("compare-pagenum").textContent = "0 thay đổi";
+    }
   }
 
   function closeView() {
@@ -122,67 +145,98 @@
 
   function renderSummary() {
     const s = cmp.report.summary;
-    el("compare-summary").textContent = s.identical
-      ? `Hai tài liệu giống nhau (${s.compared} trang).`
-      : `${s.changed_pages.length}/${s.compared} trang khác nhau · A: ${s.pages_a} trang · B: ${s.pages_b} trang`;
+    let t = s.identical
+      ? "Hai tài liệu giống nhau."
+      : `${s.changes} thay đổi · A: ${s.pages_a} trang (${s.changed_pages_a.length} trang sửa) · B: ${s.pages_b} trang (${s.changed_pages_b.length} trang sửa)`;
+    if (s.truncated) t += " · (tài liệu rất lớn — đã cắt bớt)";
+    el("compare-summary").textContent = t;
   }
 
-  function statusBadge(status) {
-    if (status === "same") return "";
-    if (status === "only_a") return " (chỉ A)";
-    if (status === "only_b") return " (chỉ B)";
-    return " ●";
+  function changeLabel(c) {
+    if (c.type === "delete") return { cls: "del", txt: "− " + (c.a_text || "(trống)") };
+    if (c.type === "insert") return { cls: "ins", txt: "+ " + (c.b_text || "(trống)") };
+    return { cls: "rep", txt: (c.a_text || "∅") + "  →  " + (c.b_text || "∅") };
   }
 
-  function renderPageList() {
-    const box = el("compare-pagelist");
+  function renderChangeList() {
+    const box = el("compare-changes");
     box.innerHTML = "";
-    for (const pg of cmp.pages) {
-      const b = document.createElement("button");
-      b.className = "cmp-pagebtn " + pg.status + (pg.index === cmp.idx ? " active" : "");
-      b.textContent = "Trang " + (pg.index + 1) + statusBadge(pg.status);
-      b.dataset.idx = String(pg.index);
-      b.onclick = () => {
-        cmp.idx = pg.index;
-        renderCurrent();
-      };
-      box.appendChild(b);
-    }
-  }
-
-  function highlightPageBtn() {
-    for (const b of el("compare-pagelist").children) {
-      b.classList.toggle("active", Number(b.dataset.idx) === cmp.idx);
-    }
-  }
-
-  async function renderCurrent() {
-    const pg = cmp.pages.find((p) => p.index === cmp.idx);
-    if (!pg) return;
-    el("compare-pagenum").textContent = `Trang ${cmp.idx + 1} / ${cmp.report.summary.compared}`;
-    await Promise.all([
-      renderSide("a", cmp.pdfA, pg),
-      renderSide("b", cmp.pdfB, pg),
-    ]);
-    renderDiffPanel(pg);
-    highlightPageBtn();
-  }
-
-  async function renderSide(side, pdf, pg) {
-    const host = el(side === "a" ? "compare-a" : "compare-b");
-    host.innerHTML = "";
-    const meta = side === "a" ? pg.meta_a : pg.meta_b;
-    if (!meta) {
-      const d = document.createElement("div");
-      d.className = "cmp-missing";
-      d.textContent = side === "a" ? "Không có trang này trong file A" : "Không có trang này trong file B";
-      host.appendChild(d);
+    if (!cmp.changes.length) {
+      box.innerHTML = '<p class="cmp-nodiff">Không có khác biệt.</p>';
       return;
     }
+    const head = document.createElement("div");
+    head.className = "cmp-diffs-head";
+    head.textContent = cmp.changes.length + " thay đổi";
+    box.appendChild(head);
+
+    cmp.changes.forEach((c, i) => {
+      const { cls, txt } = changeLabel(c);
+      const b = document.createElement("button");
+      b.className = "cmp-change " + cls;
+      b.dataset.i = String(i);
+      const t = document.createElement("div");
+      t.className = "cmp-change-t";
+      t.textContent = txt;
+      const l = document.createElement("div");
+      l.className = "cmp-change-l";
+      l.textContent =
+        "A " + (c.a_page != null ? "tr " + (c.a_page + 1) : "—") +
+        " · B " + (c.b_page != null ? "tr " + (c.b_page + 1) : "—");
+      b.appendChild(t);
+      b.appendChild(l);
+      b.onclick = () => {
+        cmp.changeIdx = i;
+        jumpToChange(i, true);
+      };
+      box.appendChild(b);
+    });
+  }
+
+  function markActiveChange() {
+    for (const b of el("compare-changes").querySelectorAll(".cmp-change")) {
+      b.classList.toggle("active", Number(b.dataset.i) === cmp.changeIdx);
+    }
+  }
+
+  // Build a pane: one slot per page, lazily rendered as it scrolls into view.
+  function buildPane(side, pdf, boxesMap) {
+    const host = el(side === "a" ? "compare-a" : "compare-b");
+    host.innerHTML = "";
+    const wraps = [];
+    const obs = new IntersectionObserver(
+      (entries) => {
+        for (const e of entries) {
+          if (e.isIntersecting) {
+            const w = e.target;
+            obs.unobserve(w);
+            renderPage(side, pdf, Number(w.dataset.p), w, boxesMap);
+          }
+        }
+      },
+      { root: host, rootMargin: "400px" }
+    );
+    for (let i = 0; i < pdf.numPages; i++) {
+      const w = document.createElement("div");
+      w.className = "cmp-page-slot";
+      w.dataset.p = String(i);
+      w.style.minHeight = "300px";
+      host.appendChild(w);
+      wraps.push(w);
+      obs.observe(w);
+    }
+    if (side === "a") { cmp.wrapsA = wraps; cmp.obsA = obs; }
+    else { cmp.wrapsB = wraps; cmp.obsB = obs; }
+  }
+
+  async function renderPage(side, pdf, i, slot, boxesMap) {
+    if (slot.dataset.rendered === "1") return;
+    slot.dataset.rendered = "1";
     let page;
     try {
-      page = await pdf.getPage(cmp.idx + 1);
+      page = await pdf.getPage(i + 1);
     } catch (_) {
+      slot.dataset.rendered = "0";
       return;
     }
     const vp = page.getViewport({ scale: cmp.scale });
@@ -192,12 +246,18 @@
     canvas.height = Math.floor(vp.height * dpr);
     canvas.style.width = vp.width + "px";
     canvas.style.height = vp.height + "px";
-    const wrap = document.createElement("div");
-    wrap.className = "cmp-page";
-    wrap.style.width = vp.width + "px";
-    wrap.style.height = vp.height + "px";
-    wrap.appendChild(canvas);
-    host.appendChild(wrap);
+    const pageDiv = document.createElement("div");
+    pageDiv.className = "cmp-page";
+    pageDiv.style.width = vp.width + "px";
+    pageDiv.style.height = vp.height + "px";
+    pageDiv.appendChild(canvas);
+    const label = document.createElement("div");
+    label.className = "cmp-page-label";
+    label.textContent = "Trang " + (i + 1);
+    slot.style.minHeight = "";
+    slot.innerHTML = "";
+    slot.appendChild(label);
+    slot.appendChild(pageDiv);
     try {
       await page.render({
         canvasContext: canvas.getContext("2d"),
@@ -207,129 +267,59 @@
     } catch (_) {
       return;
     }
-    drawBoxes(wrap, pg, side);
+    const boxes = boxesMap[String(i)];
+    if (boxes) drawBoxes(pageDiv, boxes);
   }
 
-  // Overlay diff boxes. Line bbox is in scale-1 PDF-point space (same as the
-  // text-edit spans), so on screen it's simply bbox * scale.
-  function drawBoxes(wrap, pg, side) {
+  // Boxes are in scale-1 PDF-point space → on screen it's just bbox * scale.
+  function drawBoxes(pageDiv, boxes) {
     const s = cmp.scale;
-    for (const op of pg.diffs) {
-      let lines, cls;
-      if (op.type === "replace") {
-        lines = side === "a" ? op.a : op.b;
-        cls = "cmp-box-replace";
-      } else if (op.type === "delete") {
-        if (side !== "a") continue;
-        lines = op.a;
-        cls = "cmp-box-del";
-      } else {
-        // insert
-        if (side !== "b") continue;
-        lines = op.b;
-        cls = "cmp-box-ins";
-      }
-      for (const ln of lines) {
-        if (!ln.bbox) continue;
-        const [x0, y0, x1, y1] = ln.bbox;
-        const box = document.createElement("div");
-        box.className = "cmp-box " + cls;
-        box.style.left = x0 * s + "px";
-        box.style.top = y0 * s + "px";
-        box.style.width = Math.max(3, x1 - x0) * s + "px";
-        box.style.height = Math.max(6, y1 - y0) * s + "px";
-        wrap.appendChild(box);
-      }
+    for (const b of boxes) {
+      const [x0, y0, x1, y1, kind] = b;
+      const d = document.createElement("div");
+      d.className =
+        "cmp-box " +
+        (kind === "del" ? "cmp-box-del" : kind === "ins" ? "cmp-box-ins" : "cmp-box-replace");
+      d.style.left = x0 * s + "px";
+      d.style.top = y0 * s + "px";
+      d.style.width = Math.max(3, x1 - x0) * s + "px";
+      d.style.height = Math.max(6, y1 - y0) * s + "px";
+      pageDiv.appendChild(d);
     }
-  }
-
-  function renderDiffPanel(pg) {
-    const box = el("compare-diffs");
-    box.innerHTML = "";
-    if (pg.status === "same") {
-      box.innerHTML = '<p class="cmp-nodiff">Trang này giống nhau.</p>';
-      return;
-    }
-    const head = document.createElement("div");
-    head.className = "cmp-diffs-head";
-    head.textContent = "Khác biệt ở trang " + (pg.index + 1);
-    box.appendChild(head);
-
-    for (const op of pg.diffs) {
-      const row = document.createElement("div");
-      row.className = "cmp-diffrow " + op.type;
-      if (op.type === "replace" && op.words) {
-        row.appendChild(wordSide("A", op.words.a, "del"));
-        row.appendChild(wordSide("B", op.words.b, "ins"));
-      } else if (op.type === "replace") {
-        row.appendChild(textSide("A", op.a.map((l) => l.text), "del"));
-        row.appendChild(textSide("B", op.b.map((l) => l.text), "ins"));
-      } else if (op.type === "delete") {
-        row.appendChild(textSide("A — đã xoá", op.a.map((l) => l.text), "del"));
-      } else {
-        row.appendChild(textSide("B — đã thêm", op.b.map((l) => l.text), "ins"));
-      }
-      box.appendChild(row);
-    }
-  }
-
-  function textSide(label, lines, cls) {
-    const d = document.createElement("div");
-    d.className = "cmp-side " + cls;
-    const h = document.createElement("span");
-    h.className = "cmp-side-h";
-    h.textContent = label;
-    d.appendChild(h);
-    const p = document.createElement("div");
-    p.className = "cmp-side-t";
-    p.textContent = lines.join("\n");
-    d.appendChild(p);
-    return d;
-  }
-
-  function wordSide(label, segs, cls) {
-    const d = document.createElement("div");
-    d.className = "cmp-side " + cls;
-    const h = document.createElement("span");
-    h.className = "cmp-side-h";
-    h.textContent = label;
-    d.appendChild(h);
-    const p = document.createElement("div");
-    p.className = "cmp-side-t";
-    for (const seg of segs) {
-      const sp = document.createElement("span");
-      sp.textContent = seg.t + " ";
-      if (seg.op === "change") sp.className = "cmp-wd " + cls;
-      p.appendChild(sp);
-    }
-    d.appendChild(p);
-    return d;
   }
 
   // ---- navigation ----------------------------------------------------------
 
-  function step(delta) {
-    const n = cmp.report.summary.compared;
-    cmp.idx = Math.min(n - 1, Math.max(0, cmp.idx + delta));
-    renderCurrent();
+  function jumpToChange(i, smooth) {
+    const c = cmp.changes[i];
+    if (!c) return;
+    if (c.a_page != null) scrollPaneTo("a", c.a_page, smooth);
+    if (c.b_page != null) scrollPaneTo("b", c.b_page, smooth);
+    el("compare-pagenum").textContent = `Thay đổi ${i + 1}/${cmp.changes.length}`;
+    markActiveChange();
   }
 
-  function nextDiff(dir) {
-    const changed = cmp.report.summary.changed_pages;
-    if (!changed.length) {
-      toast("Không có trang khác nhau.", "");
+  function scrollPaneTo(side, pageIdx, smooth) {
+    const wraps = side === "a" ? cmp.wrapsA : cmp.wrapsB;
+    const w = wraps[pageIdx];
+    if (!w) return;
+    // Force-render the target page even if it hasn't scrolled into view yet.
+    const pdf = side === "a" ? cmp.pdfA : cmp.pdfB;
+    const boxesMap = side === "a" ? cmp.aBoxes : cmp.bBoxes;
+    renderPage(side, pdf, pageIdx, w, boxesMap);
+    w.scrollIntoView({ behavior: smooth ? "smooth" : "auto", block: "start" });
+  }
+
+  function nextChange(dir) {
+    if (!cmp.changes.length) {
+      toast("Không có khác biệt.", "");
       return;
     }
-    let target;
-    if (dir > 0) {
-      target = changed.find((i) => i > cmp.idx);
-      if (target === undefined) target = changed[0]; // wrap
-    } else {
-      const before = changed.filter((i) => i < cmp.idx);
-      target = before.length ? before[before.length - 1] : changed[changed.length - 1];
-    }
-    cmp.idx = target;
-    renderCurrent();
+    let i = cmp.changeIdx + dir;
+    if (i < 0) i = cmp.changes.length - 1;
+    if (i >= cmp.changes.length) i = 0;
+    cmp.changeIdx = i;
+    jumpToChange(i, true);
   }
 
   // ---- wiring --------------------------------------------------------------
@@ -344,13 +334,13 @@
     on("cmp2-cancel", () => (el("cmp2-modal").hidden = true));
     on("cmp2-run", run);
     on("compare-close", closeView);
-    on("compare-prev", () => step(-1));
-    on("compare-next", () => step(1));
-    on("compare-prev-diff", () => nextDiff(-1));
-    on("compare-next-diff", () => nextDiff(1));
-    // Esc closes the result view (only when it's open).
+    on("compare-prev", () => nextChange(-1));
+    on("compare-next", () => nextChange(1));
     document.addEventListener("keydown", (e) => {
-      if (e.key === "Escape" && !el("compare-view").hidden) closeView();
+      if (el("compare-view").hidden) return;
+      if (e.key === "Escape") closeView();
+      else if (e.key === "ArrowDown" || e.key === "ArrowRight") { e.preventDefault(); nextChange(1); }
+      else if (e.key === "ArrowUp" || e.key === "ArrowLeft") { e.preventDefault(); nextChange(-1); }
     });
   }
 

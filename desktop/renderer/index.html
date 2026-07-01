@@ -567,21 +567,18 @@
         <b>So sánh PDF</b>
         <span id="compare-summary" class="compare-summary"></span>
         <div class="spacer"></div>
-        <button id="compare-prev-diff" class="ghost" title="Trang khác nhau trước">◀ Khác trước</button>
-        <button id="compare-prev" class="icon-only" title="Trang trước">‹</button>
+        <button id="compare-prev" class="ghost" title="Thay đổi trước">‹ Thay đổi trước</button>
         <span id="compare-pagenum" class="readout"></span>
-        <button id="compare-next" class="icon-only" title="Trang sau">›</button>
-        <button id="compare-next-diff" class="ghost" title="Trang khác nhau tiếp">Khác tiếp ▶</button>
+        <button id="compare-next" class="ghost" title="Thay đổi sau">Thay đổi sau ›</button>
         <div class="sep"></div>
         <button id="compare-close" class="primary">Đóng</button>
       </div>
       <div class="compare-body">
-        <aside class="compare-pagelist" id="compare-pagelist"></aside>
+        <aside class="compare-changes" id="compare-changes"></aside>
         <div class="compare-panes">
-          <div class="compare-pane"><div class="compare-pane-h">File A</div><div class="compare-scroll" id="compare-a"></div></div>
-          <div class="compare-pane"><div class="compare-pane-h">File B</div><div class="compare-scroll" id="compare-b"></div></div>
+          <div class="compare-pane"><div class="compare-pane-h" id="compare-a-h">File A</div><div class="compare-scroll" id="compare-a"></div></div>
+          <div class="compare-pane"><div class="compare-pane-h" id="compare-b-h">File B</div><div class="compare-scroll" id="compare-b"></div></div>
         </div>
-        <aside class="compare-diffs" id="compare-diffs"></aside>
       </div>
     </div>
 
