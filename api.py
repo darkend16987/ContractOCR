@@ -1666,23 +1666,24 @@ async def compare(req: CompareRequest):
     except Exception:
         raise HTTPException(status_code=400, detail="Dữ liệu PDF không hợp lệ")
 
-    from src.compare import compare_pdfs
-
     try:
+        from src.compare import compare_pdfs
+
         report = compare_pdfs(pdf_a, pdf_b, mode=req.mode, get_ocr=_get_ocr)
+        return CompareResponse(
+            success=True,
+            a_boxes=report.get("a_boxes", {}),
+            b_boxes=report.get("b_boxes", {}),
+            changes=report.get("changes", []),
+            summary=report.get("summary", {}),
+        )
     except HTTPException:
         raise
     except Exception as e:
+        # Never let an unexpected error escape as a bare 500 (the renderer then
+        # gets non-JSON and can't show a reason). Return it as JSON instead.
         logger.exception("compare error")
         return CompareResponse(success=False, error=str(e))
-
-    return CompareResponse(
-        success=True,
-        a_boxes=report["a_boxes"],
-        b_boxes=report["b_boxes"],
-        changes=report["changes"],
-        summary=report["summary"],
-    )
 
 
 if __name__ == "__main__":

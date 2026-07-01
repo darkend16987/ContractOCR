@@ -4,7 +4,10 @@
 > [DESIGN.md](DESIGN.md) (kiến trúc), [ROADMAP.md](ROADMAP.md) (tiến độ chi tiết),
 > [SETUP.md](SETUP.md) (dựng môi trường).
 
-_Cập nhật: 2026-07-01 · v0.2.14_
+_Cập nhật: 2026-07-01 · v0.2.15_
+
+> v0.2.15 — **Hotfix: So sánh PDF bị lỗi 500 trên bản đóng gói** (sidecar CÓ đổi — phải rebuild):
+> - 0.2.14 ship sidecar có `api.py` **cũ** (endpoint `/compare` còn `report["pages"]` của bản comparator v1) trong khi comparator đã là v2 (trả `a_boxes/b_boxes/changes`) → `KeyError: 'pages'` → HTTP 500 → renderer nhận text "Internal Server Error", báo `Unexpected token 'I'... is not valid JSON`. **Gốc:** PyInstaller cache thư mục `build/sidecar` phục vụ bản `api.py` cũ (đã sửa mã nguồn giữa/sau lần build trước — xem [[sidecar-stale-build-guard]] mục false-fresh). **Sửa:** xoá `build/` trước khi build:sidecar; build endpoint gói toàn bộ trong try + `report.get(...)` nên không bao giờ thoát ra 500; renderer đọc `res.text()` rồi `JSON.parse` phòng thủ (báo status máy chủ thay vì crash parse). **Quy trình mới:** sau build:sidecar phải PROBE `dist/sidecar/sidecar.exe` `/compare` = 200 trước khi đóng gói/release.
 
 > v0.2.14 — **So sánh 2 file PDF + sửa "Kiểm tra cập nhật" (bản cài)** (sidecar CÓ đổi — phải rebuild):
 > - **Sửa auto-update bản cài**: gốc lỗi ở khâu đóng gói — `electron-updater` khai báo trong `package.json` nhưng **thiếu trong `node_modules`** → không được nhồi vào `app.asar` → `require("electron-updater")` ném lỗi → `autoUpdaterRef` null → nút báo "Bản này không hỗ trợ tự cập nhật". Đã `pnpm install` lại + thêm **guard** trong [`check-sidecar-fresh.js`](desktop/scripts/check-sidecar-fresh.js): prebuild fail nếu thiếu runtime dep (electron-updater). Lưu ý: bản 0.2.13 đã cài KHÔNG tự cập nhật được (dep thiếu trong asar của nó) — user phải tải 0.2.14 thủ công 1 lần.

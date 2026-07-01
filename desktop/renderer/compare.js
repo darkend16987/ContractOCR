@@ -100,7 +100,17 @@
           mode,
         }),
       });
-      const data = await res.json();
+      // The server may return a non-JSON body on an unexpected 500; read text
+      // first and parse defensively so the user sees a real reason, not a raw
+      // "Unexpected token" JSON-parse error.
+      const raw = await res.text();
+      let data;
+      try {
+        data = JSON.parse(raw);
+      } catch (_) {
+        toast("So sánh lỗi (máy chủ " + res.status + "): " + (raw || "không rõ").slice(0, 120), "bad");
+        return;
+      }
       if (!data.success) {
         toast("So sánh lỗi: " + (data.error || data.detail || "không rõ"), "bad");
         return;
