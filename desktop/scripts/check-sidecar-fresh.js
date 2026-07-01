@@ -20,6 +20,7 @@ if (process.env.SKIP_SIDECAR_CHECK === "1") {
 }
 
 const root = path.resolve(__dirname, "..", "..");
+const desktop = path.resolve(__dirname, "..");
 const markerPath = path.join(root, "dist", "sidecar", "SIDECAR_BUILD.json");
 
 function fail(msg) {
@@ -27,6 +28,21 @@ function fail(msg) {
   console.error("  Fix: cd desktop && npm run build:sidecar   (rebuilds + re-stamps the marker)");
   console.error("  Or, if you are SURE the Python source is unchanged: SKIP_SIDECAR_CHECK=1 npm run build\n");
   process.exit(1);
+}
+
+// Runtime dependencies that MUST be present in node_modules or electron-builder
+// silently ships an installer missing them. electron-updater in particular was
+// declared in package.json but absent from a stale node_modules once, so the
+// packaged app's require("electron-updater") threw and auto-update reported
+// "unsupported". Catch that here instead of in a user's hands.
+const REQUIRED_DEPS = ["electron-updater"];
+for (const dep of REQUIRED_DEPS) {
+  if (!fs.existsSync(path.join(desktop, "node_modules", dep))) {
+    console.error("\n[deps-check] Missing runtime dependency: " + dep);
+    console.error("  It is in package.json but not installed — the packaged app would ship without it.");
+    console.error("  Fix: cd desktop && pnpm install   (then rebuild)\n");
+    process.exit(1);
+  }
 }
 
 if (!fs.existsSync(path.join(root, "dist", "sidecar", "sidecar.exe"))) {

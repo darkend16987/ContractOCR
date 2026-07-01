@@ -4,7 +4,11 @@
 > [DESIGN.md](DESIGN.md) (kiến trúc), [ROADMAP.md](ROADMAP.md) (tiến độ chi tiết),
 > [SETUP.md](SETUP.md) (dựng môi trường).
 
-_Cập nhật: 2026-06-30 · v0.2.13_
+_Cập nhật: 2026-07-01 · v0.2.14_
+
+> v0.2.14 — **So sánh 2 file PDF + sửa "Kiểm tra cập nhật" (bản cài)** (sidecar CÓ đổi — phải rebuild):
+> - **Sửa auto-update bản cài**: gốc lỗi ở khâu đóng gói — `electron-updater` khai báo trong `package.json` nhưng **thiếu trong `node_modules`** → không được nhồi vào `app.asar` → `require("electron-updater")` ném lỗi → `autoUpdaterRef` null → nút báo "Bản này không hỗ trợ tự cập nhật". Đã `pnpm install` lại + thêm **guard** trong [`check-sidecar-fresh.js`](desktop/scripts/check-sidecar-fresh.js): prebuild fail nếu thiếu runtime dep (electron-updater). Lưu ý: bản 0.2.13 đã cài KHÔNG tự cập nhật được (dep thiếu trong asar của nó) — user phải tải 0.2.14 thủ công 1 lần.
+> - **So sánh PDF** (mới): [`src/compare/comparator.py`](src/compare/comparator.py) + endpoint `POST /compare` trong [`api.py`](api.py). Diff theo trang + theo dòng bằng `difflib` (chuẩn hoá khoảng trắng để reflow không bị coi là khác). Trang text-layer: lấy dòng + bbox từ PyMuPDF; trang scan: OCR (RapidViet) `recognize_boxes`, có bbox khi trang không xoay. UI [`compare.js`](desktop/renderer/compare.js) + modal/khung xem trong [`index.html`](desktop/renderer/index.html): chọn 2 file, xem cạnh nhau, tô hộp đỏ (xoá)/xanh (thêm)/vàng (đổi), danh sách trang có huy hiệu khác biệt, panel diff dòng + từ. Nút "So sánh" trên thanh công cụ (chỉ cần engine sẵn sàng, không cần mở doc). Thuần thêm mới, không sửa tính năng cũ.
 
 > v0.2.13 — **Che thông tin chọn màu + Hộp văn bản có font/đậm/nghiêng/gạch chân + Thêm trang trắng** (renderer-only, sidecar KHÔNG đổi):
 > - **Redact chọn màu** ([`editor.js`](desktop/renderer/editor.js)): redact không còn cứng màu đen. Thêm color picker riêng `#ed-redact-color` (mặc định `#000000`), state `ed.redactColor`. Annot redact lưu `color` của nó; overlay vẽ `el.style.background = a.color`; `rasterRedacted()` tô **từng box theo màu của nó** (vẫn bảo mật — xoá pixel gốc, không chỉ phủ). Bỏ `fillStyle="#000"` cứng.

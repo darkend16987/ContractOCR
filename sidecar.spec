@@ -78,6 +78,10 @@ extra_hiddenimports = [
     "uvicorn.protocols.http.auto",
     "uvicorn.protocols.websockets.auto",
     "uvicorn.lifespan.on",
+    # PDF compare module — imported lazily inside the /compare endpoint, so pin it
+    # explicitly to be safe against a frozen-app ModuleNotFoundError.
+    "src.compare",
+    "src.compare.comparator",
     # Add modules here as PyInstaller reports them missing at runtime.
 ]
 

@@ -2019,6 +2019,9 @@ function updateToolbar() {
   if (bs) bs.disabled = !(ready && has) || editing;
   const bc = $("btn-compress");
   if (bc) bc.disabled = !(ready && has) || editing;
+  // Compare picks its own two files, so it only needs the engine ready (no open doc).
+  const bd = $("btn-diff");
+  if (bd) bd.disabled = !ready || editing;
   // Convert dropdown: enabled whenever the engine is ready (Ảnh→PDF works with no
   // doc open); per-item guards enforce the "open a PDF first" rule where needed.
   const bcv = $("btn-convert");
@@ -2063,6 +2066,7 @@ $("btn-zoom-out").onclick = () => zoom(-0.2);
 $("btn-ocr").onclick = openExtractPanel;
 $("btn-searchable").onclick = makeSearchable;
 $("btn-compress").onclick = openCompress;
+$("btn-diff").onclick = () => window.Compare && window.Compare.open();
 
 // ---- find-in-document controls ----
 let findTimer;

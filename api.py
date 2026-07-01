@@ -1620,6 +1620,65 @@ async def edit_text(req: EditTextRequest):
     )
 
 
+# ---------------------------------------------------------------------------
+# Compare two PDFs (page + line diff)
+# ---------------------------------------------------------------------------
+
+
+class CompareRequest(BaseModel):
+    """Body for POST /compare — two PDFs and a diff mode."""
+    pdf_a_b64: str
+    pdf_b_b64: str
+    mode: str = "auto"  # "text" | "ocr" | "auto"
+
+
+class CompareResponse(BaseModel):
+    success: bool
+    pages: list[Any] = []
+    summary: dict[str, Any] = {}
+    error: str | None = None
+
+
+@app.post("/compare", response_model=CompareResponse)
+async def compare(req: CompareRequest):
+    """Diff two PDFs page-by-page and line-by-line.
+
+    Text-layer pages use embedded text (fast, exact); scanned pages fall back to
+    OCR when mode is "ocr"/"auto". Returns per-page diff ops with line boxes for
+    on-screen highlighting.
+    """
+    _require_fitz()  # 503 with a clear message if PyMuPDF is missing
+
+    if req.mode not in ("text", "ocr", "auto"):
+        raise HTTPException(status_code=400, detail="mode phải là text | ocr | auto")
+
+    for label, b64 in (("A", req.pdf_a_b64), ("B", req.pdf_b_b64)):
+        if not b64:
+            raise HTTPException(status_code=400, detail=f"Thiếu file {label}")
+        if len(b64) > _MAX_PDF_B64:
+            raise HTTPException(status_code=400, detail=f"File {label} quá lớn (tối đa ~200MB).")
+
+    try:
+        pdf_a = base64.b64decode(req.pdf_a_b64)
+        pdf_b = base64.b64decode(req.pdf_b_b64)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Dữ liệu PDF không hợp lệ")
+
+    from src.compare import compare_pdfs
+
+    try:
+        report = compare_pdfs(pdf_a, pdf_b, mode=req.mode, get_ocr=_get_ocr)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("compare error")
+        return CompareResponse(success=False, error=str(e))
+
+    return CompareResponse(
+        success=True, pages=report["pages"], summary=report["summary"]
+    )
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="127.0.0.1", port=8000)
