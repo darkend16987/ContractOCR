@@ -1686,6 +1686,109 @@ async def compare(req: CompareRequest):
         return CompareResponse(success=False, error=str(e))
 
 
+# ---------------------------------------------------------------------------
+# Compare two drawing PDFs (visual raster diff — CAD/Revit exports)
+# ---------------------------------------------------------------------------
+
+
+class CompareDrawingsRequest(BaseModel):
+    """Body for POST /compare-drawings — two PDFs and a diff sensitivity."""
+    pdf_a_b64: str
+    pdf_b_b64: str
+    sensitivity: str = "normal"  # "low" | "normal" | "high"
+
+
+@app.post("/compare-drawings", response_model=CompareResponse)
+async def compare_drawings_ep(req: CompareDrawingsRequest):
+    """Visual diff of two drawing PDFs (raster compare, Bluebeam-style).
+
+    Pages are matched by perceptual fingerprint (robust to inserted/removed
+    sheets), each matched pair is rendered and pixel-diffed, and changed
+    regions come back as boxes in the same format as /compare.
+    """
+    _require_fitz()  # 503 with a clear message if PyMuPDF is missing
+
+    if req.sensitivity not in ("low", "normal", "high"):
+        raise HTTPException(status_code=400, detail="sensitivity phải là low | normal | high")
+
+    for label, b64 in (("A", req.pdf_a_b64), ("B", req.pdf_b_b64)):
+        if not b64:
+            raise HTTPException(status_code=400, detail=f"Thiếu file {label}")
+        if len(b64) > _MAX_PDF_B64:
+            raise HTTPException(status_code=400, detail=f"File {label} quá lớn (tối đa ~200MB).")
+
+    try:
+        pdf_a = base64.b64decode(req.pdf_a_b64)
+        pdf_b = base64.b64decode(req.pdf_b_b64)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Dữ liệu PDF không hợp lệ")
+
+    try:
+        from src.compare import compare_drawings
+
+        report = compare_drawings(pdf_a, pdf_b, sensitivity=req.sensitivity)
+        return CompareResponse(
+            success=True,
+            a_boxes=report.get("a_boxes", {}),
+            b_boxes=report.get("b_boxes", {}),
+            changes=report.get("changes", []),
+            summary=report.get("summary", {}),
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("compare-drawings error")
+        return CompareResponse(success=False, error=str(e))
+
+
+class CompareExportRequest(BaseModel):
+    """Body for POST /compare-drawings/export — stamp change regions onto a PDF."""
+    pdf_b64: str
+    boxes: dict[str, Any] = {}
+    style: str = "cloud"  # "cloud" | "rect"
+
+
+class CompareExportResponse(BaseModel):
+    success: bool
+    data_b64: str | None = None
+    filename: str | None = None
+    error: str | None = None
+
+
+@app.post("/compare-drawings/export", response_model=CompareExportResponse)
+async def compare_drawings_export(req: CompareExportRequest):
+    """Return the PDF with change regions marked as revision-cloud annotations."""
+    _require_fitz()
+
+    if req.style not in ("cloud", "rect"):
+        raise HTTPException(status_code=400, detail="style phải là cloud | rect")
+    if not req.pdf_b64:
+        raise HTTPException(status_code=400, detail="Thiếu file PDF")
+    if len(req.pdf_b64) > _MAX_PDF_B64:
+        raise HTTPException(status_code=400, detail="File quá lớn (tối đa ~200MB).")
+
+    try:
+        pdf_bytes = base64.b64decode(req.pdf_b64)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Dữ liệu PDF không hợp lệ")
+
+    try:
+        from src.compare import annotate_pdf
+
+        out = annotate_pdf(pdf_bytes, req.boxes, style=req.style)
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        return CompareExportResponse(
+            success=True,
+            data_b64=base64.b64encode(out).decode("ascii"),
+            filename=f"compared_{ts}.pdf",
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("compare-drawings export error")
+        return CompareExportResponse(success=False, error=str(e))
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="127.0.0.1", port=8000)

@@ -538,7 +538,7 @@
     <div class="modal" id="cmp2-modal" hidden>
       <div class="modal-card">
         <h3>So sánh hai file PDF</h3>
-        <p class="cmp-note">Chọn 2 file. Ứng dụng chỉ ra các trang và dòng khác nhau. PDF scan sẽ được OCR để so sánh (chậm hơn).</p>
+        <p class="cmp-note">Chọn 2 file. Ứng dụng chỉ ra các trang và dòng khác nhau. PDF scan sẽ được OCR để so sánh (chậm hơn). Với bản vẽ CAD/Revit, chọn chế độ "Bản vẽ" để so sánh hình ảnh.</p>
         <div class="cmp2-pick">
           <button id="cmp2-pick-a" class="ghost"><svg class="ic"><use href="#ic-folder"/></svg>Chọn file A…</button>
           <span id="cmp2-a-name" class="cmp2-name">Chưa chọn</span>
@@ -552,6 +552,14 @@
             <option value="auto" selected>Tự động (text, OCR khi là scan)</option>
             <option value="text">Chỉ văn bản (nhanh, không OCR)</option>
             <option value="ocr">Bắt buộc OCR mọi trang</option>
+            <option value="drawing">Bản vẽ (so sánh hình ảnh — CAD/Revit)</option>
+          </select>
+        </label>
+        <label id="cmp2-sens-wrap" hidden>Độ nhạy
+          <select id="cmp2-sens">
+            <option value="low">Thấp (bỏ qua khác biệt nhỏ)</option>
+            <option value="normal" selected>Chuẩn</option>
+            <option value="high">Cao (bắt cả nét mảnh)</option>
           </select>
         </label>
         <div class="modal-actions">
@@ -571,6 +579,7 @@
         <span id="compare-pagenum" class="readout"></span>
         <button id="compare-next" class="ghost" title="Thay đổi sau">Thay đổi sau ›</button>
         <div class="sep"></div>
+        <button id="compare-export" class="ghost" hidden title="Lưu bản B với đám mây revision quanh các vùng thay đổi">Tải B đã đánh dấu</button>
         <button id="compare-close" class="primary">Đóng</button>
       </div>
       <div class="compare-body">

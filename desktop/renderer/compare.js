@@ -28,6 +28,7 @@
     bBoxes: null,
     pdfA: null,
     pdfB: null,
+    mode: "auto",
     scale: 1.1,
     changeIdx: -1,
     wrapsA: [], // per-page slot elements
@@ -42,6 +43,7 @@
     if (cmp.pdfA) { try { cmp.pdfA.destroy(); } catch (_) {} cmp.pdfA = null; }
     if (cmp.pdfB) { try { cmp.pdfB.destroy(); } catch (_) {} cmp.pdfB = null; }
     cmp.a = cmp.b = cmp.report = cmp.changes = cmp.aBoxes = cmp.bBoxes = null;
+    cmp.mode = "auto";
     cmp.changeIdx = -1;
     cmp.wrapsA = [];
     cmp.wrapsB = [];
@@ -58,6 +60,8 @@
     el("cmp2-a-name").textContent = "Chưa chọn";
     el("cmp2-b-name").textContent = "Chưa chọn";
     el("cmp2-mode").value = "auto";
+    el("cmp2-sens").value = "normal";
+    el("cmp2-sens-wrap").hidden = true;
     updateRunBtn();
     el("cmp2-modal").hidden = false;
   }
@@ -84,21 +88,33 @@
   async function run() {
     if (!cmp.a || !cmp.b) return;
     const mode = el("cmp2-mode").value || "auto";
+    cmp.mode = mode;
     el("cmp2-modal").hidden = true;
     showOverlay(
-      mode === "text"
-        ? "Đang so sánh văn bản…"
-        : "Đang so sánh (có thể OCR — tài liệu nhiều trang sẽ lâu)…"
+      mode === "drawing"
+        ? "Đang so sánh bản vẽ (ghép trang + diff hình ảnh)…"
+        : mode === "text"
+          ? "Đang so sánh văn bản…"
+          : "Đang so sánh (có thể OCR — tài liệu nhiều trang sẽ lâu)…"
     );
     try {
-      const res = await sidecarFetch("/compare", {
+      const endpoint = mode === "drawing" ? "/compare-drawings" : "/compare";
+      const body =
+        mode === "drawing"
+          ? {
+              pdf_a_b64: u8ToB64(cmp.a.bytes),
+              pdf_b_b64: u8ToB64(cmp.b.bytes),
+              sensitivity: el("cmp2-sens").value || "normal",
+            }
+          : {
+              pdf_a_b64: u8ToB64(cmp.a.bytes),
+              pdf_b_b64: u8ToB64(cmp.b.bytes),
+              mode,
+            };
+      const res = await sidecarFetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          pdf_a_b64: u8ToB64(cmp.a.bytes),
-          pdf_b_b64: u8ToB64(cmp.b.bytes),
-          mode,
-        }),
+        body: JSON.stringify(body),
       });
       // The server may return a non-JSON body on an unexpected 500; read text
       // first and parse defensively so the user sees a real reason, not a raw
@@ -136,6 +152,8 @@
     el("compare-view").hidden = false;
     el("compare-a-h").textContent = "A · " + cmp.a.name;
     el("compare-b-h").textContent = "B · " + cmp.b.name;
+    // Marked-up export only makes sense for the drawing diff (region boxes).
+    el("compare-export").hidden = !(cmp.mode === "drawing" && !cmp.report.summary.identical);
     renderSummary();
     renderChangeList();
     buildPane("a", cmp.pdfA, cmp.aBoxes);
@@ -165,6 +183,8 @@
   function changeLabel(c) {
     if (c.type === "delete") return { cls: "del", txt: "− " + (c.a_text || "(trống)") };
     if (c.type === "insert") return { cls: "ins", txt: "+ " + (c.b_text || "(trống)") };
+    // Drawing regions carry one label on both sides — show it once.
+    if (c.a_text && c.a_text === c.b_text) return { cls: "rep", txt: "≠ " + c.a_text };
     return { cls: "rep", txt: (c.a_text || "∅") + "  →  " + (c.b_text || "∅") };
   }
 
@@ -298,6 +318,46 @@
     }
   }
 
+  // ---- export marked-up B ---------------------------------------------------
+
+  // Save a copy of file B with a revision cloud around every changed region.
+  // The clouds are real PDF annotations — any viewer can move/delete them.
+  async function exportMarked() {
+    if (!cmp.b || !cmp.bBoxes) return;
+    showOverlay("Đang tạo bản B có đánh dấu…");
+    try {
+      const res = await sidecarFetch("/compare-drawings/export", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          pdf_b64: u8ToB64(cmp.b.bytes),
+          boxes: cmp.bBoxes,
+          style: "cloud",
+        }),
+      });
+      const raw = await res.text();
+      let data;
+      try {
+        data = JSON.parse(raw);
+      } catch (_) {
+        toast("Xuất lỗi (máy chủ " + res.status + "): " + (raw || "không rõ").slice(0, 120), "bad");
+        return;
+      }
+      if (!data.success) {
+        toast("Xuất lỗi: " + (data.error || data.detail || "không rõ"), "bad");
+        return;
+      }
+      const bytes = Uint8Array.from(atob(data.data_b64), (ch) => ch.charCodeAt(0));
+      const name = cmp.b.name.replace(/\.pdf$/i, "") + "-danh-dau.pdf";
+      const r = await window.desktop.savePdf(bytes, name);
+      if (r.saved) toast("Đã lưu bản B có đánh dấu: " + r.path, "good");
+    } catch (err) {
+      toast("Lỗi xuất bản đánh dấu: " + err.message, "bad");
+    } finally {
+      hideOverlay();
+    }
+  }
+
   // ---- navigation ----------------------------------------------------------
 
   function jumpToChange(i, smooth) {
@@ -343,6 +403,13 @@
     on("cmp2-pick-b", () => pick("b"));
     on("cmp2-cancel", () => (el("cmp2-modal").hidden = true));
     on("cmp2-run", run);
+    const modeSel = el("cmp2-mode");
+    if (modeSel) {
+      modeSel.onchange = () => {
+        el("cmp2-sens-wrap").hidden = modeSel.value !== "drawing";
+      };
+    }
+    on("compare-export", exportMarked);
     on("compare-close", closeView);
     on("compare-prev", () => nextChange(-1));
     on("compare-next", () => nextChange(1));
