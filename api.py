@@ -1231,6 +1231,105 @@ async def pdf_to_images(req: PdfToImagesRequest):
     )
 
 
+class SplitRequest(BaseModel):
+    """Request body for splitting one PDF into several files.
+
+    mode="every": consecutive chunks of `size` pages each (size=1 → one file per page).
+    mode="ranges": one output file per comma-separated 1-based range, e.g. "1-3,5,8-10".
+    """
+    pdf_b64: str
+    mode: str = "every"           # "every" | "ranges"
+    size: int = 1                 # pages per chunk when mode="every"
+    ranges: str = ""              # range spec when mode="ranges"
+
+
+def _parse_ranges(spec: str, page_count: int) -> list[tuple[int, int]]:
+    """Parse "1-3,5,8-10" into 0-based inclusive (start, end) pairs, clamped.
+
+    Invalid/empty tokens are skipped; out-of-range values are clamped into
+    [0, page_count-1]. A bare "5" becomes (4, 4).
+    """
+    out: list[tuple[int, int]] = []
+    for tok in spec.replace(" ", "").split(","):
+        if not tok:
+            continue
+        try:
+            if "-" in tok:
+                a_s, b_s = tok.split("-", 1)
+                a = int(a_s)
+                b = int(b_s)
+            else:
+                a = b = int(tok)
+        except ValueError:
+            continue
+        if a > b:
+            a, b = b, a
+        a = max(1, min(a, page_count))
+        b = max(1, min(b, page_count))
+        out.append((a - 1, b - 1))
+    return out
+
+
+@app.post("/split", response_model=ZipResponse)
+async def split_pdf(req: SplitRequest):
+    """Split a PDF into multiple PDFs, returned as one .zip.
+
+    Purely additive: reads the source, writes new PDFs, never mutates the input.
+    """
+    fitz = _require_fitz()
+    pdf_bytes = _decode_pdf_b64(req.pdf_b64)
+    try:
+        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Không mở được PDF: {e}")
+
+    n = doc.page_count
+    if n == 0:
+        doc.close()
+        raise HTTPException(status_code=400, detail="PDF không có trang nào.")
+
+    mode = (req.mode or "every").lower()
+    if mode == "ranges":
+        pairs = _parse_ranges(req.ranges or "", n)
+        if not pairs:
+            doc.close()
+            raise HTTPException(status_code=400, detail="Khoảng trang không hợp lệ (vd: 1-3,5,8-10).")
+    else:
+        size = max(1, min(int(req.size or 1), n))
+        pairs = [(s, min(s + size - 1, n - 1)) for s in range(0, n, size)]
+
+    if len(pairs) > 1000:
+        doc.close()
+        raise HTTPException(status_code=400, detail="Quá nhiều file (tối đa 1000). Tăng số trang mỗi file.")
+
+    buf = io.BytesIO()
+    count = 0
+    src_name = "part"
+    try:
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+            for start, end in pairs:
+                part = fitz.open()
+                part.insert_pdf(doc, from_page=start, to_page=end)
+                data = part.tobytes()
+                part.close()
+                count += 1
+                label = f"{start + 1}" if start == end else f"{start + 1}-{end + 1}"
+                zf.writestr(f"{src_name}_{count:03d}_p{label}.pdf", data)
+    except Exception as e:
+        logger.exception("Split error")
+        doc.close()
+        return ZipResponse(success=False, error=str(e))
+    doc.close()
+
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    return ZipResponse(
+        success=True,
+        filename=f"split_{ts}.zip",
+        data_b64=base64.b64encode(buf.getvalue()).decode("ascii"),
+        count=count,
+    )
+
+
 # ---- P6: native text editing (span-level replace via PyMuPDF) -------------
 #
 # "Edit the real characters" (like Foxit) only works on PDFs that carry an actual

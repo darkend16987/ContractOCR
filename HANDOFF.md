@@ -4,7 +4,14 @@
 > [DESIGN.md](DESIGN.md) (kiến trúc), [ROADMAP.md](ROADMAP.md) (tiến độ chi tiết),
 > [SETUP.md](SETUP.md) (dựng môi trường).
 
-_Cập nhật: 2026-07-02 · v0.2.16_
+_Cập nhật: 2026-07-06 · v0.2.17_
+
+> v0.2.17 — **Tách PDF thành nhiều file + So sánh phóng to/vừa màn hình + logo mới** (sidecar CÓ đổi — phải rebuild):
+> - **Tách thành nhiều file** (mới): endpoint `POST /split` trong [`api.py`](api.py) (`SplitRequest`, `_parse_ranges`) → trả **ZIP** nhiều PDF qua `insert_pdf` (không sửa file gốc). 2 chế độ: "mỗi N trang 1 file" hoặc "theo khoảng trang" (`1-3,5,8-10`, tự kẹp trong biên, tối đa 1000 file). UI: mục "Tách thành nhiều file…" trong menu **Chuyển đổi** → modal `#split-modal`; `openSplit`/`runSplit` trong [`app.js`](desktop/renderer/app.js). Lấp khoảng trống so với pdf24/smallpdf (trước chỉ "Tách" = trích trang chọn → 1 file).
+> - **So sánh: phóng to & vừa màn hình** ([`compare.js`](desktop/renderer/compare.js)): bỏ scale cứng 1.1. Mở lên **tự vừa bề ngang** (`fitScale()` = min bề rộng khung / bề rộng trang rộng nhất, chung cho cả A+B). Nút −/%/+ và "Vừa màn hình" trên thanh; phím +/−/0, Ctrl+lăn chuột; tự vừa lại khi đổi cỡ cửa sổ tới khi người dùng tự zoom. Nhảy tới khác biệt nay `scrollIntoView(center)` đúng **ô thay đổi** (không phải đầu trang) + nhấp nháy xanh + readout "Thay đổi i/N · A tr X · B tr Y".
+> - **Menu Chuyển đổi sắp xếp lại** ([`index.html`](desktop/renderer/index.html)): chia nhóm có tiêu đề **Trang / Ảnh / Bảo mật** (`.dd-head`) cho dễ tìm.
+> - **Logo/icon mới**: [`desktop/build/make_icon_from_logo.py`](desktop/build/make_icon_from_logo.py) sinh `icon.ico`/`icon.png` từ `logo_nabu.png` (thay bản vẽ tay make_icon.py). Đổi shortcut Windows sau khi cài bản mới.
+> - Thuần thêm mới, không đụng tính năng cũ. Đã test `_parse_ranges`/split (page-count, kẹp biên, input rác) + node --check + `test_export.py`.
 
 > v0.2.16 — **So sánh BẢN VẼ (CAD/Revit PDF) bằng diff hình ảnh** (sidecar CÓ đổi — phải rebuild):
 > - Chế độ so sánh mới cho bản vẽ kỹ thuật xuất từ AutoCAD/Revit. Diff **raster** kiểu Bluebeam (render 2 trang → so pixel), KHÔNG diff vector-path (mỗi lần export CAD chia/gộp path khác nhau → false positive tràn). Backend mới [`src/compare/drawing.py`](src/compare/drawing.py): (1) **fingerprint** mỗi trang (dHash 16×16 + Jaccard từ trong khung tên) → (2) **ghép trang** bằng Needleman–Wunsch (nhận diện trang chèn thêm/xoá/dồn số; chỉ ghép khi sim > 2×gap) → (3) **diff từng cặp**: render 3000px, `cv2.phaseCorrelate` bù lệch in ấn (**bắt buộc Hanning window** — không có thì viền trang nuốt tín hiệu shift), mặt nạ mực <200 với dung sai giãn 3px chống răng cưa, morphology gom vùng, `connectedComponents` → hộp → phân loại xoá(đỏ)/thêm(xanh)/sửa(vàng). Trang lệch margin thuần diff sạch 0 vùng. Trả CÙNG shape với `/compare` nên renderer dùng lại nguyên.

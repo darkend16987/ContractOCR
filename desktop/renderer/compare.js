@@ -30,6 +30,7 @@
     pdfB: null,
     mode: "auto",
     scale: 1.1,
+    fit: true, // auto fit-to-width until the user zooms manually
     changeIdx: -1,
     wrapsA: [], // per-page slot elements
     wrapsB: [],
@@ -44,6 +45,7 @@
     if (cmp.pdfB) { try { cmp.pdfB.destroy(); } catch (_) {} cmp.pdfB = null; }
     cmp.a = cmp.b = cmp.report = cmp.changes = cmp.aBoxes = cmp.bBoxes = null;
     cmp.mode = "auto";
+    cmp.fit = true;
     cmp.changeIdx = -1;
     cmp.wrapsA = [];
     cmp.wrapsB = [];
@@ -138,7 +140,7 @@
       // Copy the bytes for pdf.js — getDocument may detach the passed buffer.
       cmp.pdfA = await pdfjsLib.getDocument({ data: cmp.a.bytes.slice(), isEvalSupported: false }).promise;
       cmp.pdfB = await pdfjsLib.getDocument({ data: cmp.b.bytes.slice(), isEvalSupported: false }).promise;
-      openView();
+      await openView();
     } catch (err) {
       toast("Lỗi so sánh: " + err.message, "bad");
     } finally {
@@ -148,7 +150,7 @@
 
   // ---- result view ---------------------------------------------------------
 
-  function openView() {
+  async function openView() {
     el("compare-view").hidden = false;
     el("compare-a-h").textContent = "A · " + cmp.a.name;
     el("compare-b-h").textContent = "B · " + cmp.b.name;
@@ -156,6 +158,11 @@
     el("compare-export").hidden = !(cmp.mode === "drawing" && !cmp.report.summary.identical);
     renderSummary();
     renderChangeList();
+    // Start at a scale that fits the page width to the pane (the view is now
+    // laid out, so the scroll panes have their real width).
+    cmp.fit = true;
+    cmp.scale = await fitScale();
+    updateZoomReadout();
     buildPane("a", cmp.pdfA, cmp.aBoxes);
     buildPane("b", cmp.pdfB, cmp.bBoxes);
     if (cmp.changes.length) {
@@ -164,6 +171,63 @@
     } else {
       el("compare-pagenum").textContent = "0 thay đổi";
     }
+  }
+
+  // ---- zoom / fit ----------------------------------------------------------
+
+  const ZOOM_MIN = 0.2;
+  const ZOOM_MAX = 4;
+
+  // Scale that makes the widest first page fill the (narrower) pane's width.
+  // Shared across both panes so A and B stay visually the same size.
+  async function fitScale() {
+    const host = el("compare-a");
+    const other = el("compare-b");
+    const avail = Math.max(
+      200,
+      Math.min(host.clientWidth || 0, other.clientWidth || 0) - 40 // 16px padding each side + slack
+    );
+    let maxW = 0;
+    for (const pdf of [cmp.pdfA, cmp.pdfB]) {
+      if (!pdf) continue;
+      try {
+        const p = await pdf.getPage(1);
+        maxW = Math.max(maxW, p.getViewport({ scale: 1 }).width);
+      } catch (_) {}
+    }
+    if (!maxW) return cmp.scale;
+    return Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, avail / maxW));
+  }
+
+  function updateZoomReadout() {
+    const r = el("compare-zoom");
+    if (r) r.textContent = Math.round(cmp.scale * 100) + "%";
+  }
+
+  // Re-render both panes at the current scale, keeping the user on the same
+  // change so zooming does not lose their place.
+  function rerenderPanes() {
+    if (!cmp.pdfA || !cmp.pdfB) return;
+    updateZoomReadout();
+    buildPane("a", cmp.pdfA, cmp.aBoxes);
+    buildPane("b", cmp.pdfB, cmp.bBoxes);
+    if (cmp.changeIdx >= 0) jumpToChange(cmp.changeIdx, false);
+  }
+
+  function setScale(scale) {
+    cmp.fit = false;
+    cmp.scale = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, scale));
+    rerenderPanes();
+  }
+
+  function zoomBy(factor) {
+    setScale(cmp.scale * factor);
+  }
+
+  async function fitToWidth() {
+    cmp.scale = await fitScale();
+    cmp.fit = true;
+    rerenderPanes();
   }
 
   function closeView() {
@@ -232,6 +296,10 @@
   // Build a pane: one slot per page, lazily rendered as it scrolls into view.
   function buildPane(side, pdf, boxesMap) {
     const host = el(side === "a" ? "compare-a" : "compare-b");
+    // Tear down a previous observer (rebuild on zoom) so it stops firing on the
+    // detached slots we are about to replace.
+    const prevObs = side === "a" ? cmp.obsA : cmp.obsB;
+    if (prevObs) { try { prevObs.disconnect(); } catch (_) {} }
     host.innerHTML = "";
     const wraps = [];
     const obs = new IntersectionObserver(
@@ -365,19 +433,42 @@
     if (!c) return;
     if (c.a_page != null) scrollPaneTo("a", c.a_page, smooth);
     if (c.b_page != null) scrollPaneTo("b", c.b_page, smooth);
-    el("compare-pagenum").textContent = `Thay đổi ${i + 1}/${cmp.changes.length}`;
+    // Readout shows both the change index and the page it lands on, so the user
+    // always knows which page each side is pointing at.
+    const pg = (p) => (p != null ? "tr " + (p + 1) : "—");
+    el("compare-pagenum").textContent =
+      `Thay đổi ${i + 1}/${cmp.changes.length} · A ${pg(c.a_page)} · B ${pg(c.b_page)}`;
     markActiveChange();
   }
 
-  function scrollPaneTo(side, pageIdx, smooth) {
+  async function scrollPaneTo(side, pageIdx, smooth) {
     const wraps = side === "a" ? cmp.wrapsA : cmp.wrapsB;
     const w = wraps[pageIdx];
     if (!w) return;
-    // Force-render the target page even if it hasn't scrolled into view yet.
+    // Force-render the target page even if it hasn't scrolled into view yet,
+    // then scroll to the actual changed region on it (not just the page top) so
+    // the difference is centered and visible without extra scrolling.
     const pdf = side === "a" ? cmp.pdfA : cmp.pdfB;
     const boxesMap = side === "a" ? cmp.aBoxes : cmp.bBoxes;
-    renderPage(side, pdf, pageIdx, w, boxesMap);
-    w.scrollIntoView({ behavior: smooth ? "smooth" : "auto", block: "start" });
+    await renderPage(side, pdf, pageIdx, w, boxesMap);
+    const behavior = smooth ? "smooth" : "auto";
+    const box = w.querySelector(".cmp-box");
+    if (box) {
+      box.scrollIntoView({ behavior, block: "center", inline: "nearest" });
+      pulseBoxes(w);
+    } else {
+      w.scrollIntoView({ behavior, block: "start" });
+    }
+  }
+
+  // Briefly flash the changed regions on a page so the eye lands on them.
+  function pulseBoxes(slot) {
+    for (const b of slot.querySelectorAll(".cmp-box")) {
+      b.classList.remove("cmp-box-pulse");
+      // reflow to restart the animation if it was already applied
+      void b.offsetWidth;
+      b.classList.add("cmp-box-pulse");
+    }
   }
 
   function nextChange(dir) {
@@ -413,11 +504,38 @@
     on("compare-close", closeView);
     on("compare-prev", () => nextChange(-1));
     on("compare-next", () => nextChange(1));
+    on("compare-zoom-in", () => zoomBy(1.2));
+    on("compare-zoom-out", () => zoomBy(1 / 1.2));
+    on("compare-fit", () => fitToWidth());
     document.addEventListener("keydown", (e) => {
       if (el("compare-view").hidden) return;
       if (e.key === "Escape") closeView();
+      else if (e.key === "+" || e.key === "=") { e.preventDefault(); zoomBy(1.2); }
+      else if (e.key === "-" || e.key === "_") { e.preventDefault(); zoomBy(1 / 1.2); }
+      else if (e.key === "0") { e.preventDefault(); fitToWidth(); }
       else if (e.key === "ArrowDown" || e.key === "ArrowRight") { e.preventDefault(); nextChange(1); }
       else if (e.key === "ArrowUp" || e.key === "ArrowLeft") { e.preventDefault(); nextChange(-1); }
+    });
+    // Ctrl/Cmd + wheel = zoom (matches every PDF viewer's muscle memory).
+    const body = el("compare-body") || el("compare-view");
+    if (body) {
+      body.addEventListener(
+        "wheel",
+        (e) => {
+          if (el("compare-view").hidden) return;
+          if (!(e.ctrlKey || e.metaKey)) return;
+          e.preventDefault();
+          zoomBy(e.deltaY < 0 ? 1.1 : 1 / 1.1);
+        },
+        { passive: false }
+      );
+    }
+    // Keep pages fitted to the pane while the user hasn't manually zoomed.
+    let rz;
+    window.addEventListener("resize", () => {
+      if (el("compare-view").hidden || !cmp.fit || !cmp.pdfA) return;
+      clearTimeout(rz);
+      rz = setTimeout(() => { fitToWidth(); }, 150);
     });
   }
 

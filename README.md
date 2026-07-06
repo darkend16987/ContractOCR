@@ -1,9 +1,10 @@
 # Nabu PDF
 
-Bộ công cụ **PDF desktop** (Electron) cho tiếng Việt: xem · ghép · tách · chèn ·
-thêm trang trắng · xoay · chú thích · hộp văn bản (font/đậm/nghiêng/gạch chân) ·
+Bộ công cụ **PDF desktop** (Electron) cho tiếng Việt: xem · ghép · tách trang ·
+**tách thành nhiều file** · chèn · thêm trang trắng · xoay · chú thích ·
+hộp văn bản (font/đậm/nghiêng/gạch chân) ·
 watermark · redact (che thông tin chọn màu) · sửa chữ · nén · so sánh 2 file
-(văn bản & **bản vẽ CAD/Revit** — khoanh mây revision vùng thay đổi) ·
+(văn bản & **bản vẽ CAD/Revit** — khoanh mây revision vùng thay đổi, phóng to/vừa màn hình) ·
 tạo PDF tìm-kiếm-được, kèm **OCR + bóc tách hợp đồng** bằng AI. Chạy hoàn toàn trên máy
 (local-first).
 

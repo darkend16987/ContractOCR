@@ -124,13 +124,18 @@
         <button id="btn-compress" class="ghost" disabled title="Nén PDF (giảm dung lượng ảnh)"><svg class="ic"><use href="#ic-compress"/></svg>Nén</button>
         <button id="btn-diff" class="ghost" disabled title="So sánh 2 file PDF — chỉ ra trang & dòng khác nhau"><svg class="ic"><use href="#ic-diff"/></svg>So sánh</button>
         <div class="dropdown" id="convert-dd">
-          <button id="btn-convert" class="ghost" disabled title="Khoá file, xuất ảnh, chuyển đổi ảnh ↔ PDF"><svg class="ic"><use href="#ic-convert"/></svg>Chuyển đổi<svg class="ic chev"><use href="#ic-chevron"/></svg></button>
+          <button id="btn-convert" class="ghost" disabled title="Tách file, xuất/chuyển ảnh ↔ PDF, khoá file"><svg class="ic"><use href="#ic-convert"/></svg>Chuyển đổi<svg class="ic chev"><use href="#ic-chevron"/></svg></button>
           <div class="dropdown-menu" id="convert-menu" hidden>
-            <button class="dd-item" id="mi-encrypt"><svg class="ic"><use href="#ic-lock"/></svg>Khoá file (đặt mật khẩu)…</button>
+            <div class="dd-head">Trang</div>
+            <button class="dd-item" id="mi-split"><svg class="ic"><use href="#ic-scissors"/></svg>Tách thành nhiều file…</button>
             <div class="dd-sep"></div>
-            <button class="dd-item" id="mi-extract-images"><svg class="ic"><use href="#ic-photo"/></svg>Xuất ảnh trong PDF…</button>
+            <div class="dd-head">Ảnh</div>
             <button class="dd-item" id="mi-pdf-to-images"><svg class="ic"><use href="#ic-photo"/></svg>Trang PDF → ảnh…</button>
             <button class="dd-item" id="mi-images-to-pdf"><svg class="ic"><use href="#ic-file"/></svg>Ảnh → PDF…</button>
+            <button class="dd-item" id="mi-extract-images"><svg class="ic"><use href="#ic-photo"/></svg>Xuất ảnh trong PDF…</button>
+            <div class="dd-sep"></div>
+            <div class="dd-head">Bảo mật</div>
+            <button class="dd-item" id="mi-encrypt"><svg class="ic"><use href="#ic-lock"/></svg>Khoá file (đặt mật khẩu)…</button>
           </div>
         </div>
         <button id="btn-ocr" class="ghost" disabled title="OCR + bóc tách field bằng AI"><svg class="ic"><use href="#ic-wand"/></svg>Bóc tách</button>
@@ -414,6 +419,30 @@
       </div>
     </div>
 
+    <!-- split PDF dialog -->
+    <div class="modal" id="split-modal" hidden>
+      <div class="modal-card">
+        <h3>Tách PDF thành nhiều file</h3>
+        <p class="cmp-note">Chia tài liệu thành nhiều PDF nhỏ; tất cả gói trong một file .zip.</p>
+        <label>Cách tách
+          <select id="split-mode">
+            <option value="every" selected>Mỗi N trang thành 1 file</option>
+            <option value="ranges">Theo khoảng trang tùy chọn</option>
+          </select>
+        </label>
+        <label id="split-size-wrap">Số trang mỗi file
+          <input type="number" id="split-size" min="1" max="5000" value="1" />
+        </label>
+        <label id="split-ranges-wrap" hidden>Khoảng trang (vd: 1-3,5,8-10)
+          <input type="text" id="split-ranges" placeholder="1-3,5,8-10" />
+        </label>
+        <div class="modal-actions">
+          <button id="split-cancel">Hủy</button>
+          <button id="split-ok" class="primary">Tách &amp; lưu</button>
+        </div>
+      </div>
+    </div>
+
     <!-- images → PDF dialog -->
     <div class="modal" id="i2p-modal" hidden>
       <div class="modal-card">
@@ -578,6 +607,11 @@
         <button id="compare-prev" class="ghost" title="Thay đổi trước">‹ Thay đổi trước</button>
         <span id="compare-pagenum" class="readout"></span>
         <button id="compare-next" class="ghost" title="Thay đổi sau">Thay đổi sau ›</button>
+        <div class="sep"></div>
+        <button id="compare-zoom-out" class="ghost" title="Thu nhỏ (−)">−</button>
+        <span id="compare-zoom" class="readout" title="Mức phóng to">100%</span>
+        <button id="compare-zoom-in" class="ghost" title="Phóng to (+)">+</button>
+        <button id="compare-fit" class="ghost" title="Vừa bề ngang (0)">Vừa màn hình</button>
         <div class="sep"></div>
         <button id="compare-export" class="ghost" hidden title="Lưu bản B với đám mây revision quanh các vùng thay đổi">Tải B đã đánh dấu</button>
         <button id="compare-close" class="primary">Đóng</button>

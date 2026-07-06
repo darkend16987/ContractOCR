@@ -1695,6 +1695,56 @@ async function runPdfToImages() {
   }
 }
 
+// --- split one PDF into many (zip) ---
+function openSplit() {
+  if (!convertReady()) return;
+  const mode = $("split-mode");
+  if (mode) {
+    mode.value = "every";
+    $("split-size-wrap").hidden = false;
+    $("split-ranges-wrap").hidden = true;
+  }
+  $("split-modal").hidden = false;
+}
+
+async function runSplit() {
+  const mode = $("split-mode").value || "every";
+  const body = { pdf_b64: u8ToB64(state.bytes), mode };
+  if (mode === "ranges") {
+    const ranges = ($("split-ranges").value || "").trim();
+    if (!ranges) {
+      toast("Nhập khoảng trang (vd: 1-3,5,8-10).", "bad");
+      return;
+    }
+    body.ranges = ranges;
+  } else {
+    body.size = Math.max(1, parseInt($("split-size").value, 10) || 1);
+  }
+  $("split-modal").hidden = true;
+  if (window.Editor) await window.Editor.bakePending();
+  showOverlay("Đang tách PDF…");
+  try {
+    const res = await sidecarFetch("/split", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const data = await res.json();
+    if (!data.success) {
+      toast("Tách PDF lỗi: " + (data.error || data.detail || "không rõ"), "bad");
+      return;
+    }
+    const bytes = Uint8Array.from(atob(data.data_b64), (ch) => ch.charCodeAt(0));
+    const name = `${baseName(state.name)}-split.zip`;
+    const r = await window.desktop.saveFile(bytes, name, [{ name: "ZIP", extensions: ["zip"] }]);
+    if (r.saved) toast(`Đã tách thành ${data.count} file: ` + r.path, "good");
+  } catch (err) {
+    toast("Lỗi tách PDF: " + err.message, "bad");
+  } finally {
+    hideOverlay();
+  }
+}
+
 // --- images → PDF ---
 let i2pImages = []; // [{ name, b64 }] picked by the user, in order
 
@@ -2100,6 +2150,7 @@ const ddRun = (fn) => () => {
   fn();
 };
 $("mi-encrypt").onclick = ddRun(openEncrypt);
+$("mi-split").onclick = ddRun(openSplit);
 $("mi-extract-images").onclick = ddRun(extractImages);
 $("mi-pdf-to-images").onclick = ddRun(openPdfToImages);
 $("mi-images-to-pdf").onclick = ddRun(openImagesToPdf);
@@ -2115,6 +2166,13 @@ $("enc-ok").onclick = runEncrypt;
 $("enc-pw-toggle").onclick = () => {
   const i = $("enc-pw");
   i.type = i.type === "password" ? "text" : "password";
+};
+$("split-cancel").onclick = () => ($("split-modal").hidden = true);
+$("split-ok").onclick = runSplit;
+$("split-mode").onchange = () => {
+  const isRanges = $("split-mode").value === "ranges";
+  $("split-size-wrap").hidden = isRanges;
+  $("split-ranges-wrap").hidden = !isRanges;
 };
 $("p2i-cancel").onclick = () => ($("p2i-modal").hidden = true);
 $("p2i-ok").onclick = runPdfToImages;
