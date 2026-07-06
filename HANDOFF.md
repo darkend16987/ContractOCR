@@ -4,7 +4,13 @@
 > [DESIGN.md](DESIGN.md) (kiến trúc), [ROADMAP.md](ROADMAP.md) (tiến độ chi tiết),
 > [SETUP.md](SETUP.md) (dựng môi trường).
 
-_Cập nhật: 2026-07-06 · v0.2.17_
+_Cập nhật: 2026-07-06 · v0.2.18_
+
+> v0.2.18 — **Khoanh mây (revision cloud) + màu nền cho khoanh vùng** (renderer-only; sidecar KHÔNG đổi logic — chỉ rebuild vì binary cũ 2026-06-26 đã stale so với source 07-01/02/06):
+> - **Khoanh mây (revision cloud)** (mới): công cụ vẽ mới trong thanh **Chỉnh sửa**, cạnh Hình chữ nhật/Elip. Viền vòng cung lồi ra ngoài đúng chuẩn kỹ thuật/xây dựng. Hình học ở [`editor.js`](desktop/renderer/editor.js) `cloudPath()` (chuỗi cung `A r r 0 0 1 …`, duyệt biên chiều kim đồng hồ → bump lồi ra), overlay `<svg>` WYSIWYG, bake bằng `page.drawSvgPath` (pdf-lib có parser cung `A`) — khớp pixel với overlay ở rotation 0 (cùng giới hạn ảnh/text trên trang xoay). Icon `ic-cloud`, nút `data-tool="cloud"`.
+> - **Màu nền + trong suốt cho khoanh vùng** (mới): trước Hình chữ nhật/Elip chỉ có viền. Nay cả **chữ nhật / elip / khoanh mây** có ô "Nền" + checkbox "Trong suốt" (mặc định trong suốt). Bake: `drawRectangle`/`drawEllipse`/`drawSvgPath` thêm `color`. State `ed.fillOn`/`ed.fillColor`, `effFill()`.
+> - **Ảnh → PDF**: xác nhận đã có sẵn (menu Chuyển đổi ▸ Ảnh → PDF, endpoint `/images-to-pdf`, nhận JPG/PNG/BMP/TIFF/WebP qua Pillow) — không đụng.
+> - Thuần thêm mới, không đụng tính năng cũ. Đã `node --check` + `test_export.py` + bake thử cloud/box/ellipse fill với pdf-lib vendored + kiểm tra hình học (bump lồi ra cả 4 cạnh). Chờ test GUI như các tính năng editor khác.
 
 > v0.2.17 — **Tách PDF thành nhiều file + So sánh phóng to/vừa màn hình + logo mới** (sidecar CÓ đổi — phải rebuild):
 > - **Tách thành nhiều file** (mới): endpoint `POST /split` trong [`api.py`](api.py) (`SplitRequest`, `_parse_ranges`) → trả **ZIP** nhiều PDF qua `insert_pdf` (không sửa file gốc). 2 chế độ: "mỗi N trang 1 file" hoặc "theo khoảng trang" (`1-3,5,8-10`, tự kẹp trong biên, tối đa 1000 file). UI: mục "Tách thành nhiều file…" trong menu **Chuyển đổi** → modal `#split-modal`; `openSplit`/`runSplit` trong [`app.js`](desktop/renderer/app.js). Lấp khoảng trống so với pdf24/smallpdf (trước chỉ "Tách" = trích trang chọn → 1 file).

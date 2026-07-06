@@ -46,6 +46,7 @@
         <symbol id="ic-highlight" viewBox="0 0 24 24"><path d="M3 21h6"/><path d="M9 16l-2 4 6-1 8.5-8.5a2 2 0 0 0-3-3L9 16z"/></symbol>
         <symbol id="ic-square" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="2"/></symbol>
         <symbol id="ic-circle" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/></symbol>
+        <symbol id="ic-cloud" viewBox="0 0 24 24"><path d="M6.5 19a3.5 3.5 0 0 1-.5-6.96 4.5 4.5 0 0 1 8.9-1.2A3.5 3.5 0 1 1 16.5 19z"/></symbol>
         <symbol id="ic-arrow" viewBox="0 0 24 24"><path d="M6 18L18 6M9 6h9v9"/></symbol>
         <symbol id="ic-message" viewBox="0 0 24 24"><path d="M5 5h14a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1h-8l-4 4v-4H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1z"/></symbol>
         <symbol id="ic-photo" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="8.5" cy="10" r="1.5"/><path d="M21 16l-5-5-4 4-2-2-7 6"/></symbol>
@@ -151,6 +152,7 @@
         <button class="tool" data-tool="draw" title="Vẽ tay"><svg class="ic"><use href="#ic-edit"/></svg></button>
         <button class="tool" data-tool="box" title="Khoanh vùng — khung chữ nhật"><svg class="ic"><use href="#ic-square"/></svg></button>
         <button class="tool" data-tool="ellipse" title="Khoanh vùng — elip / tròn"><svg class="ic"><use href="#ic-circle"/></svg></button>
+        <button class="tool" data-tool="cloud" title="Khoanh mây (revision cloud) — chuẩn kỹ thuật / xây dựng"><svg class="ic"><use href="#ic-cloud"/></svg></button>
         <button class="tool" data-tool="arrow" title="Mũi tên chỉ dẫn"><svg class="ic"><use href="#ic-arrow"/></svg></button>
         <button class="tool" data-tool="note" title="Ghi chú (comment) gắn vào một điểm"><svg class="ic"><use href="#ic-message"/></svg></button>
         <button class="tool" data-tool="image" title="Chèn ảnh / chữ ký"><svg class="ic"><use href="#ic-photo"/></svg></button>
@@ -171,7 +173,9 @@
       <button id="ed-bold" class="icon-only te-fmt" data-ctl="biu" title="In đậm" style="font-weight:800">B</button>
       <button id="ed-italic" class="icon-only te-fmt" data-ctl="biu" title="In nghiêng" style="font-style:italic">I</button>
       <button id="ed-underline" class="icon-only te-fmt" data-ctl="biu" title="Gạch chân" style="text-decoration:underline">U</button>
-      <label class="ctl" data-ctl="penwidth" title="Độ dày nét vẽ">Nét <input type="number" id="ed-penwidth" min="1" max="24" value="2" /></label>
+      <label class="ctl" data-ctl="penwidth" title="Độ dày nét vẽ / nét viền">Nét <input type="number" id="ed-penwidth" min="1" max="24" value="2" /></label>
+      <label class="ctl" data-ctl="fill" title="Màu nền bên trong (khi khoanh vùng)">Nền <input type="color" id="ed-fill" value="#ffffff" /></label>
+      <label class="ctl" data-ctl="fill" title="Không tô nền — để trong suốt"><input type="checkbox" id="ed-fill-none" checked /> Trong suốt</label>
       <div class="sep"></div>
       <button id="ed-watermark" title="Đóng dấu mờ lên mọi trang">Watermark</button>
       <button id="ed-form" title="Điền các trường biểu mẫu PDF">Điền form</button>

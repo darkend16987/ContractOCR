@@ -35,6 +35,8 @@
     italic: false,
     underline: false,
     penWidth: 2,
+    fillColor: "#ffffff", // interior fill for box / ellipse / cloud
+    fillOn: false, // false → transparent interior (the default for revision clouds)
     annots: {}, // pageIndex -> [annot]
     watermark: null, // { text, size, angle, opacity, color }
     seq: 1,
@@ -133,6 +135,49 @@
       return "png";
     if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return "jpg";
     return null;
+  }
+
+  // Effective interior fill for a newly created box/ellipse/cloud: a hex colour
+  // when the fill toggle is on, otherwise "none" (transparent — the usual choice
+  // for a revision cloud so the marked-up content stays visible).
+  function effFill() {
+    return ed.fillOn ? ed.fillColor : "none";
+  }
+
+  // Revision-cloud outline as an SVG path. The perimeter of the a.w×a.h box is
+  // replaced by outward semicircular scallops — the construction-industry standard
+  // "khoanh mây". Coordinates are shifted by `pad` so the bulges stay ≥ 0, letting
+  // the same string drive both the overlay <svg> (0-origin viewBox) and pdf-lib's
+  // drawSvgPath at bake time. Returns { d, pad, W, H }.
+  const CLOUD_BUMP = 16; // target scallop diameter in scale-1 PDF points
+  function cloudPath(w, h, bump) {
+    bump = bump || CLOUD_BUMP;
+    const pad = bump; // room for the outward bulges
+    const x0 = pad;
+    const y0 = pad;
+    const x1 = pad + Math.max(1, w);
+    const y1 = pad + Math.max(1, h);
+    const parts = [];
+    // Emit `n` semicircular arcs along the straight edge A→B, each bulging outward.
+    // Traversing the rectangle clockwise (in the y-down overlay space), a sweep
+    // flag of 1 puts every bump on the outer side.
+    const side = (ax, ay, bx, by) => {
+      const len = Math.hypot(bx - ax, by - ay);
+      const n = Math.max(1, Math.round(len / bump));
+      const r = len / n / 2;
+      for (let k = 1; k <= n; k++) {
+        const t = k / n;
+        const px = ax + (bx - ax) * t;
+        const py = ay + (by - ay) * t;
+        parts.push(`A ${r.toFixed(2)} ${r.toFixed(2)} 0 0 1 ${px.toFixed(2)} ${py.toFixed(2)}`);
+      }
+    };
+    side(x0, y0, x1, y0); // top: left → right
+    side(x1, y0, x1, y1); // right: top → bottom
+    side(x1, y1, x0, y1); // bottom: right → left
+    side(x0, y1, x0, y0); // left: bottom → top
+    const d = `M ${x0} ${y0} ` + parts.join(" ") + " Z";
+    return { d, pad, W: Math.max(1, w) + 2 * pad, H: Math.max(1, h) + 2 * pad };
   }
 
   // ---- overlay rendering ---------------------------------------------------
@@ -246,6 +291,36 @@
       return el;
     }
 
+    if (a.kind === "cloud") {
+      // The element covers the padded box (scallops included) so it renders and
+      // hit-tests over the whole cloud, like the freehand/arrow overlays.
+      const { d, pad, W, H } = cloudPath(a.w, a.h, CLOUD_BUMP);
+      el.style.left = (a.x - pad) * s + "px";
+      el.style.top = (a.y - pad) * s + "px";
+      el.style.width = W * s + "px";
+      el.style.height = H * s + "px";
+      const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+      svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+      svg.setAttribute("width", "100%");
+      svg.setAttribute("height", "100%");
+      const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+      path.setAttribute("d", d);
+      path.setAttribute("fill", a.fill && a.fill !== "none" ? a.fill : "none");
+      path.setAttribute("stroke", a.color);
+      path.setAttribute("stroke-width", String(Math.max(1, a.width || 2)));
+      path.setAttribute("stroke-linejoin", "round");
+      svg.appendChild(path);
+      el.appendChild(svg);
+      if (ed.sel === a.id) {
+        const hnd = document.createElement("div");
+        hnd.className = "handle";
+        // Pin the resize grip to the true box corner, not the padded corner.
+        hnd.style.cssText = `left:${(a.w + pad) * s}px; top:${(a.h + pad) * s}px; right:auto; bottom:auto;`;
+        el.appendChild(hnd);
+      }
+      return el;
+    }
+
     el.style.left = a.x * s + "px";
     el.style.top = a.y * s + "px";
     el.style.width = a.w * s + "px";
@@ -265,9 +340,11 @@
       el.style.background = a.color;
     } else if (a.kind === "box") {
       el.style.border = Math.max(1, (a.width || 2)) * s + "px solid " + a.color;
+      if (a.fill && a.fill !== "none") el.style.background = a.fill;
     } else if (a.kind === "ellipse") {
       el.style.border = Math.max(1, (a.width || 2)) * s + "px solid " + a.color;
       el.style.borderRadius = "50%";
+      if (a.fill && a.fill !== "none") el.style.background = a.fill;
     } else if (a.kind === "note") {
       el.style.background = a.color;
       el.title = a.text || "(ghi chú trống)";
@@ -339,7 +416,12 @@
       setFmtBtn("ed-italic", a.italic);
       setFmtBtn("ed-underline", a.underline);
     }
-    if (["draw", "box", "ellipse", "arrow"].includes(a.kind) && a.width) $("ed-penwidth").value = String(a.width);
+    if (["draw", "box", "ellipse", "cloud", "arrow"].includes(a.kind) && a.width) $("ed-penwidth").value = String(a.width);
+    if (["box", "ellipse", "cloud"].includes(a.kind)) {
+      const none = !a.fill || a.fill === "none";
+      $("ed-fill-none").checked = none;
+      if (!none) $("ed-fill").value = a.fill;
+    }
   }
   function setFmtBtn(id, on) {
     const b = $(id);
@@ -406,9 +488,10 @@
       return;
     }
 
-    if (ed.tool === "highlight" || ed.tool === "redact" || ed.tool === "box" || ed.tool === "ellipse") {
+    if (ed.tool === "highlight" || ed.tool === "redact" || ed.tool === "box" || ed.tool === "ellipse" || ed.tool === "cloud") {
       const col = ed.tool === "redact" ? ed.redactColor : ed.color;
       const a = { id: ed.seq++, kind: ed.tool, x: p.x, y: p.y, w: 1, h: 1, color: col, width: ed.penWidth };
+      if (ed.tool === "box" || ed.tool === "ellipse" || ed.tool === "cloud") a.fill = effFill();
       annotsFor(i).push(a);
       ed.sel = a.id;
       drag = { type: "rect", page: i, id: a.id, layer, sx: p.x, sy: p.y };
@@ -830,25 +913,38 @@
       } else if (a.kind === "box") {
         const [x1, y1] = map(a.x, a.y);
         const [x2, y2] = map(a.x + a.w, a.y + a.h);
-        page.drawRectangle({
+        const opts = {
           x: Math.min(x1, x2),
           y: Math.min(y1, y2),
           width: Math.abs(x2 - x1),
           height: Math.abs(y2 - y1),
           borderColor: hexRgb(a.color),
           borderWidth: a.width || 2,
-        });
+        };
+        if (a.fill && a.fill !== "none") opts.color = hexRgb(a.fill);
+        page.drawRectangle(opts);
       } else if (a.kind === "ellipse") {
         const [x1, y1] = map(a.x, a.y);
         const [x2, y2] = map(a.x + a.w, a.y + a.h);
-        page.drawEllipse({
+        const opts = {
           x: (x1 + x2) / 2,
           y: (y1 + y2) / 2,
           xScale: Math.abs(x2 - x1) / 2,
           yScale: Math.abs(y2 - y1) / 2,
           borderColor: hexRgb(a.color),
           borderWidth: a.width || 2,
-        });
+        };
+        if (a.fill && a.fill !== "none") opts.color = hexRgb(a.fill);
+        page.drawEllipse(opts);
+      } else if (a.kind === "cloud") {
+        // Scallop outline mapped like the freehand path: (0,0) of the SVG sits at
+        // the padded top-left; drawSvgPath draws downward from there (it flips y),
+        // so at rotation 0 the bake matches the overlay pixel-for-pixel.
+        const { d, pad } = cloudPath(a.w, a.h, CLOUD_BUMP);
+        const [bx, by] = map(a.x - pad, a.y - pad);
+        const opts = { x: bx, y: by, borderColor: hexRgb(a.color), borderWidth: a.width || 2 };
+        if (a.fill && a.fill !== "none") opts.color = hexRgb(a.fill);
+        page.drawSvgPath(d, opts);
       } else if (a.kind === "arrow") {
         const c = hexRgb(a.color);
         const w = a.width || 2;
@@ -1133,12 +1229,13 @@
   // Which palette controls (data-ctl) are relevant per tool. `select` shows them
   // all so any selected annotation stays editable.
   const TOOL_CTLS = {
-    select: ["color", "redact", "font", "fontsize", "biu", "penwidth"],
+    select: ["color", "redact", "font", "fontsize", "biu", "penwidth", "fill"],
     text: ["color", "font", "fontsize", "biu"],
     highlight: ["color"],
     draw: ["color", "penwidth"],
-    box: ["color", "penwidth"],
-    ellipse: ["color", "penwidth"],
+    box: ["color", "penwidth", "fill"],
+    ellipse: ["color", "penwidth", "fill"],
+    cloud: ["color", "penwidth", "fill"],
     arrow: ["color", "penwidth"],
     note: ["color"],
     image: [],
@@ -1162,6 +1259,7 @@
       draw: "Giữ chuột và kéo để vẽ.",
       box: "Kéo để khoanh một vùng (khung chữ nhật).",
       ellipse: "Kéo để khoanh vùng bằng elip / hình tròn.",
+      cloud: "Kéo để khoanh mây (revision cloud) quanh vùng cần lưu ý.",
       arrow: "Kéo từ gốc tới đích để vẽ mũi tên.",
       note: "Bấm lên trang để đặt ghi chú; gõ nội dung rồi Ctrl+Enter.",
       image: "Bấm lên trang để đặt ảnh đã chọn.",
@@ -1317,11 +1415,31 @@
     ed.penWidth = Math.max(1, +e.target.value || 2);
     if (ed.sel != null) {
       const hit = findAnnot(ed.sel);
-      if (hit && ["draw", "box", "ellipse", "arrow"].includes(hit.a.kind)) {
+      if (hit && ["draw", "box", "ellipse", "cloud", "arrow"].includes(hit.a.kind)) {
         hit.a.width = ed.penWidth;
         syncOverlays();
       }
     }
+  };
+  // Interior fill: picking a colour turns fill on (and clears the transparent
+  // toggle); the toggle turns it back off. Both update the selected shape live.
+  function applyFillToSel() {
+    if (ed.sel == null) return;
+    const hit = findAnnot(ed.sel);
+    if (hit && ["box", "ellipse", "cloud"].includes(hit.a.kind)) {
+      hit.a.fill = effFill();
+      syncOverlays();
+    }
+  }
+  $("ed-fill").oninput = (e) => {
+    ed.fillColor = e.target.value;
+    ed.fillOn = true;
+    $("ed-fill-none").checked = false;
+    applyFillToSel();
+  };
+  $("ed-fill-none").onchange = (e) => {
+    ed.fillOn = !e.target.checked;
+    applyFillToSel();
   };
 
   $("wm-cancel").onclick = () => ($("wm-modal").hidden = true);

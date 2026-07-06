@@ -379,6 +379,7 @@ body.editing .annot-layer .an { cursor: move; }
 .an-image img { width: 100%; height: 100%; display: block; }
 .an-draw svg { display: block; overflow: visible; }
 .an-arrow svg { display: block; overflow: visible; }
+.an-cloud svg { display: block; overflow: visible; }
 .an-box, .an-ellipse { background: transparent; }
 .an-note {
   display: flex; align-items: center; justify-content: center;
