@@ -291,8 +291,18 @@
 
   // ---- lifecycle -----------------------------------------------------------
 
+  // Guarded exit: staged edits prompt "ghi hay bỏ" instead of vanishing.
+  function confirmExit() {
+    const n = Object.keys(te.edits).length;
+    if (n && window.confirm(`Còn ${n} đoạn đã sửa chưa ghi vào PDF. Ghi trước khi thoát?\n(OK = ghi, Cancel = bỏ các sửa đổi)`)) {
+      apply(); // apply() exits by itself on success
+      return;
+    }
+    exit();
+  }
+
   async function enter() {
-    if (te.active) return exit();
+    if (te.active) return confirmExit();
     if (!state.bytes) {
       toast("Mở PDF trước.", "bad");
       return;
@@ -460,7 +470,8 @@
 
   $("btn-text-edit").onclick = enter;
   $("te-apply").onclick = apply;
-  $("te-exit").onclick = () => exit();
+  // Exiting with staged (un-applied) edits used to drop them silently — ask first.
+  $("te-exit").onclick = confirmExit;
 
   // Format toggle buttons: preventDefault on mousedown so the open span textarea
   // keeps focus (clicking a button would otherwise blur+commit it).

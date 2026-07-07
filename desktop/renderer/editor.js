@@ -61,6 +61,81 @@
   function hasAny() {
     return Object.values(ed.annots).some((a) => a.length) || !!ed.watermark;
   }
+  function countAnnots() {
+    return Object.values(ed.annots).reduce((s, a) => s + a.length, 0) + (ed.watermark ? 1 : 0);
+  }
+
+  // ---- annotation-level undo/redo (Ctrl+Z/Y while the editor is open) ------
+  // Snapshots of the *pending* annotations, separate from app.js's document
+  // history: nothing here touches state.bytes until bake.
+
+  const edHist = { past: [], future: [], lastKey: null, lastT: 0 };
+
+  function edSnapshot() {
+    return {
+      annots: JSON.parse(JSON.stringify(ed.annots)),
+      watermark: ed.watermark ? { ...ed.watermark } : null,
+    };
+  }
+  // Record an undo step *before* a mutation. `coalesceKey` merges rapid repeats
+  // (a colour-picker drag / font-size spinner fires per tick) into one step.
+  function pushEdUndo(coalesceKey) {
+    const now = Date.now();
+    if (coalesceKey && edHist.lastKey === coalesceKey && now - edHist.lastT < 800) {
+      edHist.lastT = now;
+      return;
+    }
+    edHist.lastKey = coalesceKey || null;
+    edHist.lastT = now;
+    edHist.past.push(edSnapshot());
+    if (edHist.past.length > 50) edHist.past.shift();
+    edHist.future.length = 0;
+    syncUndoBtns();
+  }
+  // Drop the last snapshot (a cancelled drag returned us to exactly that state).
+  function dropLastEdUndo() {
+    edHist.past.pop();
+    edHist.lastKey = null;
+    syncUndoBtns();
+  }
+  function edRestore(s) {
+    ed.annots = s.annots;
+    ed.watermark = s.watermark;
+    ed.sel = null;
+    syncOverlays();
+    syncUndoBtns();
+  }
+  function edUndo() {
+    if (drag) return; // never mutate the model mid-drag
+    if (!edHist.past.length) {
+      toast("Không còn thao tác để hoàn tác.", "");
+      return;
+    }
+    edHist.future.push(edSnapshot());
+    edHist.lastKey = null;
+    edRestore(edHist.past.pop());
+  }
+  function edRedo() {
+    if (drag || !edHist.future.length) return;
+    edHist.past.push(edSnapshot());
+    edHist.lastKey = null;
+    edRestore(edHist.future.pop());
+  }
+  function clearEdHistory() {
+    edHist.past.length = 0;
+    edHist.future.length = 0;
+    edHist.lastKey = null;
+    syncUndoBtns();
+  }
+  // While the editor owns Ctrl+Z/Y, the toolbar buttons should reflect *its*
+  // stacks; app.js's updateUndoRedo() takes back over on exit.
+  function syncUndoBtns() {
+    if (!ed.active) return;
+    const u = $("btn-undo");
+    const r = $("btn-redo");
+    if (u) u.disabled = !edHist.past.length;
+    if (r) r.disabled = !edHist.future.length;
+  }
 
   // ---- geometry helpers ----------------------------------------------------
 
@@ -393,6 +468,7 @@
     if (ed.sel == null) return;
     const hit = findAnnot(ed.sel);
     if (!hit) return;
+    pushEdUndo();
     ed.annots[hit.page] = ed.annots[hit.page].filter((x) => x.id !== ed.sel);
     ed.sel = null;
     syncOverlays();
@@ -445,6 +521,7 @@
     if (e.target.classList.contains("handle")) {
       const id = +e.target.closest(".an").dataset.id;
       const a = findAnnot(id).a;
+      pushEdUndo(); // one undo step per resize gesture
       drag = { type: "resize", page: i, id, layer, sx: p.x, sy: p.y, orig: { w: a.w, h: a.h } };
       e.preventDefault();
       return;
@@ -463,6 +540,7 @@
             : a.kind === "arrow"
             ? { x1: a.x1, y1: a.y1, x2: a.x2, y2: a.y2 }
             : { x: a.x, y: a.y };
+        pushEdUndo(); // one undo step per move gesture
         drag = { type: "move", page: i, id, layer, sx: p.x, sy: p.y, orig };
         e.preventDefault();
       } else {
@@ -492,6 +570,7 @@
       const col = ed.tool === "redact" ? ed.redactColor : ed.color;
       const a = { id: ed.seq++, kind: ed.tool, x: p.x, y: p.y, w: 1, h: 1, color: col, width: ed.penWidth };
       if (ed.tool === "box" || ed.tool === "ellipse" || ed.tool === "cloud") a.fill = effFill();
+      pushEdUndo(); // dropped again if the shape ends up tiny/cancelled
       annotsFor(i).push(a);
       ed.sel = a.id;
       drag = { type: "rect", page: i, id: a.id, layer, sx: p.x, sy: p.y };
@@ -501,6 +580,7 @@
 
     if (ed.tool === "arrow") {
       const a = { id: ed.seq++, kind: "arrow", x1: p.x, y1: p.y, x2: p.x, y2: p.y, color: ed.color, width: ed.penWidth };
+      pushEdUndo();
       annotsFor(i).push(a);
       ed.sel = a.id;
       drag = { type: "arrow", page: i, id: a.id, layer };
@@ -516,6 +596,7 @@
 
     if (ed.tool === "draw") {
       const a = { id: ed.seq++, kind: "draw", pts: [p], color: ed.color, width: ed.penWidth };
+      pushEdUndo();
       annotsFor(i).push(a);
       ed.sel = a.id;
       drag = { type: "draw", page: i, id: a.id, layer };
@@ -575,12 +656,46 @@
       if ((drag.type === "rect" && (a.w < 4 || a.h < 4)) || (drag.type === "draw" && a.pts.length < 2) || tinyArrow) {
         ed.annots[drag.page] = ed.annots[drag.page].filter((x) => x.id !== drag.id);
         ed.sel = null;
+        dropLastEdUndo(); // the creation was discarded — state is back at that snapshot
       }
     }
     const layer = drag.layer;
     const page = drag.page;
     drag = null;
     renderLayer(layer, page);
+  }
+
+  // Esc mid-gesture: abort the in-progress create/move/resize and restore the
+  // pre-drag state (the matching undo snapshot is dropped — nothing changed).
+  function cancelDrag() {
+    if (!drag) return;
+    const d = drag;
+    drag = null;
+    const hit = findAnnot(d.id);
+    if (hit) {
+      const a = hit.a;
+      if (d.type === "rect" || d.type === "draw" || d.type === "arrow") {
+        // creation in progress → remove it entirely
+        ed.annots[d.page] = ed.annots[d.page].filter((x) => x.id !== d.id);
+        ed.sel = null;
+      } else if (d.type === "move") {
+        if (a.kind === "draw") a.pts = d.orig.pts;
+        else if (a.kind === "arrow") {
+          a.x1 = d.orig.x1;
+          a.y1 = d.orig.y1;
+          a.x2 = d.orig.x2;
+          a.y2 = d.orig.y2;
+        } else {
+          a.x = d.orig.x;
+          a.y = d.orig.y;
+        }
+      } else if (d.type === "resize") {
+        a.w = d.orig.w;
+        a.h = d.orig.h;
+      }
+      dropLastEdUndo();
+    }
+    renderLayer(d.layer, d.page);
   }
 
   function onDblClick(e) {
@@ -630,13 +745,15 @@
       const text = ta.value.replace(/\s+$/, "");
       ta.remove();
       if (existing) {
-        if (text) {
+        if (text && text !== existing.text) {
+          pushEdUndo();
           existing.text = text;
           const m = measureText(text, existing.fontSize, textStyle(existing));
           existing.w = m.w;
           existing.h = m.h;
         }
       } else if (text) {
+        pushEdUndo();
         const m = measureText(text, ed.fontSize, { font: ed.font, bold: ed.bold, italic: ed.italic });
         annotsFor(i).push({
           id: ed.seq++,
@@ -687,13 +804,17 @@
       const text = ta.value.replace(/\s+$/, "");
       ta.remove();
       if (existing) {
-        if (text) existing.text = text;
-        else {
+        if (text && text !== existing.text) {
+          pushEdUndo();
+          existing.text = text;
+        } else if (!text) {
           // cleared note text -> remove the note
+          pushEdUndo();
           ed.annots[i] = annotsFor(i).filter((x) => x.id !== existing.id);
           ed.sel = null;
         }
       } else if (text) {
+        pushEdUndo();
         const a = { id: ed.seq++, kind: "note", x: p.x, y: p.y, w: 18, h: 18, text, color: ed.color };
         annotsFor(i).push(a);
         ed.sel = a.id;
@@ -754,6 +875,7 @@
         dataUrl: ed.pendingImage.dataUrl,
         fmt: ed.pendingImage.fmt,
       };
+      pushEdUndo();
       annotsFor(i).push(a);
       ed.sel = a.id;
       setTool("select");
@@ -1078,11 +1200,12 @@
         changed = new Set();
         for (const k of Object.keys(ed.annots)) if (ed.annots[k].length) changed.add(+k);
       }
-      if (window.History) window.History.pushUndo(); // one undo step per Áp dụng
+      if (window.History) window.History.pushUndo(); // one doc-level undo step per bake
       state.bytes = bytes;
       ed.annots = {};
       ed.watermark = null;
       ed.sel = null;
+      clearEdHistory(); // baked annotations can't be un-done at annotation level anymore
       await rerenderChanged(changed);
       toast("Đã áp dụng chỉnh sửa.", "good");
       return true;
@@ -1105,6 +1228,7 @@
       toast("Nhập nội dung watermark.", "bad");
       return;
     }
+    pushEdUndo();
     ed.watermark = {
       text,
       size: Math.max(8, +$("wm-size").value || 56),
@@ -1297,21 +1421,38 @@
   function enter() {
     if (!state.bytes) return;
     ed.active = true;
+    clearEdHistory(); // fresh annotation-undo timeline per session
     $("edit-bar").hidden = false;
     $("btn-edit").classList.add("active");
     setTool("select");
     updateToolbar();
     syncOverlays();
+    syncUndoBtns();
     loadSystemFonts();
   }
-  async function exit() {
-    if (hasAny()) await bakePending();
+  function leaveMode() {
     ed.active = false;
     ed.sel = null;
     $("edit-bar").hidden = true;
     $("btn-edit").classList.remove("active");
     updateToolbar();
+    if (typeof updateUndoRedo === "function") updateUndoRedo(); // hand Ctrl+Z back to doc history
     syncOverlays();
+  }
+  // "Xong": bake every pending edit into the PDF, then leave edit mode.
+  async function exit() {
+    if (hasAny()) await bakePending();
+    clearEdHistory();
+    leaveMode();
+  }
+  // "Hủy bỏ": leave edit mode discarding everything not yet baked.
+  function discardExit() {
+    const n = countAnnots();
+    if (n && !window.confirm(`Bỏ ${n} chỉnh sửa chưa ghi và thoát?`)) return;
+    reset();
+    clearEdHistory();
+    leaveMode();
+    if (n) toast("Đã bỏ các chỉnh sửa chưa ghi.", "");
   }
 
   function reset() {
@@ -1319,6 +1460,7 @@
     ed.watermark = null;
     ed.sel = null;
     ed.pendingImage = null;
+    clearEdHistory();
   }
 
   // ---- listeners -----------------------------------------------------------
@@ -1329,9 +1471,9 @@
   window.addEventListener("mouseup", onUp);
   viewer.addEventListener("dblclick", onDblClick);
 
-  $("btn-edit").onclick = () => (ed.active ? exit() : enter());
-  $("ed-exit").onclick = exit;
-  $("ed-apply").onclick = exit; // Áp dụng = bake pending edits AND leave edit mode
+  $("btn-edit").onclick = () => (ed.active ? exit() : enter()); // toggle-off = Xong (bake)
+  $("ed-apply").onclick = exit; // "Xong" = bake pending edits AND leave edit mode
+  $("ed-exit").onclick = discardExit; // "Hủy bỏ" = drop pending edits AND leave
   $("ed-delete").onclick = deleteSelected;
   $("ed-watermark").onclick = openWatermark;
   $("ed-form").onclick = openForm;
@@ -1349,6 +1491,7 @@
     if (ed.sel != null) {
       const hit = findAnnot(ed.sel);
       if (hit && hit.a.color !== undefined) {
+        pushEdUndo("color:" + ed.sel); // a picker drag = one undo step
         hit.a.color = ed.color;
         syncOverlays();
       }
@@ -1359,6 +1502,7 @@
     if (ed.sel != null) {
       const hit = findAnnot(ed.sel);
       if (hit && hit.a.kind === "redact") {
+        pushEdUndo("rcolor:" + ed.sel);
         hit.a.color = ed.redactColor;
         syncOverlays();
       }
@@ -1369,6 +1513,7 @@
     if (ed.sel != null) {
       const hit = findAnnot(ed.sel);
       if (hit && hit.a.kind === "text") {
+        pushEdUndo("fsize:" + ed.sel);
         hit.a.fontSize = ed.fontSize;
         const m = measureText(hit.a.text, ed.fontSize, textStyle(hit.a));
         hit.a.w = m.w;
@@ -1382,6 +1527,7 @@
     if (ed.sel != null) {
       const hit = findAnnot(ed.sel);
       if (hit && hit.a.kind === "text") {
+        pushEdUndo();
         hit.a.font = ed.font;
         const m = measureText(hit.a.text, hit.a.fontSize, textStyle(hit.a));
         hit.a.w = m.w;
@@ -1402,6 +1548,7 @@
       if (ed.sel != null) {
         const hit = findAnnot(ed.sel);
         if (hit && hit.a.kind === "text") {
+          pushEdUndo();
           hit.a[prop] = ed[prop];
           const m = measureText(hit.a.text, hit.a.fontSize, textStyle(hit.a));
           hit.a.w = m.w;
@@ -1416,6 +1563,7 @@
     if (ed.sel != null) {
       const hit = findAnnot(ed.sel);
       if (hit && ["draw", "box", "ellipse", "cloud", "arrow"].includes(hit.a.kind)) {
+        pushEdUndo("pwidth:" + ed.sel);
         hit.a.width = ed.penWidth;
         syncOverlays();
       }
@@ -1427,6 +1575,7 @@
     if (ed.sel == null) return;
     const hit = findAnnot(ed.sel);
     if (hit && ["box", "ellipse", "cloud"].includes(hit.a.kind)) {
+      pushEdUndo("fill:" + ed.sel);
       hit.a.fill = effFill();
       syncOverlays();
     }
@@ -1458,6 +1607,22 @@
       e.preventDefault();
       deleteSelected();
     }
+    // Esc ladder: abort the drag in progress → deselect → back to the Select
+    // tool. (Open textareas handle their own Esc and stopPropagation.) Never
+    // auto-exits the mode — that would bake/discard without the user asking.
+    if (e.key === "Escape" && !typing) {
+      if (drag) {
+        e.preventDefault();
+        cancelDrag();
+      } else if (ed.sel != null) {
+        e.preventDefault();
+        deselect();
+      } else if (ed.tool !== "select") {
+        e.preventDefault();
+        ed.pendingImage = null; // a pending image placement is cancelled too
+        setTool("select");
+      }
+    }
   });
 
   // ---- public surface (consumed by app.js) ---------------------------------
@@ -1469,5 +1634,7 @@
     syncOverlays,
     bakePending,
     reset,
+    undo: edUndo, // annotation-level (pre-bake) — routed from Ctrl+Z while active
+    redo: edRedo,
   };
 })();

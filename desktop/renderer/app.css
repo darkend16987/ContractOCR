@@ -556,6 +556,21 @@ body.editing .text-layer, body.text-editing .text-layer {
 .form-row input[type="checkbox"] { width: 18px; height: 18px; accent-color: var(--accent); }
 .cmp-note { font-size: 12px; color: var(--muted); margin: 4px 0 12px; line-height: 1.5; }
 
+/* Editable zoom % box in the toolbar (sits between the −/+ buttons). */
+.zoom-input {
+  width: 52px;
+  text-align: center;
+  font: inherit;
+  font-size: 12px;
+  padding: 5px 4px;
+  background: var(--bg-3);
+  color: var(--fg);
+  border: 1px solid var(--bg-3);
+  border-radius: 8px;
+}
+.zoom-input:focus { border-color: var(--accent); outline: none; }
+.zoom-input:disabled { opacity: 0.5; }
+
 /* Empty-state secondary action (Combine PDFs shortcut). */
 .empty-actions { margin: 14px 0 4px; }
 .empty-actions button { margin: 0 auto; }

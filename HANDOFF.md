@@ -4,7 +4,15 @@
 > [DESIGN.md](DESIGN.md) (kiến trúc), [ROADMAP.md](ROADMAP.md) (tiến độ chi tiết),
 > [SETUP.md](SETUP.md) (dựng môi trường).
 
-_Cập nhật: 2026-07-07 · v0.2.19_
+_Cập nhật: 2026-07-07 · v0.2.20_
+
+> v0.2.20 — **UX: zoom gõ được + Ctrl+wheel + fit-width; undo/redo & Esc trong Chỉnh sửa; nút Xong/Hủy bỏ; confirm thoát Sửa chữ** (renderer-only; sidecar KHÔNG đổi). Đã test GUI OK:
+> - **Zoom** ([`app.js`](desktop/renderer/app.js)): `#zoom-label` (readout) → `#zoom-input` gõ tỷ lệ (Enter/blur áp dụng, Esc revert); `zoomTo(next, anchor)` hợp nhất zoom/zoomReset, **neo điểm dưới con trỏ** khi Ctrl+lăn chuột (bước 10%, listener `{passive:false}` trên `#viewer`); nút **Vừa bề ngang** `#btn-fit-width` (`fitWidth()` từ `state.pageMetas[].vp.width/scale`). `updateToolbar` bật/tắt input riêng (sweep `[data-needs-doc] button` không đụng `<input>`).
+> - **Undo/redo cấp annotation trong Chỉnh sửa** ([`editor.js`](desktop/renderer/editor.js)): stack `edHist` (snapshot `ed.annots`+watermark, cap 50, coalesce 800ms cho color-picker/spinner qua `pushEdUndo(key)`), push trước MỌI mutation (tạo/kéo/resize/xóa/text/note/ảnh/watermark/style); tạo hình tí hon bị discard → `dropLastEdUndo()`. Ctrl+Z/Y + nút toolbar + menu native **route về `Editor.undo/redo` khi editor mở** (sửa bug cũ: Ctrl+Z lúc đang chỉnh sửa undo cấp document → desync overlay). Thoát trả nút về `updateUndoRedo()`.
+> - **Esc ladder** (editor): hủy hình đang kéo (`cancelDrag()` restore orig/xóa annotation đang tạo) → bỏ chọn → về công cụ Chọn (+hủy ảnh pending). KHÔNG auto-thoát mode. Textarea tự xử Esc như cũ.
+> - **Nút editor đổi ngữ nghĩa** ([`index.html`](desktop/renderer/index.html)): trước `#ed-apply` và `#ed-exit` **cùng trỏ `exit()`** (trùng nhau, không có đường hủy). Nay: **"Xong"** = bake+thoát (như cũ); **"Hủy bỏ"** = `discardExit()` vứt annotation chưa bake (confirm nếu có). Toggle nút "Chỉnh sửa" = Xong.
+> - **Sửa chữ** ([`text-edit.js`](desktop/renderer/text-edit.js)): `confirmExit()` — thoát khi còn N đoạn staged → confirm ghi (OK=apply)/bỏ (Cancel), thay vì vứt im lặng; áp dụng cho cả nút Thoát lẫn toggle `btn-text-edit`.
+> - CSS `.zoom-input`, icon `ic-fit`. Đã `node --check` cả 3 file + user test GUI OK.
 
 > v0.2.19 — **Gộp nhiều PDF thành một file (chọn & sắp xếp thứ tự, không cần mở file trước) + cập nhật landing page** (renderer + site only; sidecar KHÔNG đổi):
 > - **Gộp nhiều PDF** (mới): nút "Gộp file" cạnh "Mở" (luôn bật — không cần mở doc, không gated) + link "Gộp nhiều PDF…" trong empty-state. Mở modal `#combine-modal`: nút "Thêm file PDF…" (chọn nhiều), danh sách `#combine-list` **sắp xếp được** bằng kéo–thả *hoặc* nút ↑/↓, có nút xoá từng file + đếm trang. `combineList`/`openCombine`/`addCombinePdfs`/`renderCombineList`/`moveCombine`/`wireCombineList`/`runCombine` trong [`app.js`](desktop/renderer/app.js). Gộp thuần **renderer** (pdf-lib `PDFDocument.create()` + `copyPages`/`addPage` theo thứ tự), lưu qua `savePdf` rồi `loadBytes` mở kết quả để xem. Khác "Ghép" cũ (bắt buộc đã mở 1 doc, chèn vào doc đang mở). Bỏ qua file đọc lỗi (có mật khẩu) kèm toast, không giết cả mẻ. CSS `.combine-*` trong [`app.css`](desktop/renderer/app.css). Tên file dùng `textContent` (an toàn với tên lạ).

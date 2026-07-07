@@ -1168,31 +1168,69 @@ async function saveAsDoc() {
 // ---- zoom ----------------------------------------------------------------
 
 let zooming = false;
-async function zoom(delta) {
+
+// Reflect state.scale in the editable zoom box (unless the user is mid-typing).
+function syncZoomInput() {
+  const z = $("zoom-input");
+  if (z && document.activeElement !== z) z.value = Math.round(state.scale * 100) + "%";
+}
+
+// Zoom to an absolute scale. `anchor` = client {x,y} to keep visually fixed
+// (Ctrl+wheel zooms toward the cursor); defaults to the viewer centre.
+async function zoomTo(next, anchor) {
   if (zooming || !state.bytes) return;
-  const next = Math.min(3, Math.max(0.4, +(state.scale + delta).toFixed(2)));
-  if (next === state.scale) return;
+  next = Math.min(3, Math.max(0.4, +(+next).toFixed(2)));
+  if (!next || next === state.scale) {
+    syncZoomInput();
+    return;
+  }
+  const v = $("viewer");
+  const r = v.getBoundingClientRect();
+  const ax = anchor ? anchor.x - r.left : r.width / 2;
+  const ay = anchor ? anchor.y - r.top : r.height / 2;
+  const ratio = next / state.scale;
+  const sl = v.scrollLeft;
+  const st = v.scrollTop;
   state.scale = next;
-  $("zoom-label").textContent = Math.round(state.scale * 100) + "%";
+  syncZoomInput();
   zooming = true;
   try {
     await renderViewer();
+    // Keep the document point that was under the anchor in place.
+    v.scrollLeft = (sl + ax) * ratio - ax;
+    v.scrollTop = (st + ay) * ratio - ay;
   } finally {
     zooming = false;
   }
 }
 
+async function zoom(delta) {
+  await zoomTo(state.scale + delta);
+}
+
 // Reset zoom to 100% (Ctrl+0).
 async function zoomReset() {
-  if (zooming || !state.bytes || state.scale === 1) return;
-  state.scale = 1;
-  $("zoom-label").textContent = "100%";
-  zooming = true;
-  try {
-    await renderViewer();
-  } finally {
-    zooming = false;
+  await zoomTo(1);
+}
+
+// Fit the widest page to the viewer width (like the compare view).
+async function fitWidth() {
+  if (!state.bytes || !state.pageMetas || !state.pageMetas.length) return;
+  let maxW1 = 0; // widest page at scale 1
+  for (const m of state.pageMetas) maxW1 = Math.max(maxW1, m.vp.width / state.scale);
+  if (!maxW1) return;
+  const pad = 48; // page margins + scrollbar allowance
+  await zoomTo(($("viewer").clientWidth - pad) / maxW1);
+}
+
+// Parse whatever is in the zoom box ("150", "150%", " 150 ") and apply it.
+function applyZoomInput() {
+  const n = parseInt(($("zoom-input").value || "").replace(/[^\d]/g, ""), 10);
+  if (!n) {
+    syncZoomInput();
+    return;
   }
+  zoomTo(n / 100);
 }
 
 // ---- OCR + field extraction (sidecar; P2) --------------------------------
@@ -2227,7 +2265,10 @@ function updateToolbar() {
   if (be) be.disabled = !has || textEditing;
   const bt = $("btn-text-edit");
   if (bt) bt.disabled = !(ready && has) || overlayEditing;
-  $("zoom-label").textContent = Math.round(state.scale * 100) + "%";
+  // Zoom input is an <input>, so the [data-needs-doc] button sweep misses it.
+  const zi = $("zoom-input");
+  if (zi) zi.disabled = !has;
+  syncZoomInput();
   // Visual cue for the license gate: a lock class on gated buttons. The actual
   // block happens in the capture guard; this is just a hover hint + CSS hook.
   const blocked = licBlocked();
@@ -2248,8 +2289,10 @@ async function openDialog() {
 $("btn-open").onclick = openDialog;
 $("btn-combine").onclick = openCombine;
 $("btn-save").onclick = saveDoc;
-$("btn-undo").onclick = undo;
-$("btn-redo").onclick = redo;
+// Toolbar undo/redo route to the annotation stack while the editor is open
+// (same rule as Ctrl+Z/Y — doc-level undo under a live overlay would desync it).
+$("btn-undo").onclick = () => (window.Editor && window.Editor.active ? window.Editor.undo() : undo());
+$("btn-redo").onclick = () => (window.Editor && window.Editor.active ? window.Editor.redo() : redo());
 $("btn-merge").onclick = mergeFiles;
 $("btn-insert").onclick = insertFile;
 $("btn-blank").onclick = addBlankPage;
@@ -2259,6 +2302,31 @@ $("btn-rotate-r").onclick = () => rotateSelected(90);
 $("btn-delete").onclick = deleteSelected;
 $("btn-zoom-in").onclick = () => zoom(0.2);
 $("btn-zoom-out").onclick = () => zoom(-0.2);
+$("btn-fit-width").onclick = fitWidth;
+// Editable zoom %: Enter/blur applies, Escape reverts.
+$("zoom-input").addEventListener("keydown", (e) => {
+  e.stopPropagation();
+  if (e.key === "Enter") {
+    applyZoomInput();
+    e.target.blur();
+  } else if (e.key === "Escape") {
+    e.target.value = Math.round(state.scale * 100) + "%"; // revert (blur re-applies the same value → no-op)
+    e.target.blur();
+  }
+});
+$("zoom-input").addEventListener("blur", applyZoomInput);
+$("zoom-input").addEventListener("focus", (e) => e.target.select());
+// Ctrl+wheel zooms toward the cursor (like Foxit/Acrobat/browsers).
+$("viewer").addEventListener(
+  "wheel",
+  (e) => {
+    if (!e.ctrlKey) return;
+    e.preventDefault(); // stop the browser's own pinch-zoom
+    if (!state.bytes) return;
+    zoomTo(state.scale + (e.deltaY < 0 ? 0.1 : -0.1), { x: e.clientX, y: e.clientY });
+  },
+  { passive: false }
+);
 $("btn-ocr").onclick = openExtractPanel;
 $("btn-searchable").onclick = makeSearchable;
 $("btn-compress").onclick = openCompress;
@@ -2447,12 +2515,16 @@ window.addEventListener("keydown", (e) => {
     const k = e.key.toLowerCase();
     // Open / Save / Save As are registered as native menu accelerators (main.js),
     // so they're intentionally NOT handled here (would fire twice).
+    // While the overlay editor is open, Ctrl+Z/Y must act on the *annotations*,
+    // never on the document bytes (undoing pages under a live overlay would
+    // desync every pending edit).
+    const overlayEd = window.Editor && window.Editor.active;
     if (k === "z" && !e.shiftKey && !isTyping()) {
       e.preventDefault();
-      undo();
+      overlayEd ? window.Editor.undo() : undo();
     } else if (((k === "z" && e.shiftKey) || k === "y") && !isTyping()) {
       e.preventDefault();
-      redo();
+      overlayEd ? window.Editor.redo() : redo();
     } else if (e.key === "=" || e.key === "+") {
       e.preventDefault();
       zoom(0.2);
@@ -2488,8 +2560,9 @@ window.desktop.onMenuCommand((cmd) => {
     open: openDialog,
     save: saveDoc,
     saveAs: saveAsDoc,
-    undo,
-    redo,
+    // Same routing as Ctrl+Z/Y: annotation-level undo while the editor is open.
+    undo: () => (window.Editor && window.Editor.active ? window.Editor.undo() : undo()),
+    redo: () => (window.Editor && window.Editor.active ? window.Editor.redo() : redo()),
     rotateL: () => rotateSelected(-90),
     rotateR: () => rotateSelected(90),
     delete: deleteSelected,

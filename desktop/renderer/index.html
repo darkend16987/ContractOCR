@@ -58,6 +58,7 @@
         <symbol id="ic-lock" viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="9" rx="1"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></symbol>
         <symbol id="ic-convert" viewBox="0 0 24 24"><path d="M4 8h11l-3-3M20 16H9l3 3"/></symbol>
         <symbol id="ic-chevron" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></symbol>
+        <symbol id="ic-fit" viewBox="0 0 24 24"><path d="M3 8V5a2 2 0 0 1 2-2h3"/><path d="M16 3h3a2 2 0 0 1 2 2v3"/><path d="M21 16v3a2 2 0 0 1-2 2h-3"/><path d="M8 21H5a2 2 0 0 1-2-2v-3"/><path d="M8 12h8"/><path d="m10 9-3 3 3 3"/><path d="m14 9 3 3-3 3"/></symbol>
       </defs>
     </svg>
 
@@ -74,9 +75,10 @@
         <div class="spacer"></div>
 
         <div class="group" data-needs-doc>
-          <button id="btn-zoom-out" class="icon-only" disabled title="Thu nhỏ"><svg class="ic"><use href="#ic-minus"/></svg></button>
-          <span id="zoom-label" class="readout">100%</span>
-          <button id="btn-zoom-in" class="icon-only" disabled title="Phóng to"><svg class="ic"><use href="#ic-plus"/></svg></button>
+          <button id="btn-zoom-out" class="icon-only" disabled title="Thu nhỏ (Ctrl+lăn chuột xuống)"><svg class="ic"><use href="#ic-minus"/></svg></button>
+          <input id="zoom-input" class="zoom-input" type="text" value="100%" disabled title="Gõ tỷ lệ zoom (40–300) rồi Enter" spellcheck="false" />
+          <button id="btn-zoom-in" class="icon-only" disabled title="Phóng to (Ctrl+lăn chuột lên)"><svg class="ic"><use href="#ic-plus"/></svg></button>
+          <button id="btn-fit-width" class="icon-only" disabled title="Vừa bề ngang"><svg class="ic"><use href="#ic-fit"/></svg></button>
         </div>
 
         <div class="sep"></div>
@@ -186,8 +188,8 @@
       <button id="ed-delete" title="Xoá mục đang chọn (Delete)">Xoá mục</button>
       <span id="ed-hint" class="readout"></span>
       <div class="spacer"></div>
-      <button id="ed-apply" class="primary" title="Ghi các thay đổi vào tài liệu">Áp dụng</button>
-      <button id="ed-exit" title="Thoát chế độ chỉnh sửa">Thoát</button>
+      <button id="ed-apply" class="primary" title="Ghi mọi thay đổi vào tài liệu và thoát">Xong</button>
+      <button id="ed-exit" title="Bỏ mọi thay đổi chưa ghi và thoát (Ctrl+Z để hoàn tác từng bước)">Hủy bỏ</button>
     </div>
     <input type="file" id="ed-file" accept="image/png,image/jpeg" hidden />
 
