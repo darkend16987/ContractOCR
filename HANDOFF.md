@@ -4,7 +4,12 @@
 > [DESIGN.md](DESIGN.md) (kiến trúc), [ROADMAP.md](ROADMAP.md) (tiến độ chi tiết),
 > [SETUP.md](SETUP.md) (dựng môi trường).
 
-_Cập nhật: 2026-07-06 · v0.2.18_
+_Cập nhật: 2026-07-07 · v0.2.19_
+
+> v0.2.19 — **Gộp nhiều PDF thành một file (chọn & sắp xếp thứ tự, không cần mở file trước) + cập nhật landing page** (renderer + site only; sidecar KHÔNG đổi):
+> - **Gộp nhiều PDF** (mới): nút "Gộp file" cạnh "Mở" (luôn bật — không cần mở doc, không gated) + link "Gộp nhiều PDF…" trong empty-state. Mở modal `#combine-modal`: nút "Thêm file PDF…" (chọn nhiều), danh sách `#combine-list` **sắp xếp được** bằng kéo–thả *hoặc* nút ↑/↓, có nút xoá từng file + đếm trang. `combineList`/`openCombine`/`addCombinePdfs`/`renderCombineList`/`moveCombine`/`wireCombineList`/`runCombine` trong [`app.js`](desktop/renderer/app.js). Gộp thuần **renderer** (pdf-lib `PDFDocument.create()` + `copyPages`/`addPage` theo thứ tự), lưu qua `savePdf` rồi `loadBytes` mở kết quả để xem. Khác "Ghép" cũ (bắt buộc đã mở 1 doc, chèn vào doc đang mở). Bỏ qua file đọc lỗi (có mật khẩu) kèm toast, không giết cả mẻ. CSS `.combine-*` trong [`app.css`](desktop/renderer/app.css). Tên file dùng `textContent` (an toàn với tên lạ).
+> - **Landing page cập nhật** ([`site/app.js`](site/app.js)/[`site/index.html`](site/index.html)): thêm thẻ tính năng "Gộp nhiều PDF thành một" + "So sánh PDF & bản vẽ" (đưa v0.2.14/0.2.16 lên site); thẻ Trang bổ sung "tách thành nhiều file"; sửa hero/meta + đếm công cụ 12+→14+.
+> - Thuần thêm mới, không đụng tính năng cũ. Đã `node --check` app.js OK. Sidecar KHÔNG đổi (nhưng /deploy vẫn rebuild để guard chống binary stale).
 
 > v0.2.18 — **Khoanh mây (revision cloud) + màu nền cho khoanh vùng** (renderer-only; sidecar KHÔNG đổi logic — chỉ rebuild vì binary cũ 2026-06-26 đã stale so với source 07-01/02/06):
 > - **Khoanh mây (revision cloud)** (mới): công cụ vẽ mới trong thanh **Chỉnh sửa**, cạnh Hình chữ nhật/Elip. Viền vòng cung lồi ra ngoài đúng chuẩn kỹ thuật/xây dựng. Hình học ở [`editor.js`](desktop/renderer/editor.js) `cloudPath()` (chuỗi cung `A r r 0 0 1 …`, duyệt biên chiều kim đồng hồ → bump lồi ra), overlay `<svg>` WYSIWYG, bake bằng `page.drawSvgPath` (pdf-lib có parser cung `A`) — khớp pixel với overlay ở rotation 0 (cùng giới hạn ảnh/text trên trang xoay). Icon `ic-cloud`, nút `data-tool="cloud"`.

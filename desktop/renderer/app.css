@@ -556,6 +556,29 @@ body.editing .text-layer, body.text-editing .text-layer {
 .form-row input[type="checkbox"] { width: 18px; height: 18px; accent-color: var(--accent); }
 .cmp-note { font-size: 12px; color: var(--muted); margin: 4px 0 12px; line-height: 1.5; }
 
+/* Empty-state secondary action (Combine PDFs shortcut). */
+.empty-actions { margin: 14px 0 4px; }
+.empty-actions button { margin: 0 auto; }
+
+/* Combine-PDFs modal: reorderable file list. */
+.combine-card { width: 460px; }
+.combine-list { list-style: none; margin: 0 0 10px; padding: 0; display: flex; flex-direction: column; gap: 6px; max-height: 44vh; overflow: auto; }
+.combine-list:empty { display: none; }
+.combine-item {
+  display: flex; align-items: center; gap: 8px;
+  background: var(--bg-3); border: 1px solid var(--line); border-radius: 8px;
+  padding: 7px 9px; font-size: 13px; color: var(--fg);
+}
+.combine-item.dragging { opacity: 0.45; }
+.combine-item.drop-target { border-color: var(--accent); box-shadow: 0 -3px 0 -1px var(--accent); }
+.combine-grip { cursor: grab; color: var(--muted); display: flex; flex: 0 0 auto; }
+.combine-grip .ic { width: 16px; height: 16px; }
+.combine-idx { flex: 0 0 auto; width: 20px; text-align: right; color: var(--muted); font-variant-numeric: tabular-nums; }
+.combine-name { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.combine-pages { flex: 0 0 auto; font-size: 11px; color: var(--muted); }
+.combine-item .icon-only { flex: 0 0 auto; padding: 2px; }
+.combine-item .icon-only .ic { width: 15px; height: 15px; }
+
 /* Respect users who ask for less motion (the OCR/processing spinner keeps
    turning so it still reads as "working", just slower). */
 @media (prefers-reduced-motion: reduce) {

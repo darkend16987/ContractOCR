@@ -1801,6 +1801,151 @@ async function runImagesToPdf() {
   }
 }
 
+// --- combine multiple PDFs into one (standalone — no open document needed) ---
+// Fully client-side (pdf-lib), so it works before any file is opened and never
+// touches the currently-open document until the user saves the result.
+let combineList = []; // [{ name, bytes: Uint8Array, pages }] in output order
+let combineDragIdx = null;
+
+function openCombine() {
+  combineList = [];
+  renderCombineList();
+  $("combine-modal").hidden = false;
+}
+
+async function addCombinePdfs() {
+  const files = await window.desktop.openPdf({ multi: true });
+  if (!files || !files.length) return;
+  for (const f of files) {
+    const bytes = toU8(f.data);
+    let pages = 0;
+    try {
+      const doc = await PDFDocument.load(bytes);
+      pages = doc.getPageCount();
+    } catch (err) {
+      toast(`Bỏ qua "${f.name}" — không đọc được (có thể có mật khẩu).`, "bad");
+      continue;
+    }
+    combineList.push({ name: f.name, bytes, pages });
+  }
+  renderCombineList();
+}
+
+function renderCombineList() {
+  const ol = $("combine-list");
+  ol.innerHTML = "";
+  combineList.forEach((it, i) => {
+    const li = document.createElement("li");
+    li.className = "combine-item";
+    li.draggable = true;
+    li.dataset.idx = String(i);
+    li.innerHTML =
+      '<span class="combine-grip" title="Kéo để sắp xếp"><svg class="ic"><use href="#ic-grip"/></svg></span>' +
+      `<span class="combine-idx">${i + 1}.</span>` +
+      '<span class="combine-name"></span>' +
+      `<span class="combine-pages">${it.pages} trang</span>` +
+      `<button class="icon-only" data-act="up" title="Lên"${i === 0 ? " disabled" : ""}>↑</button>` +
+      `<button class="icon-only" data-act="down" title="Xuống"${i === combineList.length - 1 ? " disabled" : ""}>↓</button>` +
+      '<button class="icon-only" data-act="rm" title="Bỏ khỏi danh sách"><svg class="ic"><use href="#ic-trash"/></svg></button>';
+    li.querySelector(".combine-name").textContent = it.name; // textContent = safe vs odd filenames
+    li.querySelector(".combine-name").title = it.name;
+    ol.appendChild(li);
+  });
+  const n = combineList.length;
+  const total = combineList.reduce((s, x) => s + x.pages, 0);
+  $("combine-summary").textContent = n
+    ? `${n} file · ${total} trang — sẽ gộp theo thứ tự từ trên xuống.`
+    : "Chưa chọn file nào.";
+  $("combine-ok").disabled = n < 2;
+}
+
+function moveCombine(from, to) {
+  if (to < 0 || to >= combineList.length) return;
+  const [it] = combineList.splice(from, 1);
+  combineList.splice(to, 0, it);
+  renderCombineList();
+}
+
+function wireCombineList() {
+  const ol = $("combine-list");
+  ol.addEventListener("click", (e) => {
+    const btn = e.target.closest("button[data-act]");
+    if (!btn) return;
+    const li = btn.closest(".combine-item");
+    const i = parseInt(li.dataset.idx, 10);
+    const act = btn.dataset.act;
+    if (act === "up") moveCombine(i, i - 1);
+    else if (act === "down") moveCombine(i, i + 1);
+    else if (act === "rm") {
+      combineList.splice(i, 1);
+      renderCombineList();
+    }
+  });
+  // Drag-to-reorder: track the dragged row, drop onto another row to reinsert.
+  ol.addEventListener("dragstart", (e) => {
+    const li = e.target.closest(".combine-item");
+    if (!li) return;
+    combineDragIdx = parseInt(li.dataset.idx, 10);
+    li.classList.add("dragging");
+    e.dataTransfer.effectAllowed = "move";
+  });
+  ol.addEventListener("dragend", () => {
+    combineDragIdx = null;
+    ol.querySelectorAll(".combine-item").forEach((el) =>
+      el.classList.remove("dragging", "drop-target"),
+    );
+  });
+  ol.addEventListener("dragover", (e) => {
+    if (combineDragIdx == null) return;
+    e.preventDefault();
+    const li = e.target.closest(".combine-item");
+    ol.querySelectorAll(".drop-target").forEach((el) => el.classList.remove("drop-target"));
+    if (li) li.classList.add("drop-target");
+  });
+  ol.addEventListener("drop", (e) => {
+    if (combineDragIdx == null) return;
+    e.preventDefault();
+    const li = e.target.closest(".combine-item");
+    if (li) moveCombine(combineDragIdx, parseInt(li.dataset.idx, 10));
+    combineDragIdx = null;
+  });
+}
+
+async function runCombine() {
+  if (combineList.length < 2) {
+    toast("Chọn ít nhất 2 file để gộp.", "bad");
+    return;
+  }
+  $("combine-modal").hidden = true;
+  showOverlay("Đang gộp file…");
+  try {
+    const out = await PDFDocument.create();
+    let total = 0;
+    for (const it of combineList) {
+      const src = await PDFDocument.load(it.bytes);
+      const pages = await out.copyPages(src, src.getPageIndices());
+      pages.forEach((p) => out.addPage(p));
+      total += pages.length;
+    }
+    const bytes = await out.save();
+    const count = combineList.length;
+    const r = await window.desktop.savePdf(bytes, "gop-nhieu-file.pdf");
+    if (r.saved) {
+      const nm = r.path.split(/[\\/]/).pop() || "gop-nhieu-file.pdf";
+      await loadBytes(bytes, nm, r.path); // open the result so the user can review it
+      toast(`Đã gộp ${count} file (${total} trang) → ${r.path}`, "good");
+    } else {
+      // Save cancelled — still open the merged result so the work isn't lost.
+      await loadBytes(bytes, "gop-nhieu-file.pdf", null);
+      toast(`Đã gộp ${count} file (${total} trang) — chưa lưu, bấm Ctrl+S để lưu.`, "good");
+    }
+  } catch (err) {
+    toast("Lỗi gộp file: " + err.message, "bad");
+  } finally {
+    hideOverlay();
+  }
+}
+
 // Dropdown open/close: toggle the menu; closed on outside-click/Escape (wired below).
 function toggleConvertMenu(force) {
   const menu = $("convert-menu");
@@ -2101,6 +2246,7 @@ async function openDialog() {
 }
 
 $("btn-open").onclick = openDialog;
+$("btn-combine").onclick = openCombine;
 $("btn-save").onclick = saveDoc;
 $("btn-undo").onclick = undo;
 $("btn-redo").onclick = redo;
@@ -2179,6 +2325,12 @@ $("p2i-ok").onclick = runPdfToImages;
 $("i2p-cancel").onclick = () => ($("i2p-modal").hidden = true);
 $("i2p-pick").onclick = pickI2pImages;
 $("i2p-ok").onclick = runImagesToPdf;
+// Combine-PDFs modal.
+$("empty-combine").onclick = openCombine;
+$("combine-add").onclick = addCombinePdfs;
+$("combine-cancel").onclick = () => ($("combine-modal").hidden = true);
+$("combine-ok").onclick = runCombine;
+wireCombineList();
 
 $("btn-settings").onclick = openSettings;
 $("set-cancel").onclick = () => ($("set-modal").hidden = true);
