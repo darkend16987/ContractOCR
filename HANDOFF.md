@@ -4,7 +4,13 @@
 > [DESIGN.md](DESIGN.md) (kiến trúc), [ROADMAP.md](ROADMAP.md) (tiến độ chi tiết),
 > [SETUP.md](SETUP.md) (dựng môi trường).
 
-_Cập nhật: 2026-07-07 · v0.2.20_
+_Cập nhật: 2026-07-07 · v0.2.21_
+
+> v0.2.21 — **Đánh số trang (page numbers)** (sidecar CÓ đổi — phải rebuild):
+> - **Endpoint mới** `POST /add-page-numbers` trong [`api.py`](api.py) (`PageNumberRequest` + helper `_fmt_page_label`, `_hex_rgb01`). Dùng PyMuPDF, font Base-14 **helv** (mọi kiểu số đều ASCII: "Trang", chữ số, `/`, `-` → không nhúng font, tránh bẫy FontPath). 5 kiểu (`n`, `n_of_n`, `page_n`, `page_n_of_n`, `dash_n`), 6 vị trí, bắt đầu từ số tuỳ chọn, **bỏ qua trang bìa**, cỡ chữ + màu.
+> - **Xoay trang (/Rotate) đúng tuyệt đối**: đặt điểm ở toạ độ **hiển thị** (`page.rect`) rồi map ngược về hệ chưa xoay bằng `page.derotation_matrix`, `insert_text(..., rotate=page.rotation)` → số luôn ở đúng góc & chữ thẳng đứng trên trang xoay 90/180/270. Đã render pixel xác nhận cả 4 góc.
+> - **UI**: mục "Đánh số trang…" trong menu **Chuyển đổi ▸ Trang** ([`index.html`](desktop/renderer/index.html) `#pgnum-modal`). Handler `openPageNumbers`/`runPageNumbers` ([`app.js`](desktop/renderer/app.js)) — **áp dụng tại chỗ + `pushUndo()`** (WYSIWYG, Hoàn tác được rồi mới Lưu), không xuất file mới.
+> - Thuần thêm mới, không đụng tính năng cũ. Đã test headless (4 góc xoay + bỏ bìa + x/N + input rác→400) + `test_export.py` + node --check. Chờ test GUI.
 
 > v0.2.20 — **UX: zoom gõ được + Ctrl+wheel + fit-width; undo/redo & Esc trong Chỉnh sửa; nút Xong/Hủy bỏ; confirm thoát Sửa chữ** (renderer-only; sidecar KHÔNG đổi). Đã test GUI OK:
 > - **Zoom** ([`app.js`](desktop/renderer/app.js)): `#zoom-label` (readout) → `#zoom-input` gõ tỷ lệ (Enter/blur áp dụng, Esc revert); `zoomTo(next, anchor)` hợp nhất zoom/zoomReset, **neo điểm dưới con trỏ** khi Ctrl+lăn chuột (bước 10%, listener `{passive:false}` trên `#viewer`); nút **Vừa bề ngang** `#btn-fit-width` (`fitWidth()` từ `state.pageMetas[].vp.width/scale`). `updateToolbar` bật/tắt input riêng (sweep `[data-needs-doc] button` không đụng `<input>`).

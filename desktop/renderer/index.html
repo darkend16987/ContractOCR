@@ -134,6 +134,7 @@
           <div class="dropdown-menu" id="convert-menu" hidden>
             <div class="dd-head">Trang</div>
             <button class="dd-item" id="mi-split"><svg class="ic"><use href="#ic-scissors"/></svg>Tách thành nhiều file…</button>
+            <button class="dd-item" id="mi-page-numbers"><svg class="ic"><use href="#ic-type"/></svg>Đánh số trang…</button>
             <div class="dd-sep"></div>
             <div class="dd-head">Ảnh</div>
             <button class="dd-item" id="mi-pdf-to-images"><svg class="ic"><use href="#ic-photo"/></svg>Trang PDF → ảnh…</button>
@@ -464,6 +465,45 @@
         <div class="modal-actions">
           <button id="combine-cancel">Hủy</button>
           <button id="combine-ok" class="primary" disabled>Gộp &amp; lưu</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- add page numbers dialog -->
+    <div class="modal" id="pgnum-modal" hidden>
+      <div class="modal-card">
+        <h3>Đánh số trang</h3>
+        <p class="cmp-note">Thêm số trang vào tài liệu đang mở. Xem trước ngay trên trang — có thể Hoàn tác (Ctrl+Z) trước khi Lưu.</p>
+        <label>Kiểu số
+          <select id="pgnum-fmt">
+            <option value="n" selected>1, 2, 3…</option>
+            <option value="n_of_n">1 / N (kèm tổng số trang)</option>
+            <option value="page_n">Trang 1</option>
+            <option value="page_n_of_n">Trang 1 / N</option>
+            <option value="dash_n">- 1 -</option>
+          </select>
+        </label>
+        <label>Vị trí
+          <select id="pgnum-pos">
+            <option value="bottom-center" selected>Dưới — giữa</option>
+            <option value="bottom-right">Dưới — phải</option>
+            <option value="bottom-left">Dưới — trái</option>
+            <option value="top-center">Trên — giữa</option>
+            <option value="top-right">Trên — phải</option>
+            <option value="top-left">Trên — trái</option>
+          </select>
+        </label>
+        <div class="modal-row">
+          <label>Bắt đầu từ số <input type="number" id="pgnum-start" min="1" max="100000" value="1" /></label>
+          <label>Bỏ qua trang đầu <input type="number" id="pgnum-skip" min="0" max="100000" value="0" /></label>
+        </div>
+        <div class="modal-row">
+          <label>Cỡ chữ <input type="number" id="pgnum-size" min="6" max="72" value="11" /></label>
+          <label>Màu <input type="color" id="pgnum-color" value="#000000" /></label>
+        </div>
+        <div class="modal-actions">
+          <button id="pgnum-cancel">Hủy</button>
+          <button id="pgnum-ok" class="primary">Đánh số &amp; áp dụng</button>
         </div>
       </div>
     </div>

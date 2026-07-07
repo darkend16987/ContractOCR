@@ -1172,6 +1172,126 @@ async def images_to_pdf(req: ImagesToPdfRequest):
     )
 
 
+# ---- P8: stamp page numbers -----------------------------------------------
+
+
+class PageNumberRequest(BaseModel):
+    pdf_b64: str
+    fmt: str = "n"                    # n | n_of_n | page_n | page_n_of_n | dash_n
+    position: str = "bottom-center"  # {top,bottom}-{left,center,right}
+    start_at: int = 1                # number given to the first numbered page
+    skip_first: int = 0              # leave this many leading pages unnumbered (covers)
+    font_size: float = 11.0
+    color: str = "#000000"
+    margin: float = 28.0             # points from the page edge
+
+
+def _fmt_page_label(fmt: str, n: int, total: int) -> str:
+    """Render the visible label for page number `n` of `total`. ASCII only, so the
+    built-in Helvetica (no embedded font) covers every preset."""
+    if fmt == "n_of_n":
+        return f"{n} / {total}"
+    if fmt == "page_n":
+        return f"Trang {n}"
+    if fmt == "page_n_of_n":
+        return f"Trang {n} / {total}"
+    if fmt == "dash_n":
+        return f"- {n} -"
+    return str(n)
+
+
+def _hex_rgb01(hex_str: str) -> tuple[float, float, float]:
+    """'#rrggbb' → (r, g, b) in 0..1. Falls back to black on anything unexpected."""
+    s = (hex_str or "").lstrip("#")
+    if len(s) != 6:
+        return (0.0, 0.0, 0.0)
+    try:
+        return (int(s[0:2], 16) / 255, int(s[2:4], 16) / 255, int(s[4:6], 16) / 255)
+    except ValueError:
+        return (0.0, 0.0, 0.0)
+
+
+@app.post("/add-page-numbers", response_model=PdfBytesResponse)
+async def add_page_numbers(req: PageNumberRequest):
+    """Stamp incrementing page numbers onto every page (except skipped leaders).
+
+    PyMuPDF works in each page's *displayed* coordinate system, so numbers land
+    upright and in the right corner even on pages carrying a /Rotate entry (common
+    in scans) — no manual rotation math needed. Modifies the document in place;
+    the caller applies the result to the open doc with an undo step.
+    """
+    fitz = _require_fitz()
+    valid_pos = {
+        "top-left", "top-center", "top-right",
+        "bottom-left", "bottom-center", "bottom-right",
+    }
+    if req.position not in valid_pos:
+        raise HTTPException(status_code=400, detail="position không hợp lệ")
+    valid_fmt = {"n", "n_of_n", "page_n", "page_n_of_n", "dash_n"}
+    if req.fmt not in valid_fmt:
+        raise HTTPException(status_code=400, detail="fmt không hợp lệ")
+
+    pdf_bytes = _decode_pdf_b64(req.pdf_b64)
+    try:
+        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Không mở được PDF: {e}")
+
+    try:
+        fs = max(6.0, min(72.0, float(req.font_size)))
+        margin = max(2.0, min(300.0, float(req.margin)))
+        start = max(1, int(req.start_at))
+        skip = max(0, int(req.skip_first))
+        col = _hex_rgb01(req.color)
+        vpos, hpos = req.position.split("-")
+        font = fitz.Font("helv")  # Base-14, ASCII labels — nothing to embed
+
+        n_pages = doc.page_count
+        numbered = max(0, n_pages - skip)
+        highest = start + numbered - 1  # value shown as "N" in x/N formats
+        stamped = 0
+        for pno in range(n_pages):
+            if pno < skip:
+                continue
+            page = doc[pno]
+            num = start + (pno - skip)
+            text = _fmt_page_label(req.fmt, num, highest)
+            tw = font.text_length(text, fontsize=fs)
+            # Place in the *displayed* rect (rotation-aware), then map the baseline
+            # point back to unrotated page space and rotate the glyphs by the page's
+            # rotation so they read upright after the viewer re-applies it. This keeps
+            # numbers at the right visible corner on /Rotate scans (90/180/270).
+            disp = page.rect  # displayed dimensions, origin top-left, y grows down
+            if hpos == "left":
+                dx = disp.x0 + margin
+            elif hpos == "right":
+                dx = disp.x1 - margin - tw
+            else:
+                dx = disp.x0 + (disp.width - tw) / 2
+            dy = disp.y0 + margin + fs if vpos == "top" else disp.y1 - margin
+            pt = fitz.Point(dx, dy) * page.derotation_matrix
+            page.insert_text(pt, text, fontsize=fs, fontname="helv", color=col, rotate=page.rotation)
+            stamped += 1
+
+        out_bytes = doc.tobytes(deflate=True, garbage=3)
+        pages = doc.page_count
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Add-page-numbers error")
+        return PdfBytesResponse(success=False, error=str(e))
+    finally:
+        doc.close()
+
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    return PdfBytesResponse(
+        success=True,
+        filename=f"page_numbers_{ts}.pdf",
+        data_b64=base64.b64encode(out_bytes).decode("ascii"),
+        pages=pages,
+    )
+
+
 # ---- P7: render PDF pages to images ---------------------------------------
 
 

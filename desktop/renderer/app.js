@@ -1984,6 +1984,45 @@ async function runCombine() {
   }
 }
 
+// --- add page numbers (applies in place, with undo) ---
+function openPageNumbers() {
+  if (!convertReady()) return;
+  $("pgnum-modal").hidden = false;
+}
+
+async function runPageNumbers() {
+  $("pgnum-modal").hidden = true;
+  if (window.Editor) await window.Editor.bakePending();
+  const fmt = $("pgnum-fmt").value || "n";
+  const position = $("pgnum-pos").value || "bottom-center";
+  const start_at = Math.max(1, parseInt($("pgnum-start").value, 10) || 1);
+  const skip_first = Math.max(0, parseInt($("pgnum-skip").value, 10) || 0);
+  const font_size = Math.min(72, Math.max(6, parseFloat($("pgnum-size").value) || 11));
+  const color = $("pgnum-color").value || "#000000";
+  showOverlay("Đang đánh số trang…");
+  try {
+    const res = await sidecarFetch("/add-page-numbers", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ pdf_b64: u8ToB64(state.bytes), fmt, position, start_at, skip_first, font_size, color }),
+    });
+    const data = await res.json();
+    if (!data.success) {
+      toast("Đánh số lỗi: " + (data.error || data.detail || "không rõ"), "bad");
+      return;
+    }
+    // Apply to the open document so it shows immediately; one undo step, then save.
+    pushUndo();
+    state.bytes = Uint8Array.from(atob(data.data_b64), (ch) => ch.charCodeAt(0));
+    await renderAll();
+    toast("Đã đánh số trang — bấm Lưu để ghi ra file.", "good");
+  } catch (err) {
+    toast("Lỗi đánh số trang: " + err.message, "bad");
+  } finally {
+    hideOverlay();
+  }
+}
+
 // Dropdown open/close: toggle the menu; closed on outside-click/Escape (wired below).
 function toggleConvertMenu(force) {
   const menu = $("convert-menu");
@@ -2365,6 +2404,9 @@ const ddRun = (fn) => () => {
 };
 $("mi-encrypt").onclick = ddRun(openEncrypt);
 $("mi-split").onclick = ddRun(openSplit);
+$("mi-page-numbers").onclick = ddRun(openPageNumbers);
+$("pgnum-cancel").onclick = () => ($("pgnum-modal").hidden = true);
+$("pgnum-ok").onclick = runPageNumbers;
 $("mi-extract-images").onclick = ddRun(extractImages);
 $("mi-pdf-to-images").onclick = ddRun(openPdfToImages);
 $("mi-images-to-pdf").onclick = ddRun(openImagesToPdf);
