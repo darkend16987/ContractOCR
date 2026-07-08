@@ -4,7 +4,13 @@
 > [DESIGN.md](DESIGN.md) (kiến trúc), [ROADMAP.md](ROADMAP.md) (tiến độ chi tiết),
 > [SETUP.md](SETUP.md) (dựng môi trường).
 
-_Cập nhật: 2026-07-08 · v0.2.23_
+_Cập nhật: 2026-07-08 · v0.2.24_
+
+> v0.2.24 — **Sửa lỗi In ra giấy trắng** (renderer + main; sidecar KHÔNG đổi):
+> - **Lỗi**: v0.2.22 in qua main-process — mở PDF trong `BrowserWindow` ẩn rồi `webContents.print()`. Chromium render PDF bằng **plugin PDFium ở frame con**, print của trang chủ KHÔNG bắt được nội dung → **ra giấy trắng tinh** (dù kết nối máy in OK).
+> - **Cách sửa**: in **hoàn toàn ở renderer** ([`app.js`](desktop/renderer/app.js) `printDoc`/`buildPrintPages`): pdf.js raster từng trang → `<canvas>` ở ~150 DPI → `<img>` (data-URL) trong `#print-root`, `@media print` chỉ hiện container này (1 ảnh/tờ, `@page{margin:0}`), rồi `window.print()` → **hộp thoại in hệ điều hành** như cũ (chọn máy in/khoảng trang/số bản). `await img.decode()` trước khi in để ảnh không kịp giải mã → tránh lại ra trắng. `state.bytes.slice()` để pdf.js không neuter buffer gốc. CSP `img-src ... data:` đã cho phép.
+> - Gỡ đường in cũ ở main: bỏ IPC `print:pdf` + `os` require ([`main.js`](desktop/src/main.js)) + `printPdf` ([`preload.js`](desktop/src/preload.js)). Nút **In**/menu **Tập tin▸In…**/Ctrl+P giữ nguyên, chỉ đổi ruột. CSS `#print-root`/`@media print` trong [`app.css`](desktop/renderer/app.css).
+> - `node --check` 3 file OK + `test_export.py` OK. **Cần test in thật** (in ra "Microsoft Print to PDF" kiểm tra không trắng).
 
 > v0.2.23 — **Dịch PDF (AI) giữ layout + đổi model Gemini mặc định → `gemini-3.1-flash-lite`** (sidecar CÓ đổi — phải rebuild):
 > - **Endpoint mới** `POST /translate-pdf` trong [`api.py`](api.py) (Phase 1 = xuất **file mới**, giữ bố cục). Pipeline tái dùng đường redraw của `/edit-text`: `_page_text_blocks` gom block text/trang → `_mask_terms`/`_unmask_terms` che số/ngày/email bằng sentinel private-use (`N`) để Gemini không sửa số → `_translate_blocks` gọi Gemini **1 lần/trang** (JSON, guard theo index, thiếu block thì giữ gốc, không crash trang) → `add_redact_annot` xoá glyph cũ + `insert_textbox` với `_fit_fontsize` (auto-shrink) giữ font/màu span gốc. Bản scan (không lớp text) → trả `is_scan=true`, báo rõ thay vì âm thầm OCR. Font VN an toàn qua DejaVu bundled + font hệ thống theo family (`_resolve_local_font`).

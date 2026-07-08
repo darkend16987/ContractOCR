@@ -1167,26 +1167,93 @@ async function saveAsDoc() {
 
 // ---- print ---------------------------------------------------------------
 
-// Print the current document. Bakes any pending overlay edits first (so what
-// prints is what's on screen), then hands the canonical bytes to the main
-// process, which opens the OS print dialog (printer, page range, copies…). A
-// user cancel comes back as ok:false with a "cancel" reason — not an error.
+// Print the current document. We rasterise every page with pdf.js into a
+// print-only container of <img>s, then call window.print() (which Electron maps
+// to the OS print dialog — printer, range, copies). This is deliberately NOT
+// done by loading the PDF into a hidden BrowserWindow and calling
+// webContents.print(): Chromium renders PDFs in a PDFium *plugin* frame that the
+// host page's print path doesn't capture, so that route prints a blank page.
+// Rasterising to real DOM images prints reliably (same approach pdf.js viewers
+// use for print). ~150 DPI keeps text crisp without exploding memory.
+const PRINT_DPI = 150;
 let printing = false;
+
+function ensurePrintRoot() {
+  let root = document.getElementById("print-root");
+  if (!root) {
+    root = document.createElement("div");
+    root.id = "print-root";
+    document.body.appendChild(root);
+  }
+  return root;
+}
+
+function clearPrintPages() {
+  const root = document.getElementById("print-root");
+  if (root) root.innerHTML = "";
+}
+
+// Render each page of the canonical bytes into #print-root as a full-page image.
+async function buildPrintPages() {
+  const root = ensurePrintRoot();
+  root.innerHTML = "";
+  // Copy the bytes: pdf.js may transfer/neuter the buffer it's handed, and
+  // state.bytes must stay intact for the live viewer / saving.
+  const doc = await pdfjsLib.getDocument({ data: state.bytes.slice() }).promise;
+  try {
+    const scale = PRINT_DPI / 72;
+    for (let i = 1; i <= doc.numPages; i++) {
+      const page = await doc.getPage(i);
+      const vp = page.getViewport({ scale }); // honours page rotation
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.ceil(vp.width);
+      canvas.height = Math.ceil(vp.height);
+      const ctx = canvas.getContext("2d");
+      await page.render({ canvasContext: ctx, viewport: vp }).promise;
+      const img = document.createElement("img");
+      img.className = "print-page";
+      img.src = canvas.toDataURL("image/png");
+      root.appendChild(img);
+      // Ensure the image is actually decoded before we hand off to the print
+      // dialog — otherwise the sheet can come out blank. decode() may reject on
+      // some engines; fall back to a load event / small wait.
+      try {
+        await img.decode();
+      } catch (_) {
+        await new Promise((r) => {
+          img.onload = img.onerror = r;
+          setTimeout(r, 500);
+        });
+      }
+      page.cleanup();
+    }
+  } finally {
+    doc.destroy();
+  }
+}
+
 async function printDoc() {
   if (!state.bytes || printing) return;
   printing = true;
   try {
     if (window.Editor) await window.Editor.bakePending();
     showOverlay(t("Đang chuẩn bị in…"));
-    const res = await window.desktop.printPdf(state.bytes, state.name);
+    await buildPrintPages();
     hideOverlay();
-    if (res && res.ok) {
-      toast(t("Đã gửi lệnh in."), "good");
-    } else if (res && res.reason && !/cancel/i.test(String(res.reason))) {
-      toast(t("In lỗi:") + " " + res.reason, "bad");
-    }
+    // Clean up once the print dialog closes (afterprint), with a safety net in
+    // case the event doesn't fire on some platforms.
+    const cleanup = () => {
+      clearPrintPages();
+      window.removeEventListener("afterprint", cleanup);
+    };
+    window.addEventListener("afterprint", cleanup);
+    setTimeout(cleanup, 60000);
+    // Let the images lay out before invoking the native print dialog.
+    await new Promise((r) => setTimeout(r, 60));
+    window.print();
   } catch (e) {
     hideOverlay();
+    clearPrintPages();
     toast(t("In lỗi:") + " " + (e && e.message ? e.message : e), "bad");
   } finally {
     printing = false;

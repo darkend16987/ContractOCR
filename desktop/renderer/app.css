@@ -692,3 +692,23 @@ body.editing .text-layer, body.text-editing .text-layer {
   15%  { box-shadow: 0 0 0 4px rgba(59,130,246,.55); }
   100% { box-shadow: 0 0 0 10px rgba(59,130,246,0); }
 }
+
+/* ---- print ---------------------------------------------------------------
+   #print-root holds one full-page <img> per PDF page, built on demand by
+   printDoc(). Hidden on screen; on print it's the ONLY thing shown, one image
+   per sheet, edge to edge. */
+#print-root { display: none; }
+@media print {
+  html, body { margin: 0 !important; padding: 0 !important; background: #fff !important; }
+  body > *:not(#print-root) { display: none !important; }
+  #print-root { display: block !important; }
+  #print-root .print-page {
+    display: block;
+    width: 100%;
+    height: auto;
+    page-break-after: always;
+    break-after: page;
+  }
+  #print-root .print-page:last-child { page-break-after: auto; break-after: auto; }
+  @page { margin: 0; }
+}

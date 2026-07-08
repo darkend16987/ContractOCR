@@ -2,7 +2,6 @@
 
 const path = require("path");
 const fs = require("fs");
-const os = require("os");
 const crypto = require("crypto");
 const { app, BrowserWindow, Menu, ipcMain, dialog, shell, session } = require("electron");
 const { startSidecar, stopSidecar } = require("./sidecar");
@@ -434,67 +433,11 @@ ipcMain.handle("licenses:open", (_e, which) => {
   return true;
 });
 
-// ---- IPC: print ----------------------------------------------------------
-
-// Print the current document via Chromium's built-in PDF engine. We write the
-// canonical bytes to a temp file, load it into a hidden window (its own session
-// partition so the renderer CSP handler doesn't touch the internal PDF viewer),
-// then invoke the OS print dialog (silent:false) — giving the user real printer
-// selection, page range, copies and scaling like any PDF app. Temp file + window
-// are always torn down. Returns { ok, reason } — a user cancel resolves ok:false
-// with a "cancel" reason the renderer treats as non-error.
-ipcMain.handle("print:pdf", (_e, { data } = {}) => {
-  return new Promise((resolve) => {
-    let tmpFile = null;
-    let printWin = null;
-    let done = false;
-    const finish = (result) => {
-      if (done) return;
-      done = true;
-      try {
-        if (printWin && !printWin.isDestroyed()) printWin.destroy();
-      } catch (_) {}
-      try {
-        if (tmpFile && fs.existsSync(tmpFile)) fs.unlinkSync(tmpFile);
-      } catch (_) {}
-      resolve(result);
-    };
-    try {
-      if (!data) return finish({ ok: false, reason: "no-data" });
-      tmpFile = path.join(os.tmpdir(), `nabu-print-${Date.now()}-${crypto.randomBytes(4).toString("hex")}.pdf`);
-      fs.writeFileSync(tmpFile, Buffer.from(data));
-      printWin = new BrowserWindow({
-        show: false,
-        webPreferences: {
-          plugins: true, // PDF viewer
-          sandbox: true,
-          contextIsolation: true,
-          nodeIntegration: false,
-          partition: "print-" + Date.now(), // isolate from the renderer CSP handler
-        },
-      });
-      // Safety net so a stuck load can never hang the promise forever.
-      const guard = setTimeout(() => finish({ ok: false, reason: "timeout" }), 60000);
-      printWin.webContents.once("did-finish-load", () => {
-        // Give PDFium a beat to lay out the first page before printing.
-        setTimeout(() => {
-          if (done || !printWin || printWin.isDestroyed()) return;
-          printWin.webContents.print({ silent: false, printBackground: true }, (success, reason) => {
-            clearTimeout(guard);
-            finish({ ok: success, reason });
-          });
-        }, 350);
-      });
-      printWin.webContents.once("did-fail-load", (_ev, code, desc) => {
-        clearTimeout(guard);
-        finish({ ok: false, reason: desc || "load-failed-" + code });
-      });
-      printWin.loadURL("file:///" + tmpFile.replace(/\\/g, "/"));
-    } catch (e) {
-      finish({ ok: false, reason: String((e && e.message) || e) });
-    }
-  });
-});
+// Printing is handled entirely in the renderer (pdf.js rasterises pages to
+// images, then window.print() opens the OS dialog). A main-process path that
+// loaded the PDF into a hidden window and called webContents.print() printed
+// blank pages, because Chromium renders PDFs in a PDFium plugin frame the host
+// print path can't capture — see printDoc() in renderer/app.js.
 
 // ---- shutdown ------------------------------------------------------------
 
