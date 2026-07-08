@@ -6,7 +6,7 @@ khoanh vùng (chữ nhật / elip / **khoanh mây revision**, chọn nét viền
 hộp văn bản (font/đậm/nghiêng/gạch chân) ·
 watermark · redact (che thông tin chọn màu) · sửa chữ · nén · **in (kết nối máy in)** · so sánh 2 file
 (văn bản & **bản vẽ CAD/Revit** — khoanh mây revision vùng thay đổi, phóng to/vừa màn hình) ·
-tạo PDF tìm-kiếm-được, kèm **OCR + bóc tách hợp đồng** bằng AI. Giao diện **song ngữ Việt / Anh**.
+tạo PDF tìm-kiếm-được · **dịch PDF (AI) giữ layout** (PDF có text thật, xuất file mới) · kèm **OCR + bóc tách hợp đồng** bằng AI. Giao diện **song ngữ Việt / Anh**.
 Chạy hoàn toàn trên máy (local-first).
 
 > **Ứng dụng desktop** nằm trong [`desktop/`](desktop/) — xem
@@ -85,7 +85,7 @@ python cli.py scan.png --engine rapidocr --api-key YOUR_KEY --verbose
 |------|--------|---------|
 | `--engine` | OCR engine: `auto`, `rapidviet`, `hybrid`, `rapidocr`, `paddleocr`, `vietocr` | `auto` |
 | `--api-key` | Gemini API key | từ `.env` |
-| `--model` | Gemini model | `gemini-3-flash-preview` |
+| `--model` | Gemini model | `gemini-3.1-flash-lite` |
 | `--template` | Template trường: `generic`, `mua_ban`, `lao_dong`, `dich_vu` | `generic` |
 | `--output-format` | Output: `json`, `excel`, `markdown`, `all` | `json` |
 | `--output-dir` | Thư mục output | `results/` |

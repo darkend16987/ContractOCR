@@ -51,7 +51,7 @@ VIETOCR_MODEL = os.getenv("VIETOCR_MODEL", "vgg_transformer")
 
 # Gemini API
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3-flash-preview")
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.1-flash-lite")
 
 # ---- User settings (persisted, editable from the app's Settings UI) ----------
 # Stored in a writable per-user file so the packaged app needs no .env / env var.

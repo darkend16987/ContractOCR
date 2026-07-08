@@ -1,8 +1,14 @@
 # Spec — Dịch PDF (text-based) bằng Gemini
 
-> Chuẩn bị cho một session sau. Trạng thái: **chưa build**. Mục tiêu bản đầu (Phase 1):
-> dịch PDF có text thật (không phải scan) và **giữ nguyên layout/format** — xuất ra file mới,
-> có xem trước + Hoàn tác (WYSIWYG). Phase 2: ghi đè tại chỗ (in-place) + glossary.
+> Trạng thái: **Phase 1 ĐÃ BUILD** (chưa release — cần rebuild sidecar). Mục tiêu bản đầu (Phase 1):
+> dịch PDF có text thật (không phải scan) và **giữ nguyên layout/format** — xuất ra file mới.
+> Phase 2 (chưa làm): ghi đè tại chỗ (in-place) + glossary.
+>
+> **Đã làm (Phase 1):** `POST /translate-pdf` ([api.py](../api.py)) — gom block/trang, mask
+> số/ngày/email bằng sentinel `..`, gọi Gemini 1 lần/trang (JSON, guard index),
+> redact block + `insert_textbox` auto-fit font gốc; báo `is_scan` nếu không có text. UI: nút
+> **Dịch** (`#btn-translate`) + modal `#tr-modal` + i18n VI/EN. Test headless (mock Gemini) PASS:
+> dịch, giữ số/date/email, scan báo đúng, mask round-trip.
 >
 > Đọc kèm: [DESIGN.md](../DESIGN.md), [HANDOFF.md](../HANDOFF.md), [api.py](../api.py).
 
@@ -13,7 +19,7 @@
 | Đọc span text + bbox/font/size/color/origin/flags | `POST /text-spans` → `TextSpansResponse` | [api.py](../api.py) `text_spans` (~1530) |
 | Xoá glyph cũ + vẽ text mới **đúng chỗ, đúng font** (redact + `insert_text` trên baseline gốc; nhúng DejaVu VN-safe + font hệ thống theo tên family) | `POST /edit-text` → `EditTextResponse` (`TextEdit` list) | [api.py](../api.py) `edit_text` (~1625) |
 | Gọi Gemini, ép trả JSON | `GeminiAgent._generate(prompt, system_instruction)` (`response_mime_type=application/json`) | [src/agents/gemini_agent.py](../src/agents/gemini_agent.py) (~85) |
-| Key + model | `get_gemini_key()`, `GEMINI_MODEL` (mặc định `gemini-3-flash-preview`) | [src/utils/config.py](../src/utils/config.py) |
+| Key + model | `get_gemini_key()`, `GEMINI_MODEL` (mặc định `gemini-3.1-flash-lite`) | [src/utils/config.py](../src/utils/config.py) |
 | Fetch sidecar có token + overlay/undo/preview UI | renderer đã có (`sidecarFetch`, `pushUndo`, pattern của **Đánh số trang**) | [desktop/renderer/app.js](../desktop/renderer/app.js) |
 
 **Ý tưởng lõi**: translate = chèn Gemini vào giữa `text-spans` → `edit-text`. KHÔNG viết engine render mới.

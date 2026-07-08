@@ -1840,6 +1840,368 @@ async def edit_text(req: EditTextRequest):
 
 
 # ---------------------------------------------------------------------------
+# Translate a text-based PDF with Gemini (Phase 1: new file, keep layout)
+# ---------------------------------------------------------------------------
+
+# Target language display names for the translation prompt.
+_LANG_NAMES = {
+    "auto": "the source language",
+    "vi": "Vietnamese",
+    "en": "English",
+    "fr": "French",
+    "de": "German",
+    "es": "Spanish",
+    "ja": "Japanese",
+    "ko": "Korean",
+    "zh": "Chinese",
+    "th": "Thai",
+    "ru": "Russian",
+}
+
+# Sentinel-wrapped placeholder for a masked term (private-use chars, unlikely in
+# real text). Numbers/dates/emails are swapped out before translation and put
+# back verbatim after, so Gemini can't "helpfully" rewrite an amount or a code.
+_MASK_OPEN = ""
+_MASK_CLOSE = ""
+_MASK_TERM_RE = _re.compile(
+    r"[\w.+-]+@[\w-]+\.[\w.-]+"          # email
+    r"|\d{1,4}[/.\-]\d{1,2}[/.\-]\d{1,4}"  # date dd/mm/yyyy & co
+    r"|\d[\d.,]*"                          # number (incl. 1.234,56)
+)
+_MASK_RESTORE_RE = _re.compile(_MASK_OPEN + r"(\d+)" + _MASK_CLOSE)
+
+
+def _mask_terms(text: str) -> tuple[str, list[str]]:
+    """Replace numbers/dates/emails with sentinel tokens; return (masked, store)."""
+    store: list[str] = []
+
+    def repl(m):
+        store.append(m.group(0))
+        return f"{_MASK_OPEN}{len(store) - 1}{_MASK_CLOSE}"
+
+    return _MASK_TERM_RE.sub(repl, text), store
+
+
+def _unmask_terms(text: str, store: list[str]) -> str:
+    """Restore sentinel tokens back to their original terms."""
+    def repl(m):
+        i = int(m.group(1))
+        return store[i] if 0 <= i < len(store) else m.group(0)
+
+    return _MASK_RESTORE_RE.sub(repl, text)
+
+
+def _fit_fontsize(font, text: str, width: float, height: float,
+                  start: float, min_size: float = 5.0) -> float:
+    """Largest font size (≤ start) at which `text` wraps within width×height.
+
+    Greedy word-wrap measured with the real font metrics; no drawing side effects.
+    Falls back to min_size if even that overflows (insert_textbox then clips).
+    """
+    if width <= 1 or height <= 1:
+        return max(min_size, min(start, 8.0))
+
+    def line_count(fs: float) -> int:
+        lines = 0
+        for para in text.split("\n"):
+            cur = ""
+            for word in para.split(" "):
+                trial = word if not cur else cur + " " + word
+                if not cur or font.text_length(trial, fontsize=fs) <= width:
+                    cur = trial
+                else:
+                    lines += 1
+                    cur = word
+            lines += 1
+        return max(1, lines)
+
+    fs = float(start)
+    while fs >= min_size:
+        if line_count(fs) * fs * 1.3 <= height:
+            return fs
+        fs -= 0.5
+    return min_size
+
+
+def _page_text_blocks(page) -> list[dict]:
+    """Editable text blocks on a page: joined text + bbox + first-span style."""
+    out: list[dict] = []
+    data = page.get_text("dict")
+    for b in data.get("blocks", []):
+        if b.get("type", 0) != 0:  # skip image blocks
+            continue
+        first = None
+        line_txts: list[str] = []
+        for line in b.get("lines", []):
+            spans = line.get("spans", [])
+            lt = "".join(sp.get("text", "") for sp in spans)
+            if lt.strip():
+                line_txts.append(lt)
+            if first is None:
+                for sp in spans:
+                    if sp.get("text", "").strip():
+                        first = sp
+                        break
+        text = " ".join(s.strip() for s in line_txts).strip()
+        if not text or first is None:
+            continue
+        flags = int(first.get("flags", 0))
+        out.append({
+            "bbox": [float(v) for v in b["bbox"]],
+            "text": text,
+            "font": str(first.get("font", "")),
+            "size": float(first.get("size", 11.0)),
+            "color": int(first.get("color", 0)),
+            "bold": bool(flags & 16),
+            "italic": bool(flags & 2),
+        })
+    return out
+
+
+def _translate_blocks(agent, items: list[dict], target: str, source: str) -> dict[int, str] | None:
+    """Send block texts to Gemini, return {index: translation}; None on hard fail.
+
+    Partial results are fine — a missing index leaves that block untranslated.
+    """
+    import json
+
+    system = (
+        "You are a professional document translator. "
+        f"Translate the 't' field of every item from {source} into {target}. "
+        f"Any token shaped like {_MASK_OPEN}N{_MASK_CLOSE} (N a number) is a placeholder "
+        "for a number/date/code — copy it through EXACTLY, do not alter or drop it. "
+        "Do NOT translate proper nouns, product codes, or measurement units. "
+        "Return ONLY a JSON array with the SAME number of items and the SAME 'i' values, "
+        'shaped [{"i": <int>, "t": "<translated text>"}]. No markdown, no commentary.'
+    )
+    prompt = json.dumps(items, ensure_ascii=False)
+
+    for _ in range(2):
+        try:
+            raw = agent._generate(prompt, system_instruction=system)
+            data = json.loads(raw)
+            if isinstance(data, dict):  # unwrap {"items":[...]} style replies
+                data = next((v for v in data.values() if isinstance(v, list)), None)
+            if not isinstance(data, list):
+                continue
+            result: dict[int, str] = {}
+            for e in data:
+                if isinstance(e, dict) and "i" in e:
+                    result[int(e["i"])] = str(e.get("t", ""))
+            if result:
+                return result
+        except Exception as te:
+            logger.debug("translate blocks parse/gen error: %s", te)
+    return None
+
+
+class TranslateRequest(BaseModel):
+    """Body for POST /translate-pdf (Phase 1 = new file, keep layout)."""
+    pdf_b64: str
+    source_lang: str = "auto"
+    target_lang: str = "en"
+    scope: Any = "all"          # "all" or a list of 0-based page indices
+    keep_numbers: bool = True   # mask numbers/dates/emails so they survive verbatim
+
+
+class TranslateResponse(BaseModel):
+    success: bool
+    data_b64: str = ""
+    filename: str = ""
+    pages_changed: int = 0
+    blocks_translated: int = 0
+    is_scan: bool = False
+    error: str | None = None
+
+
+@app.post("/translate-pdf", response_model=TranslateResponse)
+async def translate_pdf(req: TranslateRequest):
+    """Translate a text-based PDF block-by-block with Gemini, keep layout, new file.
+
+    Reuses the /edit-text redraw pipeline: redact each text block, re-typeset the
+    translation into the same box with the original font/colour, auto-fit the size.
+    Scans (no text layer) are rejected — Phase 1 handles real text only.
+    """
+    fitz = _require_fitz()
+
+    if len(req.pdf_b64) > _MAX_PDF_B64:
+        raise HTTPException(status_code=400, detail="PDF quá lớn (tối đa ~200MB).")
+    try:
+        pdf_bytes = base64.b64decode(req.pdf_b64)
+    except Exception:
+        raise HTTPException(status_code=400, detail="pdf_b64 không hợp lệ")
+
+    agent = _get_gemini()  # 503 if no key configured
+    target_name = _LANG_NAMES.get((req.target_lang or "en").lower(), req.target_lang)
+    source_name = _LANG_NAMES.get((req.source_lang or "auto").lower(), req.source_lang)
+    font_path = _vietnamese_font()
+
+    try:
+        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Không mở được PDF: {e}")
+
+    # Resolve the page scope.
+    if isinstance(req.scope, list):
+        pages = [p for p in req.scope if isinstance(p, int) and 0 <= p < doc.page_count]
+    else:
+        pages = list(range(doc.page_count))
+    if not pages:
+        doc.close()
+        raise HTTPException(status_code=400, detail="Phạm vi trang không hợp lệ")
+
+    total_text_blocks = 0
+    blocks_translated = 0
+    pages_changed: set[int] = set()
+
+    try:
+        for pno in pages:
+            page = doc[pno]
+            blocks = _page_text_blocks(page)
+            if not blocks:
+                continue
+            total_text_blocks += len(blocks)
+
+            # Mask protected terms, then translate the whole page in one call.
+            items: list[dict] = []
+            stores: list[list[str]] = []
+            for i, b in enumerate(blocks):
+                if req.keep_numbers:
+                    masked, store = _mask_terms(b["text"])
+                else:
+                    masked, store = b["text"], []
+                items.append({"i": i, "t": masked})
+                stores.append(store)
+
+            translations = _translate_blocks(agent, items, target_name, source_name)
+            if not translations:
+                continue  # leave the whole page untouched on failure
+
+            # Resolve each block's final translated text (skip empties / no-ops).
+            finals: dict[int, str] = {}
+            for i, b in enumerate(blocks):
+                raw = translations.get(i)
+                if raw is None:
+                    continue
+                t = _unmask_terms(raw, stores[i]).strip()
+                if t and t != b["text"]:
+                    finals[i] = t
+            if not finals:
+                continue
+
+            # 1. Remove old glyphs under every translated block (once per page).
+            for i in finals:
+                page.add_redact_annot(fitz.Rect(*blocks[i]["bbox"]), fill=(1, 1, 1))
+            page.apply_redactions()
+
+            # 2. Lazily embed fonts (same scheme as /edit-text), then re-typeset.
+            embedded: dict[tuple[bool, bool], tuple[str, str] | None] = {}
+            local_embedded: dict[tuple[str, bool, bool], tuple[str, str] | None] = {}
+            local_seq = [0]
+
+            def embed_vn(bold: bool, italic: bool):
+                key = (bold, italic)
+                if key in embedded:
+                    return embedded[key]
+                vp = _dejavu_variant(font_path, bold, italic) if font_path else None
+                if not vp:
+                    embedded[key] = None
+                    return None
+                fn = "trvn" + ("b" if bold else "") + ("i" if italic else "")
+                try:
+                    page.insert_font(fontname=fn, fontfile=vp)
+                    embedded[key] = (fn, vp)
+                except Exception:
+                    embedded[key] = None
+                return embedded[key]
+
+            def embed_local(name: str, bold: bool, italic: bool):
+                key = (name, bold, italic)
+                if key in local_embedded:
+                    return local_embedded[key]
+                vp = _resolve_local_font(name, bold, italic)
+                if not vp:
+                    local_embedded[key] = None
+                    return None
+                fn = "trloc%d" % local_seq[0]
+                local_seq[0] += 1
+                try:
+                    page.insert_font(fontname=fn, fontfile=vp)
+                    local_embedded[key] = (fn, vp)
+                except Exception:
+                    local_embedded[key] = None
+                return local_embedded[key]
+
+            for i, t in finals.items():
+                b = blocks[i]
+                bold, italic = b["bold"], b["italic"]
+                color = _norm_color(b["color"])
+
+                fontname = None
+                fontfile = None
+                lf = embed_local(b["font"], bold, italic) if b["font"] else None
+                if lf:
+                    fontname, fontfile = lf
+                if fontname is None:
+                    emb = embed_vn(bold, italic) or embed_vn(False, False)
+                    if emb:
+                        fontname, fontfile = emb
+                    else:
+                        fontname = "helv"
+
+                try:
+                    font_obj = fitz.Font(fontfile=fontfile) if fontfile else fitz.Font(fontname=fontname)
+                except Exception:
+                    font_obj = fitz.Font(fontname="helv")
+
+                rect = fitz.Rect(*b["bbox"])
+                fs = _fit_fontsize(font_obj, t, rect.width, rect.height,
+                                   start=b["size"], min_size=5.0)
+                try:
+                    page.insert_textbox(rect, t, fontname=fontname, fontsize=fs,
+                                        color=color, align=0)
+                    blocks_translated += 1
+                except Exception as be:
+                    logger.debug("insert_textbox (translate) error: %s", be)
+
+            pages_changed.add(pno)
+
+        if total_text_blocks == 0:
+            return TranslateResponse(
+                success=False,
+                is_scan=True,
+                error="PDF này là bản scan (không có lớp text) — bản dịch giữ layout chỉ hỗ trợ PDF có text thật.",
+            )
+        if not pages_changed:
+            return TranslateResponse(
+                success=False,
+                error="Không dịch được (Gemini không trả kết quả hợp lệ). Thử lại hoặc kiểm tra API key.",
+            )
+
+        try:
+            doc.subset_fonts()
+        except Exception as se:
+            logger.debug("subset_fonts (translate) skipped: %s", se)
+        out_bytes = doc.tobytes(deflate=True, garbage=3)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("translate-pdf error")
+        return TranslateResponse(success=False, error=str(e))
+    finally:
+        doc.close()
+
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    return TranslateResponse(
+        success=True,
+        data_b64=base64.b64encode(out_bytes).decode("ascii"),
+        filename=f"translated_{req.target_lang}_{ts}.pdf",
+        pages_changed=len(pages_changed),
+        blocks_translated=blocks_translated,
+    )
+
+
+# ---------------------------------------------------------------------------
 # Compare two PDFs (page + line diff)
 # ---------------------------------------------------------------------------
 

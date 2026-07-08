@@ -44,6 +44,7 @@
         <symbol id="ic-compress" viewBox="0 0 24 24"><path d="M9 9L4 4M9 9V6M9 9H6M15 9l5-5M15 9V6M15 9h3M9 15l-5 5M9 15v3M9 15H6M15 15l5 5M15 15v3M15 15h3"/></symbol>
         <symbol id="ic-diff" viewBox="0 0 24 24"><rect x="3" y="4" width="7" height="16" rx="1"/><rect x="14" y="4" width="7" height="16" rx="1"/><path d="M12 3v18"/></symbol>
         <symbol id="ic-wand" viewBox="0 0 24 24"><path d="M6 21l9-9"/><path d="M14 7l3 3"/><path d="M16 3l.9 2.1L19 6l-2.1.9L16 9l-.9-2.1L13 6l2.1-.9z"/></symbol>
+        <symbol id="ic-translate" viewBox="0 0 24 24"><path d="M4 5h7M8 3v2c0 4-2 7-5 8"/><path d="M6 9c0 3 3 5 6 6"/><path d="M13 20l4-9 4 9M14.5 17h5"/></symbol>
         <symbol id="ic-settings" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 13.5a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-1.8-.3 1.6 1.6 0 0 0-1 1.5V21a2 2 0 0 1-4 0v-.1a1.6 1.6 0 0 0-1-1.5 1.6 1.6 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.6 1.6 0 0 0 .3-1.8 1.6 1.6 0 0 0-1.5-1H3a2 2 0 0 1 0-4h.1a1.6 1.6 0 0 0 1.5-1 1.6 1.6 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.6 1.6 0 0 0 1.8.3H9a1.6 1.6 0 0 0 1-1.5V3a2 2 0 0 1 4 0v.1a1.6 1.6 0 0 0 1 1.5 1.6 1.6 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0-.3 1.8V9a1.6 1.6 0 0 0 1.5 1H21a2 2 0 0 1 0 4h-.1a1.6 1.6 0 0 0-1.5 1z"/></symbol>
         <symbol id="ic-pointer" viewBox="0 0 24 24"><path d="M5 3l15 8.5-6.5 1.3L10 19z"/></symbol>
         <symbol id="ic-highlight" viewBox="0 0 24 24"><path d="M3 21h6"/><path d="M9 16l-2 4 6-1 8.5-8.5a2 2 0 0 0-3-3L9 16z"/></symbol>
@@ -129,6 +130,7 @@
         <button id="btn-edit" class="ghost" disabled title="Chỉnh sửa: chú thích, watermark, redact, điền form"><svg class="ic"><use href="#ic-edit"/></svg>Chỉnh sửa</button>
         <button id="btn-text-edit" class="ghost" disabled title="Sửa trực tiếp chữ gốc của PDF (chỉ PDF có text thật, không phải scan)"><svg class="ic"><use href="#ic-type"/></svg>Sửa chữ</button>
         <button id="btn-searchable" class="ghost" disabled title="Tạo PDF tìm-kiếm-được (OCR thêm lớp text vô hình)"><svg class="ic"><use href="#ic-file-search"/></svg>Searchable</button>
+        <button id="btn-translate" class="ghost" disabled title="Dịch PDF (AI) — giữ layout, xuất file mới. Chỉ PDF có text thật."><svg class="ic"><use href="#ic-translate"/></svg>Dịch</button>
         <button id="btn-compress" class="ghost" disabled title="Nén PDF (giảm dung lượng ảnh)"><svg class="ic"><use href="#ic-compress"/></svg>Nén</button>
         <button id="btn-diff" class="ghost" disabled title="So sánh 2 file PDF — chỉ ra trang & dòng khác nhau"><svg class="ic"><use href="#ic-diff"/></svg>So sánh</button>
         <div class="dropdown" id="convert-dd">
@@ -375,6 +377,48 @@
         <div class="modal-actions">
           <button id="cmp-cancel">Hủy</button>
           <button id="cmp-ok" class="primary">Nén &amp; lưu</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Translate PDF (Gemini) dialog -->
+    <div class="modal" id="tr-modal" hidden>
+      <div class="modal-card">
+        <h3 id="tr-title">Dịch PDF (AI)</h3>
+        <p class="cmp-note" id="tr-note">Dịch giữ nguyên bố cục — xuất ra file PDF mới. Chỉ hỗ trợ PDF có text thật (không phải scan). Cần Gemini API key.</p>
+        <label id="tr-src-label">Ngôn ngữ nguồn
+          <select id="tr-src">
+            <option value="auto" selected>Tự nhận diện</option>
+            <option value="vi">Tiếng Việt</option>
+            <option value="en">Tiếng Anh</option>
+            <option value="ja">Tiếng Nhật</option>
+            <option value="ko">Tiếng Hàn</option>
+            <option value="zh">Tiếng Trung</option>
+            <option value="fr">Tiếng Pháp</option>
+            <option value="de">Tiếng Đức</option>
+          </select>
+        </label>
+        <label id="tr-tgt-label">Dịch sang
+          <select id="tr-tgt">
+            <option value="en" selected>Tiếng Anh</option>
+            <option value="vi">Tiếng Việt</option>
+            <option value="ja">Tiếng Nhật</option>
+            <option value="ko">Tiếng Hàn</option>
+            <option value="zh">Tiếng Trung</option>
+            <option value="fr">Tiếng Pháp</option>
+            <option value="de">Tiếng Đức</option>
+          </select>
+        </label>
+        <label id="tr-scope-label">Phạm vi
+          <select id="tr-scope">
+            <option value="all" selected>Toàn bộ tài liệu</option>
+            <option value="selected">Chỉ các trang đang chọn</option>
+          </select>
+        </label>
+        <label class="chk"><input type="checkbox" id="tr-keep-numbers" checked /> <span id="tr-keep-label">Giữ nguyên số / ngày / email / mã (không dịch)</span></label>
+        <div class="modal-actions">
+          <button id="tr-cancel">Hủy</button>
+          <button id="tr-ok" class="primary">Dịch (AI)</button>
         </div>
       </div>
     </div>

@@ -49,7 +49,7 @@ with st.sidebar:
     # Gemini Model
     gemini_model = st.selectbox(
         "Gemini Model",
-        options=["gemini-3-flash-preview", "gemini-3.1-pro-preview", "gemini-3.1-flash-lite-preview"],
+        options=["gemini-3.1-flash-lite", "gemini-3-flash-preview", "gemini-3.1-pro-preview"],
     )
 
     # Field Template

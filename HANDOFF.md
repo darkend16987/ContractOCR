@@ -4,7 +4,13 @@
 > [DESIGN.md](DESIGN.md) (kiến trúc), [ROADMAP.md](ROADMAP.md) (tiến độ chi tiết),
 > [SETUP.md](SETUP.md) (dựng môi trường).
 
-_Cập nhật: 2026-07-08 · v0.2.22_
+_Cập nhật: 2026-07-08 · v0.2.23_
+
+> v0.2.23 — **Dịch PDF (AI) giữ layout + đổi model Gemini mặc định → `gemini-3.1-flash-lite`** (sidecar CÓ đổi — phải rebuild):
+> - **Endpoint mới** `POST /translate-pdf` trong [`api.py`](api.py) (Phase 1 = xuất **file mới**, giữ bố cục). Pipeline tái dùng đường redraw của `/edit-text`: `_page_text_blocks` gom block text/trang → `_mask_terms`/`_unmask_terms` che số/ngày/email bằng sentinel private-use (`N`) để Gemini không sửa số → `_translate_blocks` gọi Gemini **1 lần/trang** (JSON, guard theo index, thiếu block thì giữ gốc, không crash trang) → `add_redact_annot` xoá glyph cũ + `insert_textbox` với `_fit_fontsize` (auto-shrink) giữ font/màu span gốc. Bản scan (không lớp text) → trả `is_scan=true`, báo rõ thay vì âm thầm OCR. Font VN an toàn qua DejaVu bundled + font hệ thống theo family (`_resolve_local_font`).
+> - **UI**: nút **"Dịch"** (`#btn-translate`, icon `#ic-translate`) cạnh Searchable, gate `engine ready + có doc`. Modal `#tr-modal`: ngôn ngữ nguồn (Auto/…), đích, phạm vi (toàn bộ / các trang đang chọn), toggle giữ số/ngày/email. `openTranslate`/`runTranslate` ([`app.js`](desktop/renderer/app.js)) → gọi sidecar, lưu file mới qua `savePdf`. i18n VI/EN đầy đủ ([`i18n.js`](desktop/renderer/i18n.js)).
+> - **Model Gemini mặc định** đổi `gemini-3-flash-preview` → **`gemini-3.1-flash-lite`** ở [`config.py`](src/utils/config.py), [`gemini_agent.py`](src/agents/gemini_agent.py), dropdown [`app.py`](app.py), README. (Ảnh hưởng cả Bóc tách lẫn Dịch.) Web app `web/` là frontend riêng — CHƯA đổi model.
+> - Đã test headless (mock Gemini): dịch OK, giữ 123/ngày/email, scan báo đúng, mask round-trip PASS. `test_export.py` + node --check cả 3 file OK. **Chưa test Gemini mạng thật + chưa test GUI** — cần thử 1 PDF text thật sau khi cài.
 
 > v0.2.22 — **In tài liệu + giao diện song ngữ Việt/Anh + gọn thanh công cụ Chỉnh sửa** (renderer + main; mã sidecar KHÔNG đổi, chỉ rebuild lại binary cho khớp api.py v0.2.21):
 > - **In (print)** — MỚI: nút **"In"** cạnh "Lưu", mục **Tập tin ▸ In…**, phím tắt **Ctrl+P**. Renderer `printDoc()` ([`app.js`](desktop/renderer/app.js)) bake pending edit rồi gửi bytes qua IPC `print:pdf`. Main ([`main.js`](desktop/src/main.js)) ghi file tạm, mở `BrowserWindow` ẩn (partition riêng → không dính CSP handler, `plugins:true` bật PDF viewer PDFium), gọi `webContents.print({silent:false})` → **hộp thoại in hệ điều hành** (chọn máy in, khoảng trang, số bản, in 2 mặt…). Dọn file tạm + cửa sổ sau khi in; user bấm Hủy = `ok:false reason:"cancel"` (không báo lỗi). Icon `#ic-print`, preload `printPdf`.

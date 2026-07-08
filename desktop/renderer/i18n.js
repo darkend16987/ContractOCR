@@ -76,6 +76,9 @@
     "Searchable": "Searchable",
     "Tạo PDF tìm-kiếm-được (OCR thêm lớp text vô hình)":
       "Make a searchable PDF (OCR adds an invisible text layer)",
+    "Dịch": "Translate",
+    "Dịch PDF (AI) — giữ layout, xuất file mới. Chỉ PDF có text thật.":
+      "Translate PDF (AI) — keep layout, export a new file. Text-based PDFs only.",
     "Nén": "Compress",
     "Nén PDF (giảm dung lượng ảnh)": "Compress PDF (shrink image size)",
     "So sánh": "Compare",
@@ -218,6 +221,27 @@
     "Chỉ ảnh độ phân giải cao bị hạ xuống mức đã chọn; văn bản và vector giữ nguyên.":
       "Only high-resolution images are downscaled; text and vectors are untouched.",
     "Nén & lưu": "Compress & save",
+
+    // --- translate dialog ---
+    "Dịch PDF (AI)": "Translate PDF (AI)",
+    "Dịch giữ nguyên bố cục — xuất ra file PDF mới. Chỉ hỗ trợ PDF có text thật (không phải scan). Cần Gemini API key.":
+      "Translate while keeping the layout — exports a new PDF. Text-based PDFs only (not scans). Requires a Gemini API key.",
+    "Ngôn ngữ nguồn": "Source language",
+    "Tự nhận diện": "Auto-detect",
+    "Tiếng Việt": "Vietnamese",
+    "Tiếng Anh": "English",
+    "Tiếng Nhật": "Japanese",
+    "Tiếng Hàn": "Korean",
+    "Tiếng Trung": "Chinese",
+    "Tiếng Pháp": "French",
+    "Tiếng Đức": "German",
+    "Dịch sang": "Translate to",
+    "Phạm vi": "Scope",
+    "Toàn bộ tài liệu": "Whole document",
+    "Chỉ các trang đang chọn": "Selected pages only",
+    "Giữ nguyên số / ngày / email / mã (không dịch)":
+      "Keep numbers / dates / emails / codes (don't translate)",
+    "Dịch (AI)": "Translate (AI)",
 
     // --- lock PDF dialog ---
     "Khoá file PDF": "Lock PDF file",

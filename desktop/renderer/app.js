@@ -1573,6 +1573,77 @@ async function makeSearchable() {
   }
 }
 
+// ---- translate PDF (sidecar + Gemini; keep layout, new file) -------------
+
+function openTranslate() {
+  if (gateProFeature()) return;
+  if (sidecar.state !== "ready" || !sidecar.base) {
+    toast("Engine chưa sẵn sàng.", "bad");
+    return;
+  }
+  if (!state.bytes) {
+    toast("Mở PDF trước.", "bad");
+    return;
+  }
+  // "Selected pages" only makes sense when a selection exists; default to all.
+  const sc = $("tr-scope");
+  const selOpt = sc && sc.querySelector('option[value="selected"]');
+  if (selOpt) selOpt.disabled = state.selected.size === 0;
+  if (sc && state.selected.size === 0) sc.value = "all";
+  $("tr-modal").hidden = false;
+}
+
+async function runTranslate() {
+  $("tr-modal").hidden = true;
+  if (window.Editor) await window.Editor.bakePending();
+
+  const target = $("tr-tgt").value || "en";
+  const source = $("tr-src").value || "auto";
+  const scopeKind = $("tr-scope").value || "all";
+  const keepNumbers = $("tr-keep-numbers").checked;
+
+  let scope = "all";
+  if (scopeKind === "selected" && state.selected.size > 0) {
+    scope = Array.from(state.selected).sort((a, b) => a - b);
+  }
+
+  showOverlay("Đang dịch bằng AI… (tài liệu nhiều trang sẽ lâu)");
+  try {
+    const res = await sidecarFetch("/translate-pdf", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        pdf_b64: u8ToB64(state.bytes),
+        source_lang: source,
+        target_lang: target,
+        scope,
+        keep_numbers: keepNumbers,
+      }),
+    });
+    const data = await res.json();
+    if (!data.success) {
+      const msg = data.is_scan
+        ? "PDF này là bản scan (không có text thật) — tính năng dịch giữ layout chỉ hỗ trợ PDF có text. Hãy chạy Searchable/OCR trước."
+        : "Dịch lỗi: " + (data.error || data.detail || "không rõ");
+      toast(msg, "bad");
+      return;
+    }
+    const bytes = Uint8Array.from(atob(data.data_b64), (ch) => ch.charCodeAt(0));
+    const name = `${baseName(state.name)}-dich-${target}.pdf`;
+    const r = await window.desktop.savePdf(bytes, name);
+    if (r.saved) {
+      toast(
+        `Đã dịch ${data.blocks_translated || 0} đoạn trên ${data.pages_changed || 0} trang → ${r.path}`,
+        "good",
+      );
+    }
+  } catch (err) {
+    toast("Lỗi dịch: " + err.message, "bad");
+  } finally {
+    hideOverlay();
+  }
+}
+
 // ---- compress PDF (sidecar; P3) ------------------------------------------
 
 function fmtBytes(n) {
@@ -2140,6 +2211,7 @@ let licState = { state: "unlicensed", enforce: false };
 const GATED_BTNS = [
   "btn-ocr",
   "btn-searchable",
+  "btn-translate",
   "btn-compress",
   "btn-convert",
   "btn-edit",
@@ -2320,6 +2392,8 @@ function updateToolbar() {
   $("btn-ocr").disabled = !(ready && has) || editing;
   const bs = $("btn-searchable");
   if (bs) bs.disabled = !(ready && has) || editing;
+  const btr = $("btn-translate");
+  if (btr) btr.disabled = !(ready && has) || editing;
   const bc = $("btn-compress");
   if (bc) bc.disabled = !(ready && has) || editing;
   // Compare picks its own two files, so it only needs the engine ready (no open doc).
@@ -2400,6 +2474,7 @@ $("viewer").addEventListener(
 );
 $("btn-ocr").onclick = openExtractPanel;
 $("btn-searchable").onclick = makeSearchable;
+$("btn-translate").onclick = openTranslate;
 $("btn-compress").onclick = openCompress;
 $("btn-diff").onclick = () => window.Compare && window.Compare.open();
 
@@ -2423,6 +2498,8 @@ $("find-next").onclick = () => gotoMatch(search.current + 1);
 $("find-prev").onclick = () => gotoMatch(search.current - 1);
 $("cmp-cancel").onclick = () => ($("cmp-modal").hidden = true);
 $("cmp-ok").onclick = runCompress;
+$("tr-cancel").onclick = () => ($("tr-modal").hidden = true);
+$("tr-ok").onclick = runTranslate;
 
 // Convert dropdown — trigger toggles the menu; each item runs its tool and
 // closes the menu. Outside-click / Escape close it (handlers further below).
