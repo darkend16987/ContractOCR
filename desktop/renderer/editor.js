@@ -458,11 +458,13 @@
     ed.sel = id;
     syncOverlays();
     syncControls();
+    if (ed.tool === "select") syncCtlVisibility("select");
   }
   function deselect() {
     if (ed.sel == null) return;
     ed.sel = null;
     syncOverlays();
+    if (ed.tool === "select") syncCtlVisibility("select");
   }
   function deleteSelected() {
     if (ed.sel == null) return;
@@ -472,6 +474,7 @@
     ed.annots[hit.page] = ed.annots[hit.page].filter((x) => x.id !== ed.sel);
     ed.sel = null;
     syncOverlays();
+    if (ed.tool === "select") syncCtlVisibility("select");
   }
 
   // Reflect the selected annotation's style in the palette controls.
@@ -1350,10 +1353,8 @@
 
   // ---- mode + palette wiring ----------------------------------------------
 
-  // Which palette controls (data-ctl) are relevant per tool. `select` shows them
-  // all so any selected annotation stays editable.
+  // Which palette controls (data-ctl) are relevant per drawing tool.
   const TOOL_CTLS = {
-    select: ["color", "redact", "font", "fontsize", "biu", "penwidth", "fill"],
     text: ["color", "font", "fontsize", "biu"],
     highlight: ["color"],
     draw: ["color", "penwidth"],
@@ -1365,8 +1366,32 @@
     image: [],
     redact: ["redact"],
   };
+  // Which controls an already-placed annotation of a given kind can tweak. Used
+  // by the Select tool so the palette shows only what the *selected* item needs
+  // (nothing when the selection is empty) instead of every control at once.
+  const KIND_CTLS = {
+    text: ["color", "font", "fontsize", "biu"],
+    highlight: ["color"],
+    draw: ["color", "penwidth"],
+    box: ["color", "penwidth", "fill"],
+    ellipse: ["color", "penwidth", "fill"],
+    cloud: ["color", "penwidth", "fill"],
+    arrow: ["color", "penwidth"],
+    note: ["color"],
+    image: [],
+    redact: ["redact"],
+  };
+  // Show the palette controls relevant to the current context: for a drawing
+  // tool, the tool's controls; for Select, only the selected annotation's (or
+  // none). Keeps the edit bar tidy instead of dumping every control under Select.
   function syncCtlVisibility(tool) {
-    const show = TOOL_CTLS[tool] || [];
+    let show;
+    if (tool === "select") {
+      const hit = ed.sel != null ? findAnnot(ed.sel) : null;
+      show = hit ? KIND_CTLS[hit.a.kind] || [] : [];
+    } else {
+      show = TOOL_CTLS[tool] || [];
+    }
     document.querySelectorAll("#edit-bar [data-ctl]").forEach((el) => {
       el.hidden = !show.includes(el.dataset.ctl);
     });

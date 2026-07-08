@@ -2,6 +2,7 @@
 
 const path = require("path");
 const fs = require("fs");
+const os = require("os");
 const crypto = require("crypto");
 const { app, BrowserWindow, Menu, ipcMain, dialog, shell, session } = require("electron");
 const { startSidecar, stopSidecar } = require("./sidecar");
@@ -71,7 +72,86 @@ function createWindow() {
 // renderer's keydown handler owns them (it can check focus to avoid hijacking
 // keys while the user types in a field). All custom items relay a command to the
 // renderer over the "menu:cmd" channel.
-function buildMenu() {
+// Native-menu label tables. Keyed by the current UI language; the renderer tells
+// us its language over "menu:set-lang" (persisted in its localStorage) so the
+// native menu matches the in-app language toggle.
+const MENU_STR = {
+  vi: {
+    file: "Tập tin",
+    open: "Mở…",
+    print: "In…",
+    save: "Lưu",
+    saveAs: "Lưu thành…",
+    close: "Đóng cửa sổ",
+    quit: "Thoát",
+    edit: "Chỉnh sửa",
+    undo: "Hoàn tác",
+    redo: "Làm lại",
+    cut: "Cắt",
+    copy: "Sao chép",
+    paste: "Dán",
+    selectAll: "Chọn tất cả",
+    page: "Trang",
+    rotateL: "Xoay trái 90°",
+    rotateR: "Xoay phải 90°",
+    deletePage: "Xóa trang đang chọn",
+    merge: "Ghép PDF…",
+    insert: "Chèn trang…",
+    extract: "Tách trang đang chọn…",
+    convert: "Chuyển đổi",
+    encrypt: "Khoá file (đặt mật khẩu)…",
+    extractImages: "Xuất ảnh trong PDF…",
+    pdfToImages: "Trang PDF → ảnh…",
+    imagesToPdf: "Ảnh → PDF…",
+    view: "Hiển thị",
+    zoomIn: "Phóng to",
+    zoomOut: "Thu nhỏ",
+    zoomReset: "Cỡ gốc (100%)",
+    fullscreen: "Toàn màn hình",
+    help: "Trợ giúp",
+    settings: "Cài đặt…",
+  },
+  en: {
+    file: "File",
+    open: "Open…",
+    print: "Print…",
+    save: "Save",
+    saveAs: "Save As…",
+    close: "Close Window",
+    quit: "Quit",
+    edit: "Edit",
+    undo: "Undo",
+    redo: "Redo",
+    cut: "Cut",
+    copy: "Copy",
+    paste: "Paste",
+    selectAll: "Select All",
+    page: "Page",
+    rotateL: "Rotate Left 90°",
+    rotateR: "Rotate Right 90°",
+    deletePage: "Delete Selected Pages",
+    merge: "Merge PDF…",
+    insert: "Insert Pages…",
+    extract: "Extract Selected Pages…",
+    convert: "Convert",
+    encrypt: "Lock File (set password)…",
+    extractImages: "Export Images in PDF…",
+    pdfToImages: "PDF Pages → Images…",
+    imagesToPdf: "Images → PDF…",
+    view: "View",
+    zoomIn: "Zoom In",
+    zoomOut: "Zoom Out",
+    zoomReset: "Actual Size (100%)",
+    fullscreen: "Toggle Full Screen",
+    help: "Help",
+    settings: "Settings…",
+  },
+};
+
+let menuLang = "vi";
+
+function buildMenu(lang) {
+  const L = MENU_STR[lang] || MENU_STR.vi;
   const send = (cmd) => () => {
     const wc =
       (mainWindow && !mainWindow.isDestroyed() && mainWindow.webContents) ||
@@ -81,65 +161,67 @@ function buildMenu() {
   const isDev = !app.isPackaged;
   const template = [
     {
-      label: "Tập tin",
+      label: L.file,
       submenu: [
-        { label: "Mở…", accelerator: "CmdOrCtrl+O", click: send("open") },
+        { label: L.open, accelerator: "CmdOrCtrl+O", click: send("open") },
         { type: "separator" },
-        { label: "Lưu", accelerator: "CmdOrCtrl+S", click: send("save") },
-        { label: "Lưu thành…", accelerator: "CmdOrCtrl+Shift+S", click: send("saveAs") },
+        { label: L.print, accelerator: "CmdOrCtrl+P", registerAccelerator: false, click: send("print") },
         { type: "separator" },
-        { role: "close", label: "Đóng cửa sổ" },
-        { role: "quit", label: "Thoát" },
+        { label: L.save, accelerator: "CmdOrCtrl+S", click: send("save") },
+        { label: L.saveAs, accelerator: "CmdOrCtrl+Shift+S", click: send("saveAs") },
+        { type: "separator" },
+        { role: "close", label: L.close },
+        { role: "quit", label: L.quit },
       ],
     },
     {
-      label: "Chỉnh sửa",
+      label: L.edit,
       submenu: [
-        { label: "Hoàn tác", accelerator: "CmdOrCtrl+Z", registerAccelerator: false, click: send("undo") },
-        { label: "Làm lại", accelerator: "CmdOrCtrl+Y", registerAccelerator: false, click: send("redo") },
+        { label: L.undo, accelerator: "CmdOrCtrl+Z", registerAccelerator: false, click: send("undo") },
+        { label: L.redo, accelerator: "CmdOrCtrl+Y", registerAccelerator: false, click: send("redo") },
         { type: "separator" },
-        { role: "cut", label: "Cắt" },
-        { role: "copy", label: "Sao chép" },
-        { role: "paste", label: "Dán" },
-        { role: "selectAll", label: "Chọn tất cả" },
+        { role: "cut", label: L.cut },
+        { role: "copy", label: L.copy },
+        { role: "paste", label: L.paste },
+        { role: "selectAll", label: L.selectAll },
       ],
     },
     {
-      label: "Trang",
+      label: L.page,
       submenu: [
-        { label: "Xoay trái 90°", click: send("rotateL") },
-        { label: "Xoay phải 90°", click: send("rotateR") },
-        { label: "Xóa trang đang chọn", accelerator: "Delete", registerAccelerator: false, click: send("delete") },
+        { label: L.rotateL, click: send("rotateL") },
+        { label: L.rotateR, click: send("rotateR") },
+        { label: L.deletePage, accelerator: "Delete", registerAccelerator: false, click: send("delete") },
         { type: "separator" },
-        { label: "Ghép PDF…", click: send("merge") },
-        { label: "Chèn trang…", click: send("insert") },
-        { label: "Tách trang đang chọn…", click: send("extract") },
+        { label: L.merge, click: send("merge") },
+        { label: L.insert, click: send("insert") },
+        { label: L.extract, click: send("extract") },
       ],
     },
     {
-      label: "Chuyển đổi",
+      label: L.convert,
       submenu: [
-        { label: "Khoá file (đặt mật khẩu)…", click: send("encrypt") },
+        { label: L.encrypt, click: send("encrypt") },
         { type: "separator" },
-        { label: "Xuất ảnh trong PDF…", click: send("extractImages") },
-        { label: "Trang PDF → ảnh…", click: send("pdfToImages") },
-        { label: "Ảnh → PDF…", click: send("imagesToPdf") },
+        { label: L.extractImages, click: send("extractImages") },
+        { label: L.pdfToImages, click: send("pdfToImages") },
+        { label: L.imagesToPdf, click: send("imagesToPdf") },
       ],
     },
     {
-      label: "Hiển thị",
+      label: L.view,
       submenu: [
-        { label: "Phóng to", accelerator: "CmdOrCtrl+=", registerAccelerator: false, click: send("zoomIn") },
-        { label: "Thu nhỏ", accelerator: "CmdOrCtrl+-", registerAccelerator: false, click: send("zoomOut") },
-        { label: "Cỡ gốc (100%)", accelerator: "CmdOrCtrl+0", registerAccelerator: false, click: send("zoomReset") },
+        { label: L.zoomIn, accelerator: "CmdOrCtrl+=", registerAccelerator: false, click: send("zoomIn") },
+        { label: L.zoomOut, accelerator: "CmdOrCtrl+-", registerAccelerator: false, click: send("zoomOut") },
+        { label: L.zoomReset, accelerator: "CmdOrCtrl+0", registerAccelerator: false, click: send("zoomReset") },
         { type: "separator" },
-        { role: "togglefullscreen", label: "Toàn màn hình" },
+        { role: "togglefullscreen", label: L.fullscreen },
         ...(isDev ? [{ type: "separator" }, { role: "reload" }, { role: "toggleDevTools" }] : []),
       ],
     },
     {
-      label: "Trợ giúp",
-      submenu: [{ label: "Cài đặt…", click: send("settings") }],
+      label: L.help,
+      submenu: [{ label: L.settings, click: send("settings") }],
     },
   ];
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
@@ -196,7 +278,7 @@ if (!app.requestSingleInstanceLock()) {
       });
     });
 
-    buildMenu();
+    buildMenu(menuLang);
     createWindow();
     bootSidecar();
     initAutoUpdate(mainWindow);
@@ -207,6 +289,16 @@ if (!app.requestSingleInstanceLock()) {
     });
   });
 }
+
+// ---- IPC: UI language (rebuild native menu to match the in-app toggle) ----
+
+ipcMain.handle("menu:set-lang", (_e, lang) => {
+  const next = lang === "en" ? "en" : "vi";
+  if (next === menuLang) return next;
+  menuLang = next;
+  buildMenu(menuLang);
+  return menuLang;
+});
 
 // ---- IPC: sidecar status -------------------------------------------------
 
@@ -340,6 +432,68 @@ ipcMain.handle("licenses:open", (_e, which) => {
     : path.join(__dirname, "..", "..", which === "agpl" ? "LICENSE" : "THIRD-PARTY-LICENSES.txt");
   shell.openPath(file);
   return true;
+});
+
+// ---- IPC: print ----------------------------------------------------------
+
+// Print the current document via Chromium's built-in PDF engine. We write the
+// canonical bytes to a temp file, load it into a hidden window (its own session
+// partition so the renderer CSP handler doesn't touch the internal PDF viewer),
+// then invoke the OS print dialog (silent:false) — giving the user real printer
+// selection, page range, copies and scaling like any PDF app. Temp file + window
+// are always torn down. Returns { ok, reason } — a user cancel resolves ok:false
+// with a "cancel" reason the renderer treats as non-error.
+ipcMain.handle("print:pdf", (_e, { data } = {}) => {
+  return new Promise((resolve) => {
+    let tmpFile = null;
+    let printWin = null;
+    let done = false;
+    const finish = (result) => {
+      if (done) return;
+      done = true;
+      try {
+        if (printWin && !printWin.isDestroyed()) printWin.destroy();
+      } catch (_) {}
+      try {
+        if (tmpFile && fs.existsSync(tmpFile)) fs.unlinkSync(tmpFile);
+      } catch (_) {}
+      resolve(result);
+    };
+    try {
+      if (!data) return finish({ ok: false, reason: "no-data" });
+      tmpFile = path.join(os.tmpdir(), `nabu-print-${Date.now()}-${crypto.randomBytes(4).toString("hex")}.pdf`);
+      fs.writeFileSync(tmpFile, Buffer.from(data));
+      printWin = new BrowserWindow({
+        show: false,
+        webPreferences: {
+          plugins: true, // PDF viewer
+          sandbox: true,
+          contextIsolation: true,
+          nodeIntegration: false,
+          partition: "print-" + Date.now(), // isolate from the renderer CSP handler
+        },
+      });
+      // Safety net so a stuck load can never hang the promise forever.
+      const guard = setTimeout(() => finish({ ok: false, reason: "timeout" }), 60000);
+      printWin.webContents.once("did-finish-load", () => {
+        // Give PDFium a beat to lay out the first page before printing.
+        setTimeout(() => {
+          if (done || !printWin || printWin.isDestroyed()) return;
+          printWin.webContents.print({ silent: false, printBackground: true }, (success, reason) => {
+            clearTimeout(guard);
+            finish({ ok: success, reason });
+          });
+        }, 350);
+      });
+      printWin.webContents.once("did-fail-load", (_ev, code, desc) => {
+        clearTimeout(guard);
+        finish({ ok: false, reason: desc || "load-failed-" + code });
+      });
+      printWin.loadURL("file:///" + tmpFile.replace(/\\/g, "/"));
+    } catch (e) {
+      finish({ ok: false, reason: String((e && e.message) || e) });
+    }
+  });
 });
 
 // ---- shutdown ------------------------------------------------------------

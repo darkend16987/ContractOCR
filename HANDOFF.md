@@ -4,7 +4,13 @@
 > [DESIGN.md](DESIGN.md) (kiến trúc), [ROADMAP.md](ROADMAP.md) (tiến độ chi tiết),
 > [SETUP.md](SETUP.md) (dựng môi trường).
 
-_Cập nhật: 2026-07-07 · v0.2.21_
+_Cập nhật: 2026-07-08 · v0.2.22_
+
+> v0.2.22 — **In tài liệu + giao diện song ngữ Việt/Anh + gọn thanh công cụ Chỉnh sửa** (renderer + main; mã sidecar KHÔNG đổi, chỉ rebuild lại binary cho khớp api.py v0.2.21):
+> - **In (print)** — MỚI: nút **"In"** cạnh "Lưu", mục **Tập tin ▸ In…**, phím tắt **Ctrl+P**. Renderer `printDoc()` ([`app.js`](desktop/renderer/app.js)) bake pending edit rồi gửi bytes qua IPC `print:pdf`. Main ([`main.js`](desktop/src/main.js)) ghi file tạm, mở `BrowserWindow` ẩn (partition riêng → không dính CSP handler, `plugins:true` bật PDF viewer PDFium), gọi `webContents.print({silent:false})` → **hộp thoại in hệ điều hành** (chọn máy in, khoảng trang, số bản, in 2 mặt…). Dọn file tạm + cửa sổ sau khi in; user bấm Hủy = `ok:false reason:"cancel"` (không báo lỗi). Icon `#ic-print`, preload `printPdf`.
+> - **Ngôn ngữ giao diện Việt/Anh** — MỚI: [`i18n.js`](desktop/renderer/i18n.js) — bộ dịch **chrome** (nhãn nút/menu/dialog/tooltip), KHÔNG dịch nội dung PDF. Cơ chế registry: quét 1 lần các text-node + thuộc tính `title`/`placeholder` tĩnh khớp từ điển (262 khoá VI→EN); đổi ngôn ngữ = render lại đúng các node đã bắt (không bao giờ đụng nội dung động do JS chèn — badge/breadcrumb/tên file… loại qua `SKIP_IDS`). Menu native đổi theo qua IPC `menu:set-lang` ([`main.js`](desktop/src/main.js) `MENU_STR`). Bộ chọn ở **Cài đặt ▸ Ngôn ngữ**, lưu `localStorage nabu-lang`. Prose dài (Giới thiệu/API-key) tạm giữ tiếng Việt.
+> - **Thanh công cụ Chỉnh sửa gọn hơn** ([`editor.js`](desktop/renderer/editor.js)): công cụ **Chọn/di chuyển/đổi cỡ** trước đây bày ra *mọi* ô điều khiển (màu, màu che, font, nét, nền…) — giờ chỉ hiện ô hợp với mục **đang chọn** (theo `KIND_CTLS`), không chọn gì thì ẩn hết. Các công cụ vẽ giữ nguyên (`TOOL_CTLS`).
+> - Thuần renderer/main, không đụng logic PDF cũ. Đã `node --check` cả 6 file + `test_export.py` OK. Chờ test GUI (in thật + đổi ngôn ngữ).
 
 > v0.2.21 — **Đánh số trang (page numbers)** (sidecar CÓ đổi — phải rebuild):
 > - **Endpoint mới** `POST /add-page-numbers` trong [`api.py`](api.py) (`PageNumberRequest` + helper `_fmt_page_label`, `_hex_rgb01`). Dùng PyMuPDF, font Base-14 **helv** (mọi kiểu số đều ASCII: "Trang", chữ số, `/`, `-` → không nhúng font, tránh bẫy FontPath). 5 kiểu (`n`, `n_of_n`, `page_n`, `page_n_of_n`, `dash_n`), 6 vị trí, bắt đầu từ số tuỳ chọn, **bỏ qua trang bìa**, cỡ chữ + màu.

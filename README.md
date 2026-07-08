@@ -4,10 +4,10 @@ Bộ công cụ **PDF desktop** (Electron) cho tiếng Việt: xem · ghép · t
 **tách thành nhiều file** · chèn · thêm trang trắng · xoay · **đánh số trang** · chú thích ·
 khoanh vùng (chữ nhật / elip / **khoanh mây revision**, chọn nét viền + màu nền/trong suốt) ·
 hộp văn bản (font/đậm/nghiêng/gạch chân) ·
-watermark · redact (che thông tin chọn màu) · sửa chữ · nén · so sánh 2 file
+watermark · redact (che thông tin chọn màu) · sửa chữ · nén · **in (kết nối máy in)** · so sánh 2 file
 (văn bản & **bản vẽ CAD/Revit** — khoanh mây revision vùng thay đổi, phóng to/vừa màn hình) ·
-tạo PDF tìm-kiếm-được, kèm **OCR + bóc tách hợp đồng** bằng AI. Chạy hoàn toàn trên máy
-(local-first).
+tạo PDF tìm-kiếm-được, kèm **OCR + bóc tách hợp đồng** bằng AI. Giao diện **song ngữ Việt / Anh**.
+Chạy hoàn toàn trên máy (local-first).
 
 > **Ứng dụng desktop** nằm trong [`desktop/`](desktop/) — xem
 > [desktop/README.md](desktop/README.md) để build bản `.exe` / portable.

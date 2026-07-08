@@ -45,6 +45,11 @@ contextBridge.exposeInMainWorld("desktop", {
     ipcRenderer.invoke("dialog:save-pdf", { data, defaultName }),
   // Silent write to an existing path (Ctrl+S on an already-saved doc). { saved, path? }.
   writePdf: (path, data) => ipcRenderer.invoke("file:write-pdf", { path, data }),
+  // Print the given PDF bytes via the OS print dialog. Returns { ok, reason }.
+  printPdf: (data, name) => ipcRenderer.invoke("print:pdf", { data, name }),
+  // Tell the main process the current UI language so the native menu matches
+  // the in-app toggle. lang: "vi" | "en".
+  setMenuLang: (lang) => ipcRenderer.invoke("menu:set-lang", lang),
   // Native menu commands (File/Edit/Page/View). cb receives the command string.
   onMenuCommand: (cb) => {
     const handler = (_e, cmd) => cb(cmd);

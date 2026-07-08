@@ -1165,6 +1165,34 @@ async function saveAsDoc() {
   }
 }
 
+// ---- print ---------------------------------------------------------------
+
+// Print the current document. Bakes any pending overlay edits first (so what
+// prints is what's on screen), then hands the canonical bytes to the main
+// process, which opens the OS print dialog (printer, page range, copies…). A
+// user cancel comes back as ok:false with a "cancel" reason — not an error.
+let printing = false;
+async function printDoc() {
+  if (!state.bytes || printing) return;
+  printing = true;
+  try {
+    if (window.Editor) await window.Editor.bakePending();
+    showOverlay(t("Đang chuẩn bị in…"));
+    const res = await window.desktop.printPdf(state.bytes, state.name);
+    hideOverlay();
+    if (res && res.ok) {
+      toast(t("Đã gửi lệnh in."), "good");
+    } else if (res && res.reason && !/cancel/i.test(String(res.reason))) {
+      toast(t("In lỗi:") + " " + res.reason, "bad");
+    }
+  } catch (e) {
+    hideOverlay();
+    toast(t("In lỗi:") + " " + (e && e.message ? e.message : e), "bad");
+  } finally {
+    printing = false;
+  }
+}
+
 // ---- zoom ----------------------------------------------------------------
 
 let zooming = false;
@@ -2039,6 +2067,7 @@ async function openSettings() {
   $("set-update-status").textContent = "";
   $("set-theme").value =
     document.documentElement.getAttribute("data-theme") === "light" ? "light" : "dark";
+  if ($("set-lang") && window.I18N) $("set-lang").value = window.I18N.getLang();
   loadLicense();
   if (window.desktop.appInfo) {
     window.desktop
@@ -2276,6 +2305,8 @@ function updateToolbar() {
   const editing = overlayEditing || textEditing;
   const ready = sidecar.state === "ready";
   $("btn-save").disabled = !has;
+  const bp = $("btn-print");
+  if (bp) bp.disabled = !has;
   document
     .querySelectorAll("[data-needs-doc] button")
     .forEach((b) => (b.disabled = !has || editing));
@@ -2328,6 +2359,7 @@ async function openDialog() {
 $("btn-open").onclick = openDialog;
 $("btn-combine").onclick = openCombine;
 $("btn-save").onclick = saveDoc;
+$("btn-print").onclick = printDoc;
 // Toolbar undo/redo route to the annotation stack while the editor is open
 // (same rule as Ctrl+Z/Y — doc-level undo under a live overlay would desync it).
 $("btn-undo").onclick = () => (window.Editor && window.Editor.active ? window.Editor.undo() : undo());
@@ -2462,6 +2494,12 @@ function applyTheme(t) {
   } catch (_) {}
 }
 $("set-theme").onchange = (e) => applyTheme(e.target.value);
+// UI language toggle — swaps chrome labels + native menu immediately.
+if ($("set-lang")) {
+  $("set-lang").onchange = (e) => {
+    if (window.I18N) window.I18N.setLang(e.target.value);
+  };
+}
 $("set-gemini-key").addEventListener("keydown", (e) => {
   if (e.key === "Enter") saveSettings();
 });
@@ -2579,6 +2617,12 @@ window.addEventListener("keydown", (e) => {
     } else if (k === "f") {
       e.preventDefault();
       openFind();
+    } else if (k === "p") {
+      // Ctrl+P: print. Registered as a menu accelerator with
+      // registerAccelerator:false, so the renderer owns it (avoids double-fire
+      // and lets us skip Chromium's own print path).
+      e.preventDefault();
+      printDoc();
     }
     return;
   }
@@ -2602,6 +2646,7 @@ window.desktop.onMenuCommand((cmd) => {
     open: openDialog,
     save: saveDoc,
     saveAs: saveAsDoc,
+    print: printDoc,
     // Same routing as Ctrl+Z/Y: annotation-level undo while the editor is open.
     undo: () => (window.Editor && window.Editor.active ? window.Editor.undo() : undo()),
     redo: () => (window.Editor && window.Editor.active ? window.Editor.redo() : redo()),
