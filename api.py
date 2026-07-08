@@ -27,7 +27,23 @@ from src.ocr.engine import create_engine, BaseOCREngine
 from src.agents.gemini_agent import GeminiAgent, DEFAULT_CONTRACT_FIELDS
 from src.agents.field_templates import TEMPLATES
 from src.output.writer import JSONWriter, ExcelWriter, CSVWriter
-from src.utils.config import GEMINI_MODEL, get_gemini_key, set_gemini_key
+from src.utils.config import (
+    GEMINI_MODEL,
+    get_gemini_key,
+    get_gemini_model,
+    set_gemini_key,
+    set_gemini_model,
+)
+
+# Curated Gemini models offered in the app's Settings dropdown. The user can
+# still type any other id (free-text override) — this is only a convenience list.
+GEMINI_MODEL_CHOICES = [
+    "gemini-3.1-flash-lite",
+    "gemini-3-flash-preview",
+    "gemini-2.5-flash",
+    "gemini-2.5-pro",
+    "gemini-2.0-flash",
+]
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
@@ -133,7 +149,7 @@ def _get_gemini() -> GeminiAgent:
                 status_code=503,
                 detail="Chưa cấu hình Gemini API key. Mở ⚙ Cài đặt trong app để nhập key.",
             )
-        gemini_agent = GeminiAgent(api_key=key, model_name=GEMINI_MODEL)
+        gemini_agent = GeminiAgent(api_key=key, model_name=get_gemini_model())
     return gemini_agent
 
 
@@ -182,28 +198,43 @@ def _mask_key(key: str) -> str:
 class ConfigUpdate(BaseModel):
     """Body for POST /config — settings entered in the app's ⚙ UI."""
     gemini_api_key: str | None = None
+    gemini_model: str | None = None
 
 
 @app.get("/config")
 async def get_config():
     """Report current settings state (key never returned in full — masked only)."""
     key = get_gemini_key()
-    return {"gemini_configured": bool(key), "gemini_key_masked": _mask_key(key)}
+    return {
+        "gemini_configured": bool(key),
+        "gemini_key_masked": _mask_key(key),
+        "gemini_model": get_gemini_model(),
+        "gemini_model_default": GEMINI_MODEL,
+        "gemini_model_choices": GEMINI_MODEL_CHOICES,
+    }
 
 
 @app.post("/config")
 async def update_config(req: ConfigUpdate):
-    """Save the Gemini API key entered by the user, persist it, and rebuild the
-    agent so the next /extract uses it — no sidecar restart needed."""
+    """Save the Gemini API key / model entered by the user, persist them, and
+    rebuild the agent so the next /extract or /translate uses them — no sidecar
+    restart needed."""
     global gemini_agent
+    changed = False
     if req.gemini_api_key is not None:
         set_gemini_key(req.gemini_api_key)
-        gemini_agent = None  # force rebuild with the new key on next use
+        changed = True
+    if req.gemini_model is not None:
+        set_gemini_model(req.gemini_model)
+        changed = True
+    if changed:
+        gemini_agent = None  # force rebuild with the new key/model on next use
     key = get_gemini_key()
     return {
         "success": True,
         "gemini_configured": bool(key),
         "gemini_key_masked": _mask_key(key),
+        "gemini_model": get_gemini_model(),
     }
 
 

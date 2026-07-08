@@ -45,6 +45,12 @@ contextBridge.exposeInMainWorld("desktop", {
     ipcRenderer.invoke("dialog:save-pdf", { data, defaultName }),
   // Silent write to an existing path (Ctrl+S on an already-saved doc). { saved, path? }.
   writePdf: (path, data) => ipcRenderer.invoke("file:write-pdf", { path, data }),
+  // List available printers (name + isDefault). Returns [] on failure.
+  getPrinters: () => ipcRenderer.invoke("print:printers"),
+  // Print the current window (its #print-root images) with the given options:
+  // { deviceName, pageSize, duplexMode, landscape, copies, systemDialog }.
+  // Returns { ok, reason }.
+  printPage: (opts) => ipcRenderer.invoke("print:page", opts || {}),
   // Tell the main process the current UI language so the native menu matches
   // the in-app toggle. lang: "vi" | "en".
   setMenuLang: (lang) => ipcRenderer.invoke("menu:set-lang", lang),

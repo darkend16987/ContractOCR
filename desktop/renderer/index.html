@@ -573,6 +573,49 @@
       </div>
     </div>
 
+    <!-- Print options dialog -->
+    <div class="modal" id="print-modal" hidden>
+      <div class="modal-card">
+        <h3>In tài liệu</h3>
+        <label>Máy in
+          <select id="print-printer"></select>
+        </label>
+        <div class="modal-row">
+          <label>Khổ giấy
+            <select id="print-size">
+              <option value="A4" selected>A4</option>
+              <option value="A5">A5</option>
+              <option value="A3">A3</option>
+              <option value="Letter">Letter</option>
+              <option value="Legal">Legal</option>
+            </select>
+          </label>
+          <label>Hướng giấy
+            <select id="print-orient">
+              <option value="portrait" selected>Dọc</option>
+              <option value="landscape">Ngang</option>
+            </select>
+          </label>
+        </div>
+        <div class="modal-row">
+          <label>Kiểu in
+            <select id="print-duplex">
+              <option value="simplex" selected>Một mặt</option>
+              <option value="longEdge">Hai mặt — lật cạnh dài</option>
+              <option value="shortEdge">Hai mặt — lật cạnh ngắn</option>
+            </select>
+          </label>
+          <label>Số bản <input id="print-copies" type="number" min="1" max="999" value="1" /></label>
+        </div>
+        <label class="chk"><input type="checkbox" id="print-system-dialog" /> Mở hộp thoại máy in của hệ thống</label>
+        <p class="cmp-note">Máy in không hỗ trợ 2 mặt sẽ tự in 1 mặt.</p>
+        <div class="modal-actions">
+          <button id="print-cancel">Hủy</button>
+          <button id="print-ok" class="primary">In</button>
+        </div>
+      </div>
+    </div>
+
     <!-- Settings dialog (API key for AI extraction) -->
     <div class="modal" id="set-modal" hidden>
       <div class="modal-card">
@@ -616,10 +659,15 @@
             <button id="set-key-toggle" type="button" class="ghost" title="Hiện / ẩn key">👁</button>
           </span>
         </label>
+        <label>Model Gemini
+          <input id="set-gemini-model" list="gemini-model-list" placeholder="gemini-3.1-flash-lite" autocomplete="off" spellcheck="false" title="Chọn hoặc gõ tên model Gemini dùng cho Bóc tách / Dịch" />
+          <datalist id="gemini-model-list"></datalist>
+        </label>
         <p class="set-status" id="set-status"></p>
         <p class="cmp-note">
           Chưa có key? Lấy miễn phí tại <b>aistudio.google.com/apikey</b>.
           Không nhập key thì các tính năng PDF + OCR + Searchable vẫn dùng bình thường.
+          Model mặc định <b>gemini-3.1-flash-lite</b> — có thể chọn model khác nếu key của bạn hỗ trợ.
         </p>
 
         <hr class="set-div" />

@@ -89,6 +89,24 @@ def set_gemini_key(key: str) -> None:
     data["gemini_api_key"] = (key or "").strip()
     save_settings(data)
 
+
+def get_gemini_model() -> str:
+    """Effective Gemini model: the one chosen in the app (settings.json) wins;
+    fall back to the GEMINI_MODEL env / built-in default."""
+    return (load_settings().get("gemini_model") or "").strip() or GEMINI_MODEL
+
+
+def set_gemini_model(model: str) -> None:
+    """Save the Gemini model chosen by the user into settings.json. Empty string
+    clears the override (revert to the default)."""
+    data = load_settings()
+    m = (model or "").strip()
+    if m:
+        data["gemini_model"] = m
+    else:
+        data.pop("gemini_model", None)
+    save_settings(data)
+
 # Google Sheets (optional)
 GOOGLE_SHEETS_CREDENTIALS_FILE = os.getenv("GOOGLE_SHEETS_CREDENTIALS_FILE", "credentials.json")
 GOOGLE_SHEETS_SPREADSHEET_ID = os.getenv("GOOGLE_SHEETS_SPREADSHEET_ID", "")

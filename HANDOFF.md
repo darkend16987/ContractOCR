@@ -4,7 +4,12 @@
 > [DESIGN.md](DESIGN.md) (kiến trúc), [ROADMAP.md](ROADMAP.md) (tiến độ chi tiết),
 > [SETUP.md](SETUP.md) (dựng môi trường).
 
-_Cập nhật: 2026-07-08 · v0.2.24_
+_Cập nhật: 2026-07-08 · v0.2.25_
+
+> v0.2.25 — **Tuỳ chọn in (khổ giấy + 1/2 mặt) + chọn model Gemini trong Cài đặt** (sidecar CÓ đổi — phải rebuild):
+> - **Hộp thoại In** (`#print-modal`, [`index.html`](desktop/renderer/index.html)): chọn **máy in**, **khổ giấy** (A4/A5/A3/Letter/Legal), **hướng** (dọc/ngang), **kiểu in** (1 mặt / 2 mặt lật cạnh dài / lật cạnh ngắn), **số bản**, + checkbox mở hộp thoại hệ thống. `printDoc` raster trang → `#print-root` → mở modal; `runPrint` gửi tuỳ chọn qua IPC `print:page` → main `mainWindow.webContents.print({silent, deviceName, pageSize, duplexMode, landscape, copies})`. In **DOM ảnh** (không phải plugin PDFium) nên print có tuỳ chọn hoạt động đúng. `print:printers` (getPrintersAsync) đổ danh sách máy in; preload `getPrinters`/`printPage` ([`preload.js`](desktop/src/preload.js)).
+> - **Chọn model Gemini**: [`config.py`](src/utils/config.py) thêm `get/set_gemini_model` (lưu `settings.json`, ưu tiên UI > env > mặc định `gemini-3.1-flash-lite`). [`api.py`](api.py) `/config` GET trả `gemini_model`/`gemini_model_default`/`gemini_model_choices`; POST nhận `gemini_model` → reset agent. `_get_gemini()` dùng `get_gemini_model()` → áp cho cả **Bóc tách và Dịch**. UI: input `#set-gemini-model` (datalist gợi ý + gõ tự do) trong Cài đặt; `saveSettings` cho lưu **model không cần nhập lại key**. i18n VI/EN đầy đủ nhãn mới.
+> - `node --check` 4 file + `test_export.py` + config round-trip OK. **Cần test in thật + đổi model.**
 
 > v0.2.24 — **Sửa lỗi In ra giấy trắng** (renderer + main; sidecar KHÔNG đổi):
 > - **Lỗi**: v0.2.22 in qua main-process — mở PDF trong `BrowserWindow` ẩn rồi `webContents.print()`. Chromium render PDF bằng **plugin PDFium ở frame con**, print của trang chủ KHÔNG bắt được nội dung → **ra giấy trắng tinh** (dù kết nối máy in OK).

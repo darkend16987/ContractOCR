@@ -1232,6 +1232,8 @@ async function buildPrintPages() {
   }
 }
 
+// Prepare the print images, then open the Print Options dialog. Actual printing
+// happens in runPrint() (main-process webContents.print with the chosen options).
 async function printDoc() {
   if (!state.bytes || printing) return;
   printing = true;
@@ -1239,24 +1241,70 @@ async function printDoc() {
     if (window.Editor) await window.Editor.bakePending();
     showOverlay(t("Đang chuẩn bị in…"));
     await buildPrintPages();
+    await populatePrinters();
     hideOverlay();
-    // Clean up once the print dialog closes (afterprint), with a safety net in
-    // case the event doesn't fire on some platforms.
-    const cleanup = () => {
-      clearPrintPages();
-      window.removeEventListener("afterprint", cleanup);
-    };
-    window.addEventListener("afterprint", cleanup);
-    setTimeout(cleanup, 60000);
-    // Let the images lay out before invoking the native print dialog.
-    await new Promise((r) => setTimeout(r, 60));
-    window.print();
+    $("print-modal").hidden = false;
   } catch (e) {
     hideOverlay();
     clearPrintPages();
     toast(t("In lỗi:") + " " + (e && e.message ? e.message : e), "bad");
   } finally {
     printing = false;
+  }
+}
+
+// Fill the printer dropdown; preselect the system default.
+async function populatePrinters() {
+  const sel = $("print-printer");
+  if (!sel || !window.desktop.getPrinters) return;
+  let printers = [];
+  try {
+    printers = (await window.desktop.getPrinters()) || [];
+  } catch (_) {}
+  sel.innerHTML = "";
+  if (!printers.length) {
+    const o = document.createElement("option");
+    o.value = "";
+    o.textContent = t("Máy in mặc định");
+    sel.appendChild(o);
+    return;
+  }
+  for (const p of printers) {
+    const o = document.createElement("option");
+    o.value = p.name;
+    o.textContent = p.displayName || p.name;
+    if (p.isDefault) o.selected = true;
+    sel.appendChild(o);
+  }
+}
+
+function closePrintModal() {
+  $("print-modal").hidden = true;
+  clearPrintPages();
+}
+
+// Print the prepared images with the options chosen in the dialog.
+async function runPrint() {
+  const opts = {
+    deviceName: $("print-printer") ? $("print-printer").value : "",
+    pageSize: $("print-size") ? $("print-size").value : "A4",
+    duplexMode: $("print-duplex") ? $("print-duplex").value : "simplex",
+    landscape: $("print-orient") ? $("print-orient").value === "landscape" : false,
+    copies: $("print-copies") ? parseInt($("print-copies").value, 10) || 1 : 1,
+    systemDialog: $("print-system-dialog") ? $("print-system-dialog").checked : false,
+  };
+  $("print-modal").hidden = true;
+  try {
+    const res = await window.desktop.printPage(opts);
+    if (res && res.ok) {
+      toast(t("Đã gửi lệnh in."), "good");
+    } else if (res && res.reason && !/cancel/i.test(String(res.reason))) {
+      toast(t("In lỗi:") + " " + res.reason, "bad");
+    }
+  } catch (e) {
+    toast(t("In lỗi:") + " " + (e && e.message ? e.message : e), "bad");
+  } finally {
+    clearPrintPages();
   }
 }
 
@@ -2236,6 +2284,21 @@ async function openSettings() {
     status.textContent = data.gemini_configured
       ? `Đã có key: ${data.gemini_key_masked}. Nhập key mới để thay.`
       : "Chưa có key. Bóc tách sẽ không chạy cho tới khi bạn nhập.";
+    // Populate the model picker: current value + suggested choices.
+    const mi = $("set-gemini-model");
+    if (mi) {
+      mi.value = data.gemini_model || "";
+      mi.placeholder = data.gemini_model_default || "gemini-3.1-flash-lite";
+      const dl = $("gemini-model-list");
+      if (dl && Array.isArray(data.gemini_model_choices)) {
+        dl.innerHTML = "";
+        for (const m of data.gemini_model_choices) {
+          const o = document.createElement("option");
+          o.value = m;
+          dl.appendChild(o);
+        }
+      }
+    }
   } catch (err) {
     status.textContent = "Không đọc được cấu hình: " + err.message;
   }
@@ -2243,7 +2306,12 @@ async function openSettings() {
 
 async function saveSettings() {
   const key = $("set-gemini-key").value.trim();
-  if (!key) {
+  const model = ($("set-gemini-model") ? $("set-gemini-model").value : "").trim();
+  // Nothing to persist: no new key AND no model field → ask for a key.
+  const body = {};
+  if (key) body.gemini_api_key = key;
+  if ($("set-gemini-model")) body.gemini_model = model; // "" = revert to default
+  if (!("gemini_api_key" in body) && !("gemini_model" in body)) {
     toast("Hãy dán API key trước khi lưu.", "bad");
     return;
   }
@@ -2251,12 +2319,12 @@ async function saveSettings() {
     const res = await sidecarFetch("/config", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ gemini_api_key: key }),
+      body: JSON.stringify(body),
     });
     const data = await res.json();
-    if (data.success && data.gemini_configured) {
+    if (data.success) {
       $("set-modal").hidden = true;
-      toast("Đã lưu API key.", "good");
+      toast(key ? "Đã lưu cài đặt." : "Đã lưu model: " + (data.gemini_model || ""), "good");
     } else {
       toast("Lưu không thành công.", "bad");
     }
@@ -2593,6 +2661,8 @@ document.addEventListener("keydown", (e) => {
   if (e.key === "Escape") toggleConvertMenu(false);
 });
 // Convert modals.
+$("print-ok").onclick = runPrint;
+$("print-cancel").onclick = closePrintModal;
 $("enc-cancel").onclick = () => ($("enc-modal").hidden = true);
 $("enc-ok").onclick = runEncrypt;
 $("enc-pw-toggle").onclick = () => {

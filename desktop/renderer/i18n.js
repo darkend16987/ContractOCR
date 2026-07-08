@@ -236,7 +236,6 @@
     "Tiếng Pháp": "French",
     "Tiếng Đức": "German",
     "Dịch sang": "Translate to",
-    "Phạm vi": "Scope",
     "Toàn bộ tài liệu": "Whole document",
     "Chỉ các trang đang chọn": "Selected pages only",
     "Giữ nguyên số / ngày / email / mã (không dịch)":
@@ -330,6 +329,9 @@
     "Mã định danh máy này": "This machine's identifier",
     "Sao chép mã máy": "Copy machine ID",
     "Gemini API key": "Gemini API key",
+    "Model Gemini": "Gemini model",
+    "Chọn hoặc gõ tên model Gemini dùng cho Bóc tách / Dịch":
+      "Pick or type the Gemini model used for extraction / translation",
     "Dán API key vào đây…": "Paste your API key here…",
     "Hiện / ẩn key": "Show / hide key",
     "Giao diện": "Appearance",
@@ -338,8 +340,7 @@
     "Sáng": "Light",
     "Ngôn ngữ": "Language",
     "Ngôn ngữ giao diện": "Interface language",
-    "Tiếng Việt": "Tiếng Việt",
-    "Tiếng Anh": "English",
+    // ("Tiếng Việt" / "Tiếng Anh" defined once in the translate-dialog block.)
     "Cập nhật phần mềm": "Software update",
     "Kiểm tra cập nhật": "Check for updates",
     "Giới thiệu": "About",
@@ -376,6 +377,22 @@
     "Lưu bản B với đám mây revision quanh các vùng thay đổi":
       "Save file B with revision clouds around the changes",
     "Tải B đã đánh dấu": "Download marked-up B",
+
+    // --- print options dialog ---
+    "In tài liệu": "Print document",
+    "Máy in": "Printer",
+    "Máy in mặc định": "Default printer",
+    "Khổ giấy": "Paper size",
+    "Hướng giấy": "Orientation",
+    "Dọc": "Portrait",
+    "Ngang": "Landscape",
+    "Kiểu in": "Sides",
+    "Một mặt": "One-sided",
+    "Hai mặt — lật cạnh dài": "Two-sided — long edge",
+    "Hai mặt — lật cạnh ngắn": "Two-sided — short edge",
+    "Số bản": "Copies",
+    "Mở hộp thoại máy in của hệ thống": "Open the system printer dialog",
+    "Máy in không hỗ trợ 2 mặt sẽ tự in 1 mặt.": "Printers without duplex support print one-sided.",
 
     // --- print (dynamic, app.js) ---
     "Đang chuẩn bị in…": "Preparing to print…",

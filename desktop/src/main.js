@@ -433,11 +433,50 @@ ipcMain.handle("licenses:open", (_e, which) => {
   return true;
 });
 
-// Printing is handled entirely in the renderer (pdf.js rasterises pages to
-// images, then window.print() opens the OS dialog). A main-process path that
-// loaded the PDF into a hidden window and called webContents.print() printed
-// blank pages, because Chromium renders PDFs in a PDFium plugin frame the host
-// print path can't capture — see printDoc() in renderer/app.js.
+// ---- IPC: print ----------------------------------------------------------
+//
+// The renderer rasterises the PDF pages into <img>s inside #print-root (see
+// printDoc() in renderer/app.js) and shows a Print Options dialog. We then print
+// the MAIN window's own webContents — its @media print CSS hides everything but
+// #print-root, so the printed content is those real DOM images. This is safe
+// (unlike the old approach of printing a hidden window that showed the PDF via
+// Chromium's PDFium plugin frame, which the host print path couldn't capture →
+// blank sheets). Because we print real DOM, we can pass pageSize/duplex/copies.
+
+ipcMain.handle("print:printers", async () => {
+  try {
+    if (!mainWindow || mainWindow.isDestroyed()) return [];
+    return await mainWindow.webContents.getPrintersAsync();
+  } catch (_) {
+    return [];
+  }
+});
+
+ipcMain.handle("print:page", (_e, opts = {}) => {
+  return new Promise((resolve) => {
+    if (!mainWindow || mainWindow.isDestroyed()) {
+      resolve({ ok: false, reason: "no-window" });
+      return;
+    }
+    const printOpts = {
+      silent: !opts.systemDialog, // our modal already collected the options
+      printBackground: true,
+      copies: Math.max(1, Math.min(999, parseInt(opts.copies, 10) || 1)),
+      landscape: !!opts.landscape,
+      margins: { marginType: "none" },
+    };
+    if (opts.deviceName) printOpts.deviceName = opts.deviceName;
+    if (opts.pageSize) printOpts.pageSize = opts.pageSize; // 'A4' | 'A5' | 'A3' | 'Letter' | 'Legal'
+    if (opts.duplexMode) printOpts.duplexMode = opts.duplexMode; // 'simplex' | 'shortEdge' | 'longEdge'
+    try {
+      mainWindow.webContents.print(printOpts, (success, reason) => {
+        resolve({ ok: success, reason });
+      });
+    } catch (e) {
+      resolve({ ok: false, reason: String((e && e.message) || e) });
+    }
+  });
+});
 
 // ---- shutdown ------------------------------------------------------------
 
