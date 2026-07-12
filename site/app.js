@@ -12,15 +12,19 @@ const I = {
   convert: '<path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M3 21v-5h5"/>',
   combine: '<path d="M12 3l9 5-9 5-9-5 9-5z"/><path d="M3 13l9 5 9-5"/>',
   compare: '<circle cx="5" cy="6" r="3"/><path d="M12 6h5a2 2 0 0 1 2 2v7"/><path d="m15 9-3-3 3-3"/><circle cx="19" cy="18" r="3"/><path d="M12 18H7a2 2 0 0 1-2-2V9"/><path d="m9 15 3 3-3 3"/>',
+  translate: '<path d="m5 8 6 6"/><path d="m4 14 6-6 2-3"/><path d="M2 5h12"/><path d="M7 2h1"/><path d="m22 22-5-10-5 10"/><path d="M14 18h6"/>',
+  print: '<path d="M6 9V2h12v7"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect width="12" height="8" x="6" y="14"/>',
 };
 
 const FEATURES = [
   { i: "ai", t: "Bóc tách dữ liệu bằng AI", d: "OCR tiếng Việt + AI đọc mọi loại văn bản (hợp đồng, hóa đơn, biểu mẫu…), bóc tách các trường rồi xuất Excel/JSON. Tự khai báo trường tùy chỉnh cần bóc tách." },
+  { i: "translate", t: "Dịch PDF bằng AI (giữ layout)", d: "Dịch tài liệu sang ngôn ngữ khác mà giữ nguyên bố cục, xuất ra PDF mới. Giữ nguyên số/ngày/email/mã không dịch. Dành cho PDF có text thật (cần Gemini API key)." },
   { i: "combine", t: "Gộp nhiều PDF thành một", d: "Chọn nhiều file cùng lúc, kéo–thả sắp xếp thứ tự rồi gộp thành một PDF — không cần mở file nào trước." },
   { i: "type", t: "Sửa chữ gốc của PDF", d: "Chỉnh trực tiếp văn bản thật trong PDF, dùng cả font hệ thống của máy — không phải vẽ đè." },
-  { i: "pages", t: "Ghép · Tách · Chèn · Trang trắng", d: "Quản lý trang linh hoạt: kéo-thả sắp xếp, ghép/chèn từ file khác, tách trang chọn hoặc tách thành nhiều file (theo N trang / khoảng trang), thêm trang trắng." },
+  { i: "pages", t: "Ghép · Tách · Chèn · Số trang", d: "Quản lý trang linh hoạt: kéo-thả sắp xếp, ghép/chèn từ file khác, tách trang chọn hoặc tách thành nhiều file (theo N trang / khoảng trang), thêm trang trắng, đánh số trang." },
   { i: "compare", t: "So sánh PDF & bản vẽ", d: "So sánh 2 file PDF theo từng dòng/từ; và so sánh bản vẽ kỹ thuật CAD/Revit bằng diff hình ảnh — chỉ ra vùng thêm/xóa/sửa, xuất bản đánh dấu." },
   { i: "pen", t: "Chỉnh sửa & chú thích", d: "Hộp văn bản (chọn font, cỡ, đậm/nghiêng/gạch chân), che thông tin (redact chọn màu, an toàn), watermark, điền form, tô sáng, vẽ, chèn ảnh/chữ ký, ghi chú." },
+  { i: "print", t: "In tài liệu", d: "In trực tiếp từ app (Ctrl+P): chọn khổ giấy, in một mặt hoặc hai mặt (lật cạnh dài/ngắn), kèm cả in trang trắng." },
   { i: "search", t: "Tạo PDF tìm-kiếm-được", d: "OCR thêm lớp text vô hình để PDF scan có thể tìm kiếm và bôi chọn chữ." },
   { i: "archive", t: "Nén PDF", d: "Giảm dung lượng file (tối ưu ảnh) với nhiều mức nén, giữ chất lượng đọc tốt." },
   { i: "shield", t: "Khóa & mã hóa", d: "Đặt mật khẩu, mã hóa, trích xuất ảnh — bảo vệ tài liệu nhạy cảm." },
