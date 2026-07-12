@@ -423,6 +423,13 @@ function updatePageCount() {
 }
 
 let pageObserver = null;
+let keepObserver = null;
+
+// Windowing: keep a page's rasterised bitmap only while it's within this many
+// pixels of the viewport; past it the bitmap is released (and repainted on
+// return). The gap above the render margin (500px) is hysteresis so a slow
+// scroll back and forth across the edge doesn't thrash render↔free.
+const KEEP_MARGIN_PX = 1500;
 
 async function renderViewer() {
   const v = $("viewer");
@@ -430,6 +437,10 @@ async function renderViewer() {
   if (pageObserver) {
     pageObserver.disconnect();
     pageObserver = null;
+  }
+  if (keepObserver) {
+    keepObserver.disconnect();
+    keepObserver = null;
   }
   const dpr = window.devicePixelRatio || 1;
 
@@ -461,14 +472,26 @@ async function renderViewer() {
   pageObserver = new IntersectionObserver(
     (entries) => {
       for (const e of entries) {
-        if (!e.isIntersecting) continue;
-        renderPageCanvas(+e.target.dataset.index);
-        pageObserver.unobserve(e.target);
+        if (e.isIntersecting) renderPageCanvas(+e.target.dataset.index);
       }
     },
     { root: v, rootMargin: "500px 0px" }
   );
-  metas.forEach((m) => pageObserver.observe(m.wrap));
+  // Second, wider band: once a page drifts past KEEP_MARGIN_PX its bitmap is
+  // released so RAM stays flat regardless of page count. We keep observing with
+  // pageObserver (no unobserve) so a released page is repainted when it returns.
+  keepObserver = new IntersectionObserver(
+    (entries) => {
+      for (const e of entries) {
+        if (!e.isIntersecting) freePageCanvas(+e.target.dataset.index);
+      }
+    },
+    { root: v, rootMargin: KEEP_MARGIN_PX + "px 0px" }
+  );
+  metas.forEach((m) => {
+    pageObserver.observe(m.wrap);
+    keepObserver.observe(m.wrap);
+  });
 
   // Draw the first page(s) immediately so the viewer is never blank on open.
   for (let i = 0; i < Math.min(2, metas.length); i++) await renderPageCanvas(i);
@@ -483,8 +506,9 @@ async function renderViewer() {
 // data-rendered guard stops the observer + sidebar-jump from double-drawing.
 async function renderPageCanvas(i) {
   const m = state.pageMetas && state.pageMetas[i];
-  if (!m || m.wrap.dataset.rendered === "1") return;
+  if (!m || m.rendering || m.wrap.dataset.rendered === "1") return;
   m.wrap.dataset.rendered = "1";
+  m.rendering = true; // guards against a concurrent free() while rasterising
   const { page, vp, cw, ch, canvas, dpr } = m;
   canvas.width = Math.floor(cw * dpr);
   canvas.height = Math.floor(ch * dpr);
@@ -499,7 +523,36 @@ async function renderPageCanvas(i) {
     if (search.matches.length) drawSearchLayer(i); // repaint find highlights on (re)render
   } catch (_) {
     m.wrap.dataset.rendered = "0"; // let it retry on the next intersection
+  } finally {
+    m.rendering = false;
+    // If the page scrolled far away while we were rasterising (fast fling), the
+    // keepObserver's free event was skipped mid-render — reclaim the bitmap now.
+    if (m.wrap.dataset.rendered === "1" && pageFarFromViewport(m.wrap)) freePageCanvas(i);
   }
+}
+
+// Release a page's backing bitmap — the dominant per-page RAM cost — when it
+// scrolls out of the keep window. Only the canvas pixels are dropped; the wrap,
+// its CSS size and every overlay layer (annotations, text, search, notes) stay,
+// so scroll geometry and in-progress edits are untouched. renderPageCanvas
+// repaints it idempotently when it scrolls back into view.
+function freePageCanvas(i) {
+  const m = state.pageMetas && state.pageMetas[i];
+  if (!m || m.rendering || m.wrap.dataset.rendered !== "1") return;
+  m.canvas.width = 0;
+  m.canvas.height = 0; // frees the bitmap; canvas.style.* keeps the box sized
+  m.wrap.dataset.rendered = "0";
+}
+
+// True when a page-wrap sits more than KEEP_MARGIN_PX above or below the viewport.
+function pageFarFromViewport(wrap) {
+  const v = $("viewer");
+  if (!v) return false;
+  const vr = v.getBoundingClientRect();
+  const r = wrap.getBoundingClientRect();
+  if (r.bottom < vr.top) return vr.top - r.bottom > KEEP_MARGIN_PX;
+  if (r.top > vr.bottom) return r.top - vr.bottom > KEEP_MARGIN_PX;
+  return false;
 }
 
 // Overlay a transparent, selectable pdf.js text layer on a page that has real
@@ -789,7 +842,11 @@ async function rerenderChanged(changed) {
       m.vp = m.page.getViewport({ scale: state.scale });
       if (changed && !changed.has(i)) continue; // unchanged: keep its bitmap as-is
       m.wrap.dataset.rendered = "0";
-      if (wasRendered || !changed) await renderPageCanvas(i); // repaint now if it was on screen
+      // Repaint only pages that were on screen (within the window). Off-screen
+      // changed pages keep the refreshed m.page and lazy-repaint when scrolled
+      // to — this is what stops a watermark-all (changed=null) from rasterising
+      // every page of a large document at once.
+      if (wasRendered) await renderPageCanvas(i);
       await refreshThumb(i);
     }
     if (window.Editor) window.Editor.syncOverlays();

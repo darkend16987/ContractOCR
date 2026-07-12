@@ -4,7 +4,13 @@
 > [DESIGN.md](DESIGN.md) (kiến trúc), [ROADMAP.md](ROADMAP.md) (tiến độ chi tiết),
 > [SETUP.md](SETUP.md) (dựng môi trường).
 
-_Cập nhật: 2026-07-08 · v0.2.25_
+_Cập nhật: 2026-07-12 · v0.2.26_
+
+> v0.2.26 — **Tối ưu RAM viewer: virtualize canvas trang (windowing)** (chỉ renderer `app.js`; mã sidecar KHÔNG đổi — binary rebuild để bắt kịp py stale từ v0.2.23/0.2.25):
+> - **Vấn đề**: viewer render trang một lần rồi giữ bitmap **mãi mãi** (observer `unobserve` sau khi vẽ). Cuộn hết PDF 100 trang → ~1.8GB RAM canvas không bao giờ giải phóng (mỗi trang full-res × devicePixelRatio ≈ 18MB).
+> - **Cách sửa** ([`app.js`](desktop/renderer/app.js)): 2 `IntersectionObserver` — `pageObserver` (margin 500px) render khi gần viewport (bỏ `unobserve`); `keepObserver` (margin `KEEP_MARGIN_PX`=1500) gọi `freePageCanvas` khi trang trôi xa → hạ `canvas.width/height=0` giải phóng bitmap. Khoảng đệm 500↔1500 là hysteresis chống thrash. Cờ `m.rendering` + `pageFarFromViewport` trong `finally` chống race khi cuộn nhanh. RAM: ~1.8GB → **~hằng số ~90MB**; PDF nhỏ không đổi.
+> - **An toàn**: `freePageCanvas` CHỈ hạ bitmap, giữ `canvas.style.*` + mọi layer (annotation/text/search/note) — tất cả overlay đọc `canvas.style` chứ không đọc pixel; `addTextLayer`/`addNoteMarkers`/`drawSearchLayer` đã idempotent (xoá-rồi-vẽ). `rerenderChanged(null)` (watermark toàn trang) sửa để chỉ repaint trang trong window thay vì rasterise cả tài liệu. Search/print/compare/dịch dùng canvas riêng — không ảnh hưởng.
+> - `node --check` 3 file + `test_export.py` OK. Boot app + renderer nạp sạch. **Đã test GUI: cuộn/search/annotate/watermark/text-edit OK.**
 
 > v0.2.25 — **Tuỳ chọn in (khổ giấy + 1/2 mặt) + chọn model Gemini trong Cài đặt** (sidecar CÓ đổi — phải rebuild):
 > - **Hộp thoại In** (`#print-modal`, [`index.html`](desktop/renderer/index.html)): chọn **máy in**, **khổ giấy** (A4/A5/A3/Letter/Legal), **hướng** (dọc/ngang), **kiểu in** (1 mặt / 2 mặt lật cạnh dài / lật cạnh ngắn), **số bản**, + checkbox mở hộp thoại hệ thống. `printDoc` raster trang → `#print-root` → mở modal; `runPrint` gửi tuỳ chọn qua IPC `print:page` → main `mainWindow.webContents.print({silent, deviceName, pageSize, duplexMode, landscape, copies})`. In **DOM ảnh** (không phải plugin PDFium) nên print có tuỳ chọn hoạt động đúng. `print:printers` (getPrintersAsync) đổ danh sách máy in; preload `getPrinters`/`printPage` ([`preload.js`](desktop/src/preload.js)).
