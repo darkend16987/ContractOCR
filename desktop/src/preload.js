@@ -48,6 +48,8 @@ contextBridge.exposeInMainWorld("desktop", {
   // --- clipboard (write an image out of a page) ---
   // bytes: Uint8Array PNG. Returns { ok, reason? }.
   writeClipboardImage: (bytes) => ipcRenderer.invoke("clipboard:write-image", bytes),
+  // Read an image off the OS clipboard as a PNG data URL, or null if none.
+  readClipboardImage: () => ipcRenderer.invoke("clipboard:read-image"),
 
   // --- native file dialogs ---
   // Returns [{ path, name, data: Uint8Array }, ...] (empty if cancelled).

@@ -85,6 +85,10 @@
     "So sánh 2 file PDF — chỉ ra trang & dòng khác nhau":
       "Compare 2 PDFs — highlight changed pages & lines",
     "Copy ảnh": "Copy image",
+    "Sao chép ảnh": "Copy image",
+    "Sao chép vùng…": "Copy region…",
+    "Dán ảnh vào trang": "Paste image onto page",
+    "Không có ảnh ở vị trí này": "No image at this spot",
     "Copy ảnh trong trang — bấm vào ảnh để copy, hoặc kéo chọn một vùng. Dán (Ctrl+V) sang app khác hoặc ngược lại vào trang.":
       "Copy an image from the page — click an image, or drag to select a region. Paste (Ctrl+V) into another app, or back onto a page.",
     "Tách file, xuất/chuyển ảnh ↔ PDF, khoá file":

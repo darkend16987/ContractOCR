@@ -90,10 +90,62 @@ function createWindow(openPath) {
     if (url !== win.webContents.getURL()) e.preventDefault();
   });
 
+  attachContextMenu(win);
+
   win.on("closed", () => {
     windows.delete(win);
   });
   return win;
+}
+
+// Right-click context menu. Rebuilt on every click from the hit-test params so it
+// only offers what applies where the user clicked: the full edit set inside a text
+// field, copy/select for a plain text selection, and copy/open for a link. Uses
+// native roles (they act on this window's webContents) so it needs no renderer
+// code and works under the sandbox. Labels follow the in-app language (menuLang);
+// undo/redo appear only inside editable fields, so the native roles here never
+// clash with the renderer's own PDF undo stack.
+function attachContextMenu(win) {
+  win.webContents.on("context-menu", (_e, params) => {
+    const L = MENU_STR[menuLang] || MENU_STR.vi;
+    const f = params.editFlags || {};
+    const hasSelection = !!(params.selectionText && params.selectionText.trim());
+    const items = [];
+
+    if (params.isEditable) {
+      items.push(
+        { role: "undo", label: L.undo, enabled: !!f.canUndo },
+        { role: "redo", label: L.redo, enabled: !!f.canRedo },
+        { type: "separator" },
+        { role: "cut", label: L.cut, enabled: !!f.canCut },
+        { role: "copy", label: L.copy, enabled: !!f.canCopy },
+        { role: "paste", label: L.paste, enabled: !!f.canPaste },
+        { type: "separator" },
+        { role: "selectAll", label: L.selectAll, enabled: f.canSelectAll !== false }
+      );
+    } else if (hasSelection) {
+      // Plain text selection (e.g. in a dialog): copy it / select all. When there
+      // is NO selection and no editable target — e.g. a right-click on a PDF page
+      // canvas — we intentionally pop nothing here so the renderer's own page menu
+      // ("Sao chép ảnh" / "Sao chép vùng") owns that gesture (see capture.js).
+      items.push(
+        { role: "copy", label: L.copy, enabled: !!f.canCopy },
+        { role: "selectAll", label: L.selectAll, enabled: f.canSelectAll !== false }
+      );
+    }
+
+    // Link under the cursor → copy its URL / open it in the default browser.
+    if (params.linkURL && /^https?:\/\//i.test(params.linkURL)) {
+      const url = params.linkURL;
+      items.push(
+        { type: "separator" },
+        { label: L.copyLink, click: () => clipboard.writeText(url) },
+        { label: L.openLink, click: () => shell.openExternal(url) }
+      );
+    }
+
+    if (items.length) Menu.buildFromTemplate(items).popup({ window: win });
+  });
 }
 
 // Read a PDF off disk and push it to a window's renderer to open. Guards the
@@ -155,6 +207,8 @@ const MENU_STR = {
     copy: "Sao chép",
     paste: "Dán",
     selectAll: "Chọn tất cả",
+    copyLink: "Sao chép liên kết",
+    openLink: "Mở liên kết trong trình duyệt",
     page: "Trang",
     rotateL: "Xoay trái 90°",
     rotateR: "Xoay phải 90°",
@@ -191,6 +245,8 @@ const MENU_STR = {
     copy: "Copy",
     paste: "Paste",
     selectAll: "Select All",
+    copyLink: "Copy Link",
+    openLink: "Open Link in Browser",
     page: "Page",
     rotateL: "Rotate Left 90°",
     rotateR: "Rotate Right 90°",
@@ -592,6 +648,19 @@ ipcMain.handle("clipboard:write-image", (_e, bytes) => {
     return { ok: true };
   } catch (err) {
     return { ok: false, reason: String((err && err.message) || err) };
+  }
+});
+
+// Read an image OFF the OS clipboard as a PNG data URL (for "Dán ảnh vào trang"
+// in the page context menu). Returns null when the clipboard holds no image. We
+// only ever read image data here — never text — so this can't leak clipboard text.
+ipcMain.handle("clipboard:read-image", () => {
+  try {
+    const img = clipboard.readImage();
+    if (!img || img.isEmpty()) return null;
+    return img.toDataURL(); // "data:image/png;base64,…"
+  } catch (_) {
+    return null;
   }
 });
 

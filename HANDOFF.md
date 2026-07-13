@@ -4,7 +4,14 @@
 > [DESIGN.md](DESIGN.md) (kiến trúc), [ROADMAP.md](ROADMAP.md) (tiến độ chi tiết),
 > [SETUP.md](SETUP.md) (dựng môi trường).
 
-_Cập nhật: 2026-07-13 · v0.2.28_
+_Cập nhật: 2026-07-13 · v0.2.29_
+
+> v0.2.29 — **Menu chuột phải (copy/paste/select + copy ảnh/vùng, dán ảnh) + căn lại icon toolbar Chỉnh sửa + written-offer AGPL trong app** (chỉ Electron/renderer; mã sidecar KHÔNG đổi — binary rebuild vì bản trước build ở máy khác):
+> - **Context menu native** ([`main.js`](desktop/src/main.js)): `attachContextMenu(win)` bám `webContents 'context-menu'` — trong ô nhập liệu: Undo/Redo/Cut/Copy/Paste/Select All (bật/tắt theo `editFlags`, dùng native roles nên chạy dưới sandbox); có vùng bôi đen: Copy + Select All; trên link http(s): Sao chép/Mở liên kết. Song ngữ theo `menuLang`. Non-editable + không bôi đen → KHÔNG popup (nhường menu canvas của renderer).
+> - **Menu canvas** ([`capture.js`](desktop/renderer/capture.js), [`app.css`](desktop/renderer/app.css)): right-click trên `.page-wrap` → custom menu **Sao chép ảnh** (bật khi có object ảnh dưới trỏ — `objectRectAt`), **Sao chép vùng…** (vào capture mode kéo khung), **Dán ảnh vào trang** (bật khi clipboard có ảnh). Nhường native khi đang bôi đen text-layer / trỏ trong ô nhập liệu. IPC mới `clipboard:read-image` (Electron `clipboard.readImage().toDataURL()` — **chỉ đọc ảnh, không đọc text**) → `Editor.beginImagePaste` (tái dùng công cụ Ảnh, click để đặt — giống Ctrl+V).
+> - **Căn icon toolbar Chỉnh sửa**: nút `.tool` không có class `.icon-only` nên dính `button .ic { margin-right:6px }` → icon lệch trái ~3px trong nút căn giữa. Sửa: `.edit-bar .tool` dùng `inline-flex` center + `.tool .ic { margin:0 }`.
+> - **AGPL trong app** ([`index.html`](desktop/renderer/index.html)): bỏ link repo GitHub trong "Giới thiệu", thay bằng written-offer §6b ("mã nguồn tương ứng cung cấp miễn phí theo yêu cầu ≥3 năm — email liên hệ"). Dọn handler `about-source-link` mồ côi trong `app.js`.
+> - **An toàn**: 100% client-side, KHÔNG đổi Python, CSP không đổi. `clipboard:read-image` chỉ trả ảnh. `node --check` toàn bộ + `test_export.py` OK. **CHƯA GUI-test thao tác tay** (menu chuột phải/paste trong app thật).
 
 > v0.2.28 — **Đóng dấu ảnh/chữ ký nhiều trang + Vẽ mây tự do (bút/điểm) + Opacity nền** (chỉ renderer; mã sidecar KHÔNG đổi — không rebuild binary):
 > - **Đóng dấu ảnh nhiều trang** ([`editor.js`](desktop/renderer/editor.js), [`index.html`](desktop/renderer/index.html)): đặt ảnh/chữ ký trực quan trên 1 trang → chọn → nút **"Áp nhiều trang"** → nhập khoảng trang (`1-3, 5, 8-10`) qua dialog `imgpages-modal` → `parsePageRanges` → clone cùng x/y/w/h sang mỗi trang (trang gốc tự bỏ qua). Thêm `toEmbeddable()`: **BMP/GIF/WebP tự convert PNG** qua canvas (pdf-lib chỉ nhúng PNG/JPEG) — `chooseImage`/`beginImagePaste` dùng chung.

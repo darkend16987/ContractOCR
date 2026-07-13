@@ -410,6 +410,138 @@
     reader.readAsDataURL(file);
   });
 
+  // ---- right-click menu over a page (copy image object / copy region) ------
+  //
+  // A lightweight custom menu (native roles can't reach the page's image geometry,
+  // which lives here). It only claims the gesture when the click is on a page with
+  // no active text selection and no editable target — otherwise it bows out so the
+  // main-process native menu owns text copy / field editing (see main.js).
+
+  let ctxEl = null;
+
+  function closePageMenu() {
+    if (ctxEl && ctxEl.parentNode) ctxEl.parentNode.removeChild(ctxEl);
+    ctxEl = null;
+    document.removeEventListener("mousedown", onCtxAway, true);
+    document.removeEventListener("keydown", onCtxKey, true);
+    window.removeEventListener("blur", closePageMenu);
+    window.removeEventListener("resize", closePageMenu);
+    const v = $("viewer");
+    if (v) v.removeEventListener("scroll", closePageMenu, true);
+  }
+
+  function onCtxAway(e) {
+    if (ctxEl && !ctxEl.contains(e.target)) closePageMenu();
+  }
+
+  function onCtxKey(e) {
+    if (e.key === "Escape") {
+      e.preventDefault();
+      closePageMenu();
+    }
+  }
+
+  // entries: [{ label, enabled, onClick }]. Positioned at (clientX, clientY),
+  // clamped inside the viewport.
+  function showPageMenu(clientX, clientY, entries) {
+    closePageMenu();
+    const menu = document.createElement("div");
+    menu.className = "ctx-menu";
+    for (const en of entries) {
+      const item = document.createElement("div");
+      item.className = "ctx-menu-item" + (en.enabled === false ? " disabled" : "");
+      item.textContent = en.label;
+      if (en.enabled !== false) {
+        item.addEventListener("click", () => {
+          closePageMenu();
+          en.onClick();
+        });
+      }
+      menu.appendChild(item);
+    }
+    menu.style.visibility = "hidden";
+    document.body.appendChild(menu);
+    const x = Math.min(clientX, window.innerWidth - menu.offsetWidth - 4);
+    const y = Math.min(clientY, window.innerHeight - menu.offsetHeight - 4);
+    menu.style.left = Math.max(4, x) + "px";
+    menu.style.top = Math.max(4, y) + "px";
+    menu.style.visibility = "";
+    ctxEl = menu;
+    // Defer the outside-click listener so THIS right-click's trailing mousedown
+    // doesn't immediately dismiss the menu we just opened.
+    setTimeout(() => document.addEventListener("mousedown", onCtxAway, true), 0);
+    document.addEventListener("keydown", onCtxKey, true);
+    window.addEventListener("blur", closePageMenu);
+    window.addEventListener("resize", closePageMenu);
+    const v = $("viewer");
+    if (v) v.addEventListener("scroll", closePageMenu, true);
+  }
+
+  async function onContextMenu(e) {
+    if (cap.drag) return; // mid-marquee — ignore
+    const tgt = e.target;
+    if (tgt && (tgt.tagName === "INPUT" || tgt.tagName === "TEXTAREA" || tgt.isContentEditable)) {
+      return; // editable field on/over a page → native edit menu owns it
+    }
+    const wrap = tgt && tgt.closest && tgt.closest(".page-wrap");
+    if (!wrap) {
+      closePageMenu();
+      return;
+    }
+    if (!state.bytes) return;
+    // A live selection in the page text layer → let the native "Copy" menu win.
+    const sel = window.getSelection && window.getSelection();
+    if (sel && String(sel).trim()) return;
+
+    e.preventDefault();
+    const pageIndex = +wrap.dataset.index;
+    const canvas = canvasOf(pageIndex);
+    if (!canvas) return;
+    const { x, y } = localCoords(canvas, e);
+    const cx = e.clientX;
+    const cy = e.clientY;
+    // Image boxes are discovered lazily; ensure this page's are ready first. Also
+    // probe the OS clipboard so "Dán ảnh" only lights up when an image is on it.
+    let clipImg = null;
+    try {
+      [, clipImg] = await Promise.all([
+        imageCtms(pageIndex),
+        window.desktop && window.desktop.readClipboardImage
+          ? window.desktop.readClipboardImage()
+          : Promise.resolve(null),
+      ]);
+    } catch (_) {
+      await imageCtms(pageIndex);
+    }
+    const r = objectRectAt(pageIndex, x, y);
+    const tr = (vi) => (window.t ? window.t(vi) : vi);
+    showPageMenu(cx, cy, [
+      {
+        label: tr("Sao chép ảnh"),
+        enabled: !!r,
+        onClick: () => {
+          if (r) copyRect(pageIndex, r, "object");
+        },
+      },
+      {
+        label: tr("Sao chép vùng…"),
+        enabled: true,
+        onClick: () => enter(),
+      },
+      {
+        label: tr("Dán ảnh vào trang"),
+        enabled: !!clipImg,
+        onClick: () => {
+          if (!clipImg || !(window.Editor && window.Editor.beginImagePaste)) return;
+          if (cap.active) exit(); // leave capture mode so the placement click lands
+          window.Editor.beginImagePaste(clipImg);
+        },
+      },
+    ]);
+  }
+
+  document.addEventListener("contextmenu", onContextMenu, true);
+
   // Wire the toolbar button (self-contained; app.js owns enable/disable state).
   const btn = document.getElementById("btn-copy-img");
   if (btn) btn.addEventListener("click", toggle);

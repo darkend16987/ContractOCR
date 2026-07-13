@@ -2992,10 +2992,10 @@ updateToolbar();
 installLicenseGuard();
 loadLicense();
 
-// About: open license + source-repo links in the default browser.
+// About: open the license text in the default browser. (Source repo is no longer
+// linked in-app; corresponding source is offered on request per AGPL-3.0 §6b.)
 for (const [id, url] of [
   ["about-license-link", "https://www.gnu.org/licenses/agpl-3.0.html"],
-  ["about-source-link", "https://github.com/darkend16987/NabuPDF"],
 ]) {
   const a = $(id);
   if (a)

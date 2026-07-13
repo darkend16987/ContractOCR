@@ -84,7 +84,7 @@ button .ic { margin-right: 6px; }
 /* Icon-only buttons (rotate/zoom/delete/tools): center the glyph, drop the gap. */
 button.icon-only { display: inline-flex; align-items: center; justify-content: center; }
 button.icon-only .ic { margin: 0; }
-.tool .ic { width: 18px; height: 18px; vertical-align: middle; }
+.tool .ic { width: 18px; height: 18px; vertical-align: middle; margin: 0; }
 /* Redact tool uses a solid fill to read as a black-out box. */
 .ic.fill { fill: currentColor; stroke: none; }
 .group { display: flex; align-items: center; gap: 6px; }
@@ -339,7 +339,7 @@ button.ghost { background: transparent; }
   flex: 0 0 auto;
 }
 .edit-bar .tools { gap: 4px; }
-.edit-bar .tool { width: 34px; padding: 6px 0; text-align: center; position: relative; }
+.edit-bar .tool { width: 34px; padding: 6px 0; display: inline-flex; align-items: center; justify-content: center; position: relative; }
 .edit-bar .tool .tool-pen {
   position: absolute; right: 2px; bottom: 1px;
   font-size: 10px; line-height: 1; pointer-events: none;
@@ -477,6 +477,21 @@ body.editing .note-marker, body.text-editing .note-marker { pointer-events: none
   border: 1px dashed var(--accent, #38bdf8);
   background: rgba(56, 189, 248, 0.12);
 }
+
+/* Right-click menu over a page (copy image object / copy region). */
+.ctx-menu {
+  position: fixed; z-index: 200; min-width: 168px;
+  background: var(--bg-2); border: 1px solid var(--line);
+  border-radius: 8px; padding: 4px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+  font-size: 13px; color: var(--fg); user-select: none;
+}
+.ctx-menu-item {
+  padding: 7px 12px; border-radius: 5px; cursor: pointer; white-space: nowrap;
+}
+.ctx-menu-item:hover { background: var(--accent); color: var(--accent-fg); }
+.ctx-menu-item.disabled { opacity: 0.4; cursor: default; }
+.ctx-menu-item.disabled:hover { background: transparent; color: var(--fg); }
 
 /* ---- selectable text layer (text-based PDFs) ---- */
 .text-layer {
