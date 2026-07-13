@@ -456,6 +456,23 @@ body.editing .note-marker, body.text-editing .note-marker { pointer-events: none
 }
 .search-hl.current { background: rgba(255, 138, 0, 0.6); }
 
+/* ---- copy-image (capture) mode ---- */
+/* Crosshair over pages; neutralise child pointer-events so mouse events land on
+   the page-wrap (not the text layer / notes / editor), keeping capture isolated. */
+.viewer.capture-mode .page-wrap { cursor: crosshair; }
+.viewer.capture-mode .page-wrap * { pointer-events: none; }
+.cap-hi {
+  position: absolute; pointer-events: none; z-index: 45;
+  border: 2px solid var(--accent, #38bdf8);
+  background: rgba(56, 189, 248, 0.16);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.35);
+}
+.cap-marquee {
+  position: absolute; pointer-events: none; z-index: 46;
+  border: 1px dashed var(--accent, #38bdf8);
+  background: rgba(56, 189, 248, 0.12);
+}
+
 /* ---- selectable text layer (text-based PDFs) ---- */
 .text-layer {
   position: absolute; left: 0; top: 0;

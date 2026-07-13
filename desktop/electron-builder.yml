@@ -2,6 +2,17 @@ appId: com.nabupdf.app
 productName: Nabu PDF
 copyright: © 2026 Nabu PDF
 
+# "Open with Nabu PDF" for .pdf files. The NSIS installer registers this handler
+# in the Windows registry (adds Nabu PDF to the Open-with list; does NOT force it
+# as the default viewer). The portable .exe can't register associations — users
+# can still right-click → Open with → Choose another app.
+fileAssociations:
+  - ext: pdf
+    name: PDF Document
+    description: PDF
+    role: Viewer
+    icon: build/icon.ico
+
 directories:
   output: dist-app
   buildResources: build

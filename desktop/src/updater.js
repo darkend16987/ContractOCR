@@ -24,7 +24,9 @@ const { app, dialog, ipcMain } = require("electron");
 
 // Set once initAutoUpdate runs; null on builds that can't self-update.
 let autoUpdaterRef = null;
-let winRef = null;
+// A function returning the current target window (the app is multi-window, so a
+// fixed reference could point at a closed window). May return null.
+let getWin = () => null;
 
 function isPortable() {
   return !!process.env.PORTABLE_EXECUTABLE_DIR;
@@ -38,12 +40,15 @@ function updateBlocker() {
   return null;
 }
 
-function notify(win, payload) {
+function notify(payload) {
+  const win = getWin();
   if (win && !win.isDestroyed()) win.webContents.send("update:status", payload);
 }
 
-function initAutoUpdate(mainWindow) {
-  winRef = mainWindow;
+// `windowProvider` is a function returning the current primary BrowserWindow (or
+// null). Called each time we notify so we never send to a closed window.
+function initAutoUpdate(windowProvider) {
+  getWin = typeof windowProvider === "function" ? windowProvider : () => windowProvider || null;
 
   // Always register the manual-check handler, even on builds that can't update,
   // so the Settings button gives feedback instead of doing nothing.
@@ -64,23 +69,23 @@ function initAutoUpdate(mainWindow) {
   autoUpdater.autoDownload = true;
   autoUpdater.autoInstallOnAppQuit = true;
 
-  autoUpdater.on("checking-for-update", () => notify(winRef, { state: "checking" }));
+  autoUpdater.on("checking-for-update", () => notify({ state: "checking" }));
   autoUpdater.on("update-available", (info) =>
-    notify(winRef, { state: "available", version: info && info.version })
+    notify({ state: "available", version: info && info.version })
   );
   autoUpdater.on("update-not-available", () =>
-    notify(winRef, { state: "current", version: app.getVersion() })
+    notify({ state: "current", version: app.getVersion() })
   );
   autoUpdater.on("download-progress", (p) =>
-    notify(winRef, { state: "downloading", percent: Math.round(p.percent) })
+    notify({ state: "downloading", percent: Math.round(p.percent) })
   );
   autoUpdater.on("error", (err) =>
-    notify(winRef, { state: "error", error: (err && err.message) || String(err) })
+    notify({ state: "error", error: (err && err.message) || String(err) })
   );
 
   autoUpdater.on("update-downloaded", async (info) => {
-    notify(winRef, { state: "downloaded", version: info && info.version });
-    const { response } = await dialog.showMessageBox(winRef, {
+    notify({ state: "downloaded", version: info && info.version });
+    const boxOpts = {
       type: "info",
       buttons: ["Khởi động lại & cập nhật", "Để sau"],
       defaultId: 0,
@@ -88,7 +93,9 @@ function initAutoUpdate(mainWindow) {
       title: "Có bản cập nhật",
       message: `Nabu PDF ${info && info.version} đã tải xong.`,
       detail: "Khởi động lại để cài bản mới. Bạn cũng có thể tiếp tục dùng và bản mới sẽ tự cài khi thoát app.",
-    });
+    };
+    const w = getWin();
+    const { response } = await (w ? dialog.showMessageBox(w, boxOpts) : dialog.showMessageBox(boxOpts));
     if (response === 0) autoUpdater.quitAndInstall();
   });
 
@@ -109,9 +116,9 @@ function checkManually() {
   const blocker = updateBlocker();
   if (blocker) return { state: blocker, version: app.getVersion() };
   if (!autoUpdaterRef) return { state: "unsupported", version: app.getVersion() };
-  notify(winRef, { state: "checking" });
+  notify({ state: "checking" });
   autoUpdaterRef.checkForUpdates().catch((err) =>
-    notify(winRef, { state: "error", error: (err && err.message) || String(err) })
+    notify({ state: "error", error: (err && err.message) || String(err) })
   );
   return { state: "checking", version: app.getVersion() };
 }

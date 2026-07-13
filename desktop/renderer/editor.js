@@ -887,6 +887,33 @@
     img.src = ed.pendingImage.dataUrl;
   }
 
+  // Paste an image (from the OS clipboard) onto a page. Enters edit mode if
+  // needed, arms the image tool with the pasted bytes, then the next click on a
+  // page places it — reusing the exact same path as the "Ảnh" tool. dataUrl must
+  // be a PNG or JPEG data URL (pdf-lib can only embed those). Returns false if the
+  // image can't be used (no doc open / unsupported format).
+  function beginImagePaste(dataUrl) {
+    if (!state.bytes) {
+      toast("Mở một PDF trước khi dán ảnh.", "bad");
+      return false;
+    }
+    let fmt;
+    try {
+      fmt = sniffImage(dataUrlToBytes(dataUrl));
+    } catch (_) {
+      fmt = null;
+    }
+    if (!fmt) {
+      toast("Ảnh trong clipboard không dán được (chỉ nhận PNG/JPG).", "bad");
+      return false;
+    }
+    if (!ed.active) enter();
+    ed.pendingImage = { dataUrl, fmt };
+    setTool("image");
+    toast("Bấm lên trang để dán ảnh.", "good");
+    return true;
+  }
+
   // ---- PNG rasterisation for baking ---------------------------------------
 
   function renderTextPng(text, fontSizePt, colorHex, opts) {
@@ -1659,6 +1686,7 @@
     syncOverlays,
     bakePending,
     reset,
+    beginImagePaste, // paste an OS-clipboard image onto a page (Ctrl+V)
     undo: edUndo, // annotation-level (pre-bake) — routed from Ctrl+Z while active
     redo: edRedo,
   };

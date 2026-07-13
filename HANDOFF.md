@@ -4,7 +4,13 @@
 > [DESIGN.md](DESIGN.md) (kiến trúc), [ROADMAP.md](ROADMAP.md) (tiến độ chi tiết),
 > [SETUP.md](SETUP.md) (dựng môi trường).
 
-_Cập nhật: 2026-07-12 · v0.2.26_
+_Cập nhật: 2026-07-13 · v0.2.27_
+
+> v0.2.27 — **Nhiều cửa sổ + "Open with Nabu PDF" + Copy/Paste ảnh trong trang** (mã sidecar KHÔNG đổi — không rebuild binary):
+> - **Nhiều cửa sổ** ([`main.js`](desktop/src/main.js), [`updater.js`](desktop/src/updater.js)): bỏ singleton `mainWindow` → `Set windows`; `createWindow()`/`primaryWindow()`/`senderWindow(e)`. Mọi cửa sổ **chung 1 sidecar** (chung port+token, broadcast status) — model OCR nạp 1 lần. Menu **"Cửa sổ mới" (Ctrl+N)**. IPC dialog/print target đúng cửa sổ gửi. Updater nhận window-provider fn.
+> - **Open with** ([`electron-builder.yml`](desktop/electron-builder.yml), `main.js`, `preload.js`): `fileAssociations: pdf` (NSIS ghi registry, hiện trong "Open with", KHÔNG ép mặc định). Parse argv (launch + `second-instance`) + macOS `open-file` → mở cửa sổ mới load file. Portable .exe không đăng ký association được (chỉ bản cài NSIS).
+> - **Copy/Paste ảnh** ([`capture.js`](desktop/renderer/capture.js) mới, `editor.js`, `main.js`): nút **"Copy ảnh"** → chế độ capture (Esc thoát). Object mode: hover ảnh nhúng (detect qua pdf.js `getOperatorList` + tracking CTM) → click copy high-res. Region mode: kéo khung copy vùng. Render region → PNG (offscreen `page.render`, offset tuyến-tính theo scale → xoay trang vẫn đúng). Clipboard qua IPC `clipboard:write-image` (Electron, **chỉ ghi ảnh — không đọc clipboard**). Paste: DOM `paste` event → `Editor.beginImagePaste` đặt ảnh lên trang (tái dùng công cụ Ảnh). 100% client-side, KHÔNG đổi Python.
+> - **An toàn**: CSP không đổi (đã có `img-src`/`worker-src blob:`). argv/file guard chỉ đọc `.pdf` tồn tại. `node --check` toàn bộ + `test_export.py` OK. Boot app clean. Toán tọa độ F3 verify khớp fitz chính xác (rotation 0/90/180 + nhiều scale). **CHƯA GUI-test thao tác tay** (copy/paste/multi-window/open-with sau cài).
 
 > v0.2.26 — **Tối ưu RAM viewer: virtualize canvas trang (windowing)** (chỉ renderer `app.js`; mã sidecar KHÔNG đổi — binary rebuild để bắt kịp py stale từ v0.2.23/0.2.25):
 > - **Vấn đề**: viewer render trang một lần rồi giữ bitmap **mãi mãi** (observer `unobserve` sau khi vẽ). Cuộn hết PDF 100 trang → ~1.8GB RAM canvas không bao giờ giải phóng (mỗi trang full-res × devicePixelRatio ≈ 18MB).

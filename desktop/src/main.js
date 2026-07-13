@@ -3,13 +3,32 @@
 const path = require("path");
 const fs = require("fs");
 const crypto = require("crypto");
-const { app, BrowserWindow, Menu, ipcMain, dialog, shell, session } = require("electron");
+const { app, BrowserWindow, Menu, ipcMain, dialog, shell, session, clipboard, nativeImage } = require("electron");
 const { startSidecar, stopSidecar } = require("./sidecar");
 const { initAutoUpdate } = require("./updater");
 const { initLicense } = require("./license");
 
-let mainWindow = null;
+// All open document windows. Each BrowserWindow runs its own renderer with its
+// own single-doc state, but every window shares the ONE Python sidecar (same
+// port + token) so OCR models are loaded once regardless of window count.
+const windows = new Set();
 let sidecar = null;
+
+// The primary window = first still-alive window. Used as a default parent for
+// app-level dialogs (updater) and as a fallback when no window has focus.
+function primaryWindow() {
+  const focused = BrowserWindow.getFocusedWindow();
+  if (focused && windows.has(focused) && !focused.isDestroyed()) return focused;
+  for (const w of windows) if (!w.isDestroyed()) return w;
+  return null;
+}
+
+// The window that sent an IPC message (correct parent for its dialogs / target
+// for its print job). Falls back to the primary window.
+function senderWindow(e) {
+  const w = e && e.sender ? BrowserWindow.fromWebContents(e.sender) : null;
+  return w && !w.isDestroyed() ? w : primaryWindow();
+}
 
 // Per-launch shared secret. Passed to the sidecar (env) and to the renderer (in
 // the status payload below) so only our renderer can call the loopback OCR server.
@@ -24,13 +43,16 @@ const RENDERER = path.join(__dirname, "..", "renderer");
 
 function setSidecarState(next) {
   sidecarState = { ...sidecarState, ...next };
-  if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.webContents.send("sidecar:status", sidecarState);
+  for (const w of windows) {
+    if (!w.isDestroyed()) w.webContents.send("sidecar:status", sidecarState);
   }
 }
 
-function createWindow() {
-  mainWindow = new BrowserWindow({
+// Create a document window. `openPath` (optional) is an absolute path to a PDF
+// to load once the renderer is ready (used by "Open with" / drag-onto-icon and
+// the second-instance handler).
+function createWindow(openPath) {
+  const win = new BrowserWindow({
     width: 1360,
     height: 880,
     minWidth: 900,
@@ -45,25 +67,67 @@ function createWindow() {
       sandbox: true,
     },
   });
+  windows.add(win);
 
   // Load the PDF UI immediately — no waiting on the heavy OCR sidecar.
-  mainWindow.loadFile(path.join(RENDERER, "index.html"));
+  win.loadFile(path.join(RENDERER, "index.html"));
+
+  // Hand the renderer a file to open once it has finished loading. Read here in
+  // the main process (renderer has no fs) and push the bytes over IPC.
+  if (openPath) {
+    win.webContents.once("did-finish-load", () => sendFileToWindow(win, openPath));
+  }
 
   // Navigation hardening: this is a single local page. Block any attempt to
   // navigate away or open new windows (defence-in-depth if the renderer is ever
   // compromised, e.g. via a crafted PDF). External http(s) links go through the
   // explicit shell:open-external IPC instead.
-  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+  win.webContents.setWindowOpenHandler(({ url }) => {
     if (/^https?:\/\//i.test(url)) shell.openExternal(url);
     return { action: "deny" };
   });
-  mainWindow.webContents.on("will-navigate", (e, url) => {
-    if (url !== mainWindow.webContents.getURL()) e.preventDefault();
+  win.webContents.on("will-navigate", (e, url) => {
+    if (url !== win.webContents.getURL()) e.preventDefault();
   });
 
-  mainWindow.on("closed", () => {
-    mainWindow = null;
+  win.on("closed", () => {
+    windows.delete(win);
   });
+  return win;
+}
+
+// Read a PDF off disk and push it to a window's renderer to open. Guards the
+// path so only real .pdf files are read (defence against a bogus argv entry).
+function sendFileToWindow(win, filePath) {
+  try {
+    if (!win || win.isDestroyed()) return;
+    if (!filePath || !/\.pdf$/i.test(filePath)) return;
+    if (!fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) return;
+    const data = fs.readFileSync(filePath);
+    win.webContents.send("file:open", {
+      path: filePath,
+      name: path.basename(filePath),
+      data,
+    });
+  } catch (_) {
+    /* ignore unreadable file — the empty window is still usable */
+  }
+}
+
+// Pull the first existing *.pdf path out of a process argv list. Windows passes
+// the file to "Open with" as a bare argument. Skips flags and the app path.
+function pdfPathFromArgv(argv) {
+  if (!Array.isArray(argv)) return null;
+  for (const a of argv.slice(1)) {
+    if (typeof a !== "string" || a.startsWith("-")) continue;
+    if (!/\.pdf$/i.test(a)) continue;
+    try {
+      if (fs.existsSync(a) && fs.statSync(a).isFile()) return path.resolve(a);
+    } catch (_) {
+      /* ignore */
+    }
+  }
+  return null;
 }
 
 // Native application menu. File/Save accelerators are registered by Electron;
@@ -77,6 +141,7 @@ function createWindow() {
 const MENU_STR = {
   vi: {
     file: "Tập tin",
+    newWindow: "Cửa sổ mới",
     open: "Mở…",
     print: "In…",
     save: "Lưu",
@@ -112,6 +177,7 @@ const MENU_STR = {
   },
   en: {
     file: "File",
+    newWindow: "New Window",
     open: "Open…",
     print: "Print…",
     save: "Save",
@@ -152,16 +218,16 @@ let menuLang = "vi";
 function buildMenu(lang) {
   const L = MENU_STR[lang] || MENU_STR.vi;
   const send = (cmd) => () => {
-    const wc =
-      (mainWindow && !mainWindow.isDestroyed() && mainWindow.webContents) ||
-      (BrowserWindow.getFocusedWindow() && BrowserWindow.getFocusedWindow().webContents);
-    if (wc) wc.send("menu:cmd", cmd);
+    // Menu commands target the window the user is interacting with.
+    const win = primaryWindow();
+    if (win) win.webContents.send("menu:cmd", cmd);
   };
   const isDev = !app.isPackaged;
   const template = [
     {
       label: L.file,
       submenu: [
+        { label: L.newWindow, accelerator: "CmdOrCtrl+N", click: () => createWindow() },
         { label: L.open, accelerator: "CmdOrCtrl+O", click: send("open") },
         { type: "separator" },
         { label: L.print, accelerator: "CmdOrCtrl+P", registerAccelerator: false, click: send("print") },
@@ -241,16 +307,42 @@ function bootSidecar() {
     });
 }
 
-// Single-instance: a second launch focuses the existing window instead of
-// spawning another app + sidecar (each instance would bind its own port and
-// load the OCR models again).
+// Single-instance: a second launch is routed into THIS process (see
+// second-instance below) rather than spawning another app + sidecar — every
+// window shares the one sidecar, so models load once. A second launch opens a
+// new window (with the file, if one was passed) instead of a whole new app.
+//
+// A file passed to a not-yet-ready app (macOS open-file, or a race) is stashed
+// here and opened once whenReady resolves.
+let pendingOpenPath = null;
+
+// macOS: "Open with" / drag-onto-dock delivers files via this event, which can
+// fire before whenReady. Windows uses argv instead (handled below).
+app.on("open-file", (e, filePath) => {
+  e.preventDefault();
+  if (app.isReady()) {
+    createWindow(filePath);
+  } else {
+    pendingOpenPath = filePath;
+  }
+});
+
 if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
-  app.on("second-instance", () => {
-    if (mainWindow) {
-      if (mainWindow.isMinimized()) mainWindow.restore();
-      mainWindow.focus();
+  // A second launch (e.g. double-clicking another PDF, or "Open with") is
+  // funnelled here instead of starting a new process. Open the file in a NEW
+  // window if one was passed; otherwise just surface an existing window.
+  app.on("second-instance", (_e, argv) => {
+    const filePath = pdfPathFromArgv(argv);
+    if (filePath) {
+      createWindow(filePath);
+      return;
+    }
+    const win = primaryWindow();
+    if (win) {
+      if (win.isMinimized()) win.restore();
+      win.focus();
     }
   });
 
@@ -278,9 +370,13 @@ if (!app.requestSingleInstanceLock()) {
     });
 
     buildMenu(menuLang);
-    createWindow();
+    // Open a file passed on the command line (Windows "Open with") or stashed by
+    // a pre-ready macOS open-file event; otherwise an empty window.
+    const launchFile = pendingOpenPath || pdfPathFromArgv(process.argv);
+    pendingOpenPath = null;
+    createWindow(launchFile || undefined);
     bootSidecar();
-    initAutoUpdate(mainWindow);
+    initAutoUpdate(primaryWindow);
     initLicense();
 
     app.on("activate", () => {
@@ -319,10 +415,10 @@ ipcMain.handle("app:info", () => ({
 
 // ---- IPC: file dialogs ---------------------------------------------------
 
-ipcMain.handle("dialog:open-pdf", async (_e, { multi = false } = {}) => {
+ipcMain.handle("dialog:open-pdf", async (e, { multi = false } = {}) => {
   const props = ["openFile"];
   if (multi) props.push("multiSelections");
-  const res = await dialog.showOpenDialog(mainWindow, {
+  const res = await dialog.showOpenDialog(senderWindow(e), {
     title: "Mở PDF",
     properties: props,
     filters: [{ name: "PDF", extensions: ["pdf"] }],
@@ -337,10 +433,10 @@ ipcMain.handle("dialog:open-pdf", async (_e, { multi = false } = {}) => {
 
 // Generic open for non-PDF inputs (images → PDF). `filters`/`multi` come from the
 // renderer; defaults to common image types with multi-selection.
-ipcMain.handle("dialog:open-files", async (_e, { multi = true, filters } = {}) => {
+ipcMain.handle("dialog:open-files", async (e, { multi = true, filters } = {}) => {
   const props = ["openFile"];
   if (multi) props.push("multiSelections");
-  const res = await dialog.showOpenDialog(mainWindow, {
+  const res = await dialog.showOpenDialog(senderWindow(e), {
     title: "Chọn tệp",
     properties: props,
     filters:
@@ -356,8 +452,8 @@ ipcMain.handle("dialog:open-files", async (_e, { multi = true, filters } = {}) =
   }));
 });
 
-ipcMain.handle("dialog:save-pdf", async (_e, { data, defaultName }) => {
-  const res = await dialog.showSaveDialog(mainWindow, {
+ipcMain.handle("dialog:save-pdf", async (e, { data, defaultName }) => {
+  const res = await dialog.showSaveDialog(senderWindow(e), {
     title: "Lưu PDF",
     defaultPath: defaultName || "output.pdf",
     filters: [{ name: "PDF", extensions: ["pdf"] }],
@@ -382,8 +478,8 @@ ipcMain.handle("file:write-pdf", async (_e, { path: fp, data }) => {
 
 // Generic save for non-PDF exports (xlsx/csv/json). `filters` is an array of
 // { name, extensions } passed straight to the native dialog.
-ipcMain.handle("dialog:save-file", async (_e, { data, defaultName, filters }) => {
-  const res = await dialog.showSaveDialog(mainWindow, {
+ipcMain.handle("dialog:save-file", async (e, { data, defaultName, filters }) => {
+  const res = await dialog.showSaveDialog(senderWindow(e), {
     title: "Lưu file",
     defaultPath: defaultName || "export.txt",
     filters: filters && filters.length ? filters : [{ name: "Tất cả", extensions: ["*"] }],
@@ -437,24 +533,26 @@ ipcMain.handle("licenses:open", (_e, which) => {
 //
 // The renderer rasterises the PDF pages into <img>s inside #print-root (see
 // printDoc() in renderer/app.js) and shows a Print Options dialog. We then print
-// the MAIN window's own webContents — its @media print CSS hides everything but
+// the SENDING window's own webContents — its @media print CSS hides everything but
 // #print-root, so the printed content is those real DOM images. This is safe
 // (unlike the old approach of printing a hidden window that showed the PDF via
 // Chromium's PDFium plugin frame, which the host print path couldn't capture →
 // blank sheets). Because we print real DOM, we can pass pageSize/duplex/copies.
 
-ipcMain.handle("print:printers", async () => {
+ipcMain.handle("print:printers", async (e) => {
   try {
-    if (!mainWindow || mainWindow.isDestroyed()) return [];
-    return await mainWindow.webContents.getPrintersAsync();
+    const win = senderWindow(e);
+    if (!win || win.isDestroyed()) return [];
+    return await win.webContents.getPrintersAsync();
   } catch (_) {
     return [];
   }
 });
 
-ipcMain.handle("print:page", (_e, opts = {}) => {
+ipcMain.handle("print:page", (e, opts = {}) => {
   return new Promise((resolve) => {
-    if (!mainWindow || mainWindow.isDestroyed()) {
+    const win = senderWindow(e);
+    if (!win || win.isDestroyed()) {
       resolve({ ok: false, reason: "no-window" });
       return;
     }
@@ -469,13 +567,38 @@ ipcMain.handle("print:page", (_e, opts = {}) => {
     if (opts.pageSize) printOpts.pageSize = opts.pageSize; // 'A4' | 'A5' | 'A3' | 'Letter' | 'Legal'
     if (opts.duplexMode) printOpts.duplexMode = opts.duplexMode; // 'simplex' | 'shortEdge' | 'longEdge'
     try {
-      mainWindow.webContents.print(printOpts, (success, reason) => {
+      win.webContents.print(printOpts, (success, reason) => {
         resolve({ ok: success, reason });
       });
-    } catch (e) {
-      resolve({ ok: false, reason: String((e && e.message) || e) });
+    } catch (err) {
+      resolve({ ok: false, reason: String((err && err.message) || err) });
     }
   });
+});
+
+// ---- IPC: clipboard image (copy an image/region out of a page) -----------
+//
+// The renderer rasterises the chosen image object or marquee region to PNG bytes
+// (client-side, via pdf.js) and hands them here. We only ever WRITE an image to
+// the OS clipboard — no reading, no arbitrary data — so a compromised renderer
+// can't exfiltrate clipboard contents through this channel.
+ipcMain.handle("clipboard:write-image", (_e, bytes) => {
+  try {
+    if (!bytes) return { ok: false, reason: "no-data" };
+    const buf = Buffer.from(bytes);
+    const img = nativeImage.createFromBuffer(buf);
+    if (img.isEmpty()) return { ok: false, reason: "decode-failed" };
+    clipboard.writeImage(img);
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, reason: String((err && err.message) || err) };
+  }
+});
+
+// New empty document window (renderer "Cửa sổ mới" button / Ctrl+N routed here).
+ipcMain.handle("window:new", () => {
+  createWindow();
+  return true;
 });
 
 // ---- shutdown ------------------------------------------------------------

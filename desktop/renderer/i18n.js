@@ -84,6 +84,9 @@
     "So sánh": "Compare",
     "So sánh 2 file PDF — chỉ ra trang & dòng khác nhau":
       "Compare 2 PDFs — highlight changed pages & lines",
+    "Copy ảnh": "Copy image",
+    "Copy ảnh trong trang — bấm vào ảnh để copy, hoặc kéo chọn một vùng. Dán (Ctrl+V) sang app khác hoặc ngược lại vào trang.":
+      "Copy an image from the page — click an image, or drag to select a region. Paste (Ctrl+V) into another app, or back onto a page.",
     "Tách file, xuất/chuyển ảnh ↔ PDF, khoá file":
       "Split file, export/convert images ↔ PDF, lock file",
     "Chuyển đổi": "Convert",

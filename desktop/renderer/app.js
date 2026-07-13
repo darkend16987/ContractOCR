@@ -2591,6 +2591,11 @@ function updateToolbar() {
   // Compare picks its own two files, so it only needs the engine ready (no open doc).
   const bd = $("btn-diff");
   if (bd) bd.disabled = !ready || editing;
+  // Copy-image works on the open doc, purely client-side (no engine). Disabled
+  // while editing; if capture mode is on when it gets disabled, leave it.
+  const bci = $("btn-copy-img");
+  if (bci) bci.disabled = !has || editing;
+  if ((!has || editing) && window.Capture && window.Capture.active) window.Capture.exit();
   // Convert dropdown: enabled whenever the engine is ready (Ảnh→PDF works with no
   // doc open); per-item guards enforce the "open a PDF first" rule where needed.
   const bcv = $("btn-convert");
@@ -2969,6 +2974,14 @@ window.addEventListener("drop", async (e) => {
     await loadBytes(new Uint8Array(buf), f.name, f.path || null);
   }
 });
+
+// "Open with Nabu PDF" / double-click a .pdf / drag onto the app icon: the main
+// process opens a window and pushes the file here once the renderer is ready.
+if (window.desktop.onOpenFile) {
+  window.desktop.onOpenFile((file) => {
+    if (file && file.data) loadBytes(toU8(file.data), file.name, file.path || null);
+  });
+}
 
 // sidecar status: get current + subscribe to updates
 window.desktop.onSidecarStatus(applySidecar);

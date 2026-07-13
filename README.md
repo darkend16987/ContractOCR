@@ -6,7 +6,9 @@ khoanh vùng (chữ nhật / elip / **khoanh mây revision**, chọn nét viền
 hộp văn bản (font/đậm/nghiêng/gạch chân) ·
 watermark · redact (che thông tin chọn màu) · sửa chữ · nén · **in (kết nối máy in)** · so sánh 2 file
 (văn bản & **bản vẽ CAD/Revit** — khoanh mây revision vùng thay đổi, phóng to/vừa màn hình) ·
-tạo PDF tìm-kiếm-được · **dịch PDF (AI) giữ layout** (PDF có text thật, xuất file mới) · kèm **OCR + bóc tách hợp đồng** bằng AI. Giao diện **song ngữ Việt / Anh**.
+tạo PDF tìm-kiếm-được · **dịch PDF (AI) giữ layout** (PDF có text thật, xuất file mới) ·
+**mở nhiều cửa sổ** · **"Open with Nabu PDF"** (mở PDF trực tiếp từ Windows) · **copy/paste ảnh trong trang** ·
+kèm **OCR + bóc tách hợp đồng** bằng AI. Giao diện **song ngữ Việt / Anh**.
 Chạy hoàn toàn trên máy (local-first).
 
 > **Ứng dụng desktop** nằm trong [`desktop/`](desktop/) — xem

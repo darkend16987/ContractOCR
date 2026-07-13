@@ -34,6 +34,21 @@ contextBridge.exposeInMainWorld("desktop", {
     hwid: () => ipcRenderer.invoke("license:hwid"),
   },
 
+  // --- multi-window ---
+  // Open a new empty document window.
+  newWindow: () => ipcRenderer.invoke("window:new"),
+  // A file was handed to this window to open ("Open with" / drag-onto-icon).
+  // cb receives { path, name, data: Uint8Array }.
+  onOpenFile: (cb) => {
+    const handler = (_e, file) => cb(file);
+    ipcRenderer.on("file:open", handler);
+    return () => ipcRenderer.removeListener("file:open", handler);
+  },
+
+  // --- clipboard (write an image out of a page) ---
+  // bytes: Uint8Array PNG. Returns { ok, reason? }.
+  writeClipboardImage: (bytes) => ipcRenderer.invoke("clipboard:write-image", bytes),
+
   // --- native file dialogs ---
   // Returns [{ path, name, data: Uint8Array }, ...] (empty if cancelled).
   openPdf: (opts) => ipcRenderer.invoke("dialog:open-pdf", opts || {}),
