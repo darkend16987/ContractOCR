@@ -4,7 +4,13 @@
 > [DESIGN.md](DESIGN.md) (kiến trúc), [ROADMAP.md](ROADMAP.md) (tiến độ chi tiết),
 > [SETUP.md](SETUP.md) (dựng môi trường).
 
-_Cập nhật: 2026-07-13 · v0.2.27_
+_Cập nhật: 2026-07-13 · v0.2.28_
+
+> v0.2.28 — **Đóng dấu ảnh/chữ ký nhiều trang + Vẽ mây tự do (bút/điểm) + Opacity nền** (chỉ renderer; mã sidecar KHÔNG đổi — không rebuild binary):
+> - **Đóng dấu ảnh nhiều trang** ([`editor.js`](desktop/renderer/editor.js), [`index.html`](desktop/renderer/index.html)): đặt ảnh/chữ ký trực quan trên 1 trang → chọn → nút **"Áp nhiều trang"** → nhập khoảng trang (`1-3, 5, 8-10`) qua dialog `imgpages-modal` → `parsePageRanges` → clone cùng x/y/w/h sang mỗi trang (trang gốc tự bỏ qua). Thêm `toEmbeddable()`: **BMP/GIF/WebP tự convert PNG** qua canvas (pdf-lib chỉ nhúng PNG/JPEG) — `chooseImage`/`beginImagePaste` dùng chung.
+> - **Vẽ mây tự do** — tool `cloudpen` mới (nút ✎ cạnh mây cũ). Giữ kéo = freehand (thả tự khép); bấm điểm = polygon, đóng bằng bấm-điểm-đầu / Enter / bấm-đúp, huỷ bằng Esc/Delete/đổi-tool. Scallop cho polygon bất kỳ: `cloudPathPoly()` resample chu vi ~`CLOUD_BUMP` + `arcApex()` chọn hướng bướu ra ngoài theo centroid (**winding-independent**; node-verify 100% bướu ngoài trên rect/tri/blob cả 2 chiều). Bake `drawSvgPath` như mây chữ nhật.
+> - **Opacity nền 0–100%** — slider **"Mờ nền"** (`ed-fill-opacity`). Lưu `a.fillOpacity` trên box/ellipse/cloud/cloudpen. Overlay dùng `rgba`/`fill-opacity`; bake truyền `opacity` cho `drawRectangle`/`drawEllipse`/`drawSvgPath` (chỉ nền — viền vẫn đặc).
+> - **An toàn**: 100% client-side, KHÔNG đổi Python, không network/eval. Chỉ thêm nhánh kind mới + mở rộng list — không đụng logic cũ. Poly state dọn sạch khi Delete/đổi-tool/exit/click-trang-khác. `node --check` toàn bộ JS + `test_export.py` OK. Geometry mây node-verified + browser-render valid. **CHƯA GUI-test thao tác tay trong app thật.**
 
 > v0.2.27 — **Nhiều cửa sổ + "Open with Nabu PDF" + Copy/Paste ảnh trong trang** (mã sidecar KHÔNG đổi — không rebuild binary):
 > - **Nhiều cửa sổ** ([`main.js`](desktop/src/main.js), [`updater.js`](desktop/src/updater.js)): bỏ singleton `mainWindow` → `Set windows`; `createWindow()`/`primaryWindow()`/`senderWindow(e)`. Mọi cửa sổ **chung 1 sidecar** (chung port+token, broadcast status) — model OCR nạp 1 lần. Menu **"Cửa sổ mới" (Ctrl+N)**. IPC dialog/print target đúng cửa sổ gửi. Updater nhận window-provider fn.

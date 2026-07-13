@@ -184,6 +184,22 @@
     "Xuất:": "Export:",
     "Văn bản OCR thô": "Raw OCR text",
 
+    // --- edit toolbar: cloud-pen / fill-opacity / image multi-page ---
+    "Khoanh mây tự do — vẽ bút (giữ chuột kéo) hoặc bấm từng điểm":
+      "Freehand revision cloud — draw with the pen (drag) or click point by point",
+    "Độ mờ nền: 0% = trong suốt hoàn toàn, 100% = đặc kín":
+      "Fill opacity: 0% = fully transparent, 100% = fully opaque",
+    "Mờ nền": "Fill opacity",
+    "Sao chép ảnh/chữ ký đang chọn sang nhiều trang (cùng vị trí)":
+      "Copy the selected image/signature to multiple pages (same position)",
+    "Áp nhiều trang": "Apply to pages",
+    "Áp ảnh / chữ ký cho nhiều trang": "Apply image / signature to multiple pages",
+    "Sao chép ảnh đang chọn (giữ nguyên vị trí và kích thước) sang các trang bạn nhập.":
+      "Copy the selected image (keeping its position and size) to the pages you enter.",
+    "Khoảng trang": "Page range",
+    "vd: 1-3, 5, 8-10": "e.g. 1-3, 5, 8-10",
+    "Áp dụng": "Apply",
+
     // --- watermark dialog ---
     "Watermark (đóng dấu mờ)": "Watermark",
     "Nội dung": "Text",

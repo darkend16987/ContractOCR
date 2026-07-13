@@ -2,8 +2,8 @@
 
 Bộ công cụ **PDF desktop** (Electron) cho tiếng Việt: xem · ghép · tách trang ·
 **tách thành nhiều file** · chèn · thêm trang trắng · xoay · **đánh số trang** · chú thích ·
-khoanh vùng (chữ nhật / elip / **khoanh mây revision**, chọn nét viền + màu nền/trong suốt) ·
-hộp văn bản (font/đậm/nghiêng/gạch chân) ·
+khoanh vùng (chữ nhật / elip / **khoanh mây revision** — chữ nhật hoặc **vẽ mây tự do** bằng bút/điểm, chọn nét viền + màu nền + **độ mờ nền 0–100%**) ·
+hộp văn bản (font/đậm/nghiêng/gạch chân) · **chèn ảnh / chữ ký** (đóng dấu 1 lần cho **nhiều trang**, nhận PNG/JPG/BMP) ·
 watermark · redact (che thông tin chọn màu) · sửa chữ · nén · **in (kết nối máy in)** · so sánh 2 file
 (văn bản & **bản vẽ CAD/Revit** — khoanh mây revision vùng thay đổi, phóng to/vừa màn hình) ·
 tạo PDF tìm-kiếm-được · **dịch PDF (AI) giữ layout** (PDF có text thật, xuất file mới) ·

@@ -164,6 +164,7 @@
         <button class="tool" data-tool="box" title="Khoanh vùng — khung chữ nhật"><svg class="ic"><use href="#ic-square"/></svg></button>
         <button class="tool" data-tool="ellipse" title="Khoanh vùng — elip / tròn"><svg class="ic"><use href="#ic-circle"/></svg></button>
         <button class="tool" data-tool="cloud" title="Khoanh mây (revision cloud) — chuẩn kỹ thuật / xây dựng"><svg class="ic"><use href="#ic-cloud"/></svg></button>
+        <button class="tool" data-tool="cloudpen" title="Khoanh mây tự do — vẽ bút (giữ chuột kéo) hoặc bấm từng điểm"><svg class="ic"><use href="#ic-cloud"/></svg><span class="tool-pen">✎</span></button>
         <button class="tool" data-tool="arrow" title="Mũi tên chỉ dẫn"><svg class="ic"><use href="#ic-arrow"/></svg></button>
         <button class="tool" data-tool="note" title="Ghi chú (comment) gắn vào một điểm"><svg class="ic"><use href="#ic-message"/></svg></button>
         <button class="tool" data-tool="image" title="Chèn ảnh / chữ ký"><svg class="ic"><use href="#ic-photo"/></svg></button>
@@ -187,6 +188,8 @@
       <label class="ctl" data-ctl="penwidth" title="Độ dày nét vẽ / nét viền">Nét <input type="number" id="ed-penwidth" min="1" max="24" value="2" /></label>
       <label class="ctl" data-ctl="fill" title="Màu nền bên trong (khi khoanh vùng)">Nền <input type="color" id="ed-fill" value="#ffffff" /></label>
       <label class="ctl" data-ctl="fill" title="Không tô nền — để trong suốt"><input type="checkbox" id="ed-fill-none" checked /> Trong suốt</label>
+      <label class="ctl" data-ctl="fill" title="Độ mờ nền: 0% = trong suốt hoàn toàn, 100% = đặc kín">Mờ nền <input type="range" id="ed-fill-opacity" min="0" max="100" step="1" value="100" /><span id="ed-fill-opacity-val" class="readout">100%</span></label>
+      <button id="ed-img-pages" data-ctl="imgpages" title="Sao chép ảnh/chữ ký đang chọn sang nhiều trang (cùng vị trí)">Áp nhiều trang</button>
       <div class="sep"></div>
       <button id="ed-watermark" title="Đóng dấu mờ lên mọi trang">Watermark</button>
       <button id="ed-form" title="Điền các trường biểu mẫu PDF">Điền form</button>
@@ -305,6 +308,20 @@
         <div class="modal-actions">
           <button id="wm-cancel">Hủy</button>
           <button id="wm-ok" class="primary">Thêm vào mọi trang</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Apply image/signature to a range of pages -->
+    <div class="modal" id="imgpages-modal" hidden>
+      <div class="modal-card">
+        <h3>Áp ảnh / chữ ký cho nhiều trang</h3>
+        <p class="cmp-note">Sao chép ảnh đang chọn (giữ nguyên vị trí và kích thước) sang các trang bạn nhập.</p>
+        <label>Khoảng trang <input id="imgpages-input" type="text" placeholder="vd: 1-3, 5, 8-10" /></label>
+        <p class="cmp-note" id="imgpages-hint"></p>
+        <div class="modal-actions">
+          <button id="imgpages-cancel">Hủy</button>
+          <button id="imgpages-ok" class="primary">Áp dụng</button>
         </div>
       </div>
     </div>

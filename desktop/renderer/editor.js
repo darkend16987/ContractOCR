@@ -35,13 +35,15 @@
     italic: false,
     underline: false,
     penWidth: 2,
-    fillColor: "#ffffff", // interior fill for box / ellipse / cloud
+    fillColor: "#ffffff", // interior fill for box / ellipse / cloud / cloudpen
     fillOn: false, // false → transparent interior (the default for revision clouds)
+    fillOpacity: 1, // 0..1 interior-fill opacity (0 = fully transparent, 1 = solid)
     annots: {}, // pageIndex -> [annot]
     watermark: null, // { text, size, angle, opacity, color }
     seq: 1,
     sel: null, // selected annot id (numbers are unique across pages)
     pendingImage: null, // { dataUrl, mime } awaiting a placement click
+    _poly: null, // freehand-cloud polygon in progress: { page, id, layer, cx, cy }
     _form: null,
     _formDoc: null,
   };
@@ -212,11 +214,57 @@
     return null;
   }
 
+  // Coerce any browser-decodable image data URL into one pdf-lib can embed.
+  // PNG/JPEG pass through unchanged; anything else the browser can decode (BMP,
+  // GIF, WebP…) is re-encoded to PNG via a canvas so it can still be placed.
+  // Resolves { dataUrl, fmt } or null (undecodable). Async: image decode + draw.
+  function toEmbeddable(dataUrl) {
+    return new Promise((resolve) => {
+      let bytes;
+      try {
+        bytes = dataUrlToBytes(dataUrl);
+      } catch (_) {
+        resolve(null);
+        return;
+      }
+      const fmt = sniffImage(bytes);
+      if (fmt) {
+        resolve({ dataUrl, fmt });
+        return;
+      }
+      const img = new Image();
+      img.onload = () => {
+        try {
+          const c = document.createElement("canvas");
+          c.width = img.naturalWidth || 1;
+          c.height = img.naturalHeight || 1;
+          c.getContext("2d").drawImage(img, 0, 0);
+          resolve({ dataUrl: c.toDataURL("image/png"), fmt: "png" });
+        } catch (_) {
+          resolve(null); // e.g. a tainted canvas — shouldn't happen for local files
+        }
+      };
+      img.onerror = () => resolve(null);
+      img.src = dataUrl;
+    });
+  }
+
   // Effective interior fill for a newly created box/ellipse/cloud: a hex colour
   // when the fill toggle is on, otherwise "none" (transparent — the usual choice
   // for a revision cloud so the marked-up content stays visible).
   function effFill() {
     return ed.fillOn ? ed.fillColor : "none";
+  }
+
+  // "#rgb" / "#rrggbb" + alpha (0..1) → CSS rgba() for the overlay fill preview.
+  function hexToRgba(hex, alpha) {
+    let h = String(hex || "").replace("#", "");
+    if (h.length === 3) h = h.split("").map((c) => c + c).join("");
+    const r = parseInt(h.slice(0, 2), 16) || 0;
+    const g = parseInt(h.slice(2, 4), 16) || 0;
+    const b = parseInt(h.slice(4, 6), 16) || 0;
+    const a = alpha != null ? alpha : 1;
+    return `rgba(${r},${g},${b},${a})`;
   }
 
   // Revision-cloud outline as an SVG path. The perimeter of the a.w×a.h box is
@@ -253,6 +301,87 @@
     side(x0, y1, x0, y0); // left: bottom → top
     const d = `M ${x0} ${y0} ` + parts.join(" ") + " Z";
     return { d, pad, W: Math.max(1, w) + 2 * pad, H: Math.max(1, h) + 2 * pad };
+  }
+
+  // Freehand / polygon revision cloud: scallop a *closed* polygon given by an
+  // ordered point list (scale-1 space). The perimeter is resampled into ~`bump`
+  // spaced points and each span becomes an outward semicircular bump. "Outward"
+  // is decided per-span relative to the polygon centroid, so it works for any
+  // winding. Returns { d, minX, minY, pad, W, H } (local 0-origin, y-down —
+  // drives both the overlay <svg> and pdf-lib's drawSvgPath, like cloudPath) or
+  // null if there aren't enough distinct points. Corners are lightly rounded.
+  // Apex (farthest point) of the SVG elliptical-arc A→B with rx=ry=rr, x-rotation
+  // 0 and large-arc-flag 0, for a given sweep flag. Uses the SVG endpoint→center
+  // parameterisation. Lets cloudPathPoly decide which sweep bulges outward.
+  function arcApex(A, B, rr, sweep) {
+    const dx = B.x - A.x, dy = B.y - A.y;
+    const chord = Math.hypot(dx, dy) || 1;
+    rr = Math.max(rr, chord / 2 + 0.01);
+    const mx = (A.x + B.x) / 2, my = (A.y + B.y) / 2;
+    const h = Math.sqrt(Math.max(0, rr * rr - (chord / 2) * (chord / 2)));
+    const ux = -dy / chord, uy = dx / chord; // unit perpendicular to the chord
+    const sign = sweep ? 1 : -1; // large-arc-flag is 0, so center sign = ±1 by sweep
+    const ccx = mx + sign * h * ux, ccy = my + sign * h * uy;
+    let vx = mx - ccx, vy = my - ccy;
+    const vl = Math.hypot(vx, vy) || 1;
+    return { x: ccx + (rr * vx) / vl, y: ccy + (rr * vy) / vl };
+  }
+
+  function cloudPathPoly(rawPts, bump) {
+    bump = bump || CLOUD_BUMP;
+    const pts = [];
+    for (const p of rawPts || []) {
+      const last = pts[pts.length - 1];
+      if (!last || Math.hypot(p.x - last.x, p.y - last.y) > 0.5) pts.push({ x: p.x, y: p.y });
+    }
+    if (pts.length < 3) return null;
+    let cx = 0, cy = 0;
+    for (const p of pts) { cx += p.x; cy += p.y; }
+    cx /= pts.length; cy /= pts.length;
+    const loop = pts.concat([pts[0]]);
+    let L = 0;
+    for (let i = 1; i < loop.length; i++) L += Math.hypot(loop[i].x - loop[i - 1].x, loop[i].y - loop[i - 1].y);
+    if (L < 1) return null;
+    const n = Math.max(6, Math.round(L / bump));
+    const step = L / n;
+    // Resample n points evenly along the closed perimeter.
+    const samples = [];
+    let segI = 1, dist = 0;
+    let segStart = loop[0], segEnd = loop[1];
+    let segLen = Math.hypot(segEnd.x - segStart.x, segEnd.y - segStart.y);
+    for (let k = 0; k < n; k++) {
+      const target = k * step;
+      while (target > dist + segLen && segI < loop.length - 1) {
+        dist += segLen;
+        segI++;
+        segStart = loop[segI - 1];
+        segEnd = loop[segI];
+        segLen = Math.hypot(segEnd.x - segStart.x, segEnd.y - segStart.y);
+      }
+      const t = segLen > 0 ? Math.min(1, (target - dist) / segLen) : 0;
+      samples.push({ x: segStart.x + (segEnd.x - segStart.x) * t, y: segStart.y + (segEnd.y - segStart.y) * t });
+    }
+    const xs = samples.map((s) => s.x), ys = samples.map((s) => s.y);
+    const minX = Math.min(...xs), minY = Math.min(...ys);
+    const maxX = Math.max(...xs), maxY = Math.max(...ys);
+    const pad = bump;
+    const lx = (x) => (x - minX + pad).toFixed(2);
+    const ly = (y) => (y - minY + pad).toFixed(2);
+    const rNum = step / 2;
+    const r = rNum.toFixed(2);
+    const parts = [];
+    for (let k = 0; k < n; k++) {
+      const a = samples[k], b = samples[(k + 1) % n];
+      // Bulge each span outward. The two sweep flags put the arc apex on opposite
+      // sides of the chord; pick the one whose apex is farther from the centroid.
+      // Winding-independent, so it's correct for either polygon orientation.
+      const ap1 = arcApex(a, b, rNum, 1), ap0 = arcApex(a, b, rNum, 0);
+      const d1 = Math.hypot(ap1.x - cx, ap1.y - cy), d0 = Math.hypot(ap0.x - cx, ap0.y - cy);
+      const sweep = d1 > d0 ? 1 : 0;
+      parts.push(`A ${r} ${r} 0 0 ${sweep} ${lx(b.x)} ${ly(b.y)}`);
+    }
+    const d = `M ${lx(samples[0].x)} ${ly(samples[0].y)} ` + parts.join(" ") + " Z";
+    return { d, minX, minY, pad, W: maxX - minX + 2 * pad, H: maxY - minY + 2 * pad };
   }
 
   // ---- overlay rendering ---------------------------------------------------
@@ -380,7 +509,9 @@
       svg.setAttribute("height", "100%");
       const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
       path.setAttribute("d", d);
-      path.setAttribute("fill", a.fill && a.fill !== "none" ? a.fill : "none");
+      const cloudFilled = a.fill && a.fill !== "none";
+      path.setAttribute("fill", cloudFilled ? a.fill : "none");
+      if (cloudFilled) path.setAttribute("fill-opacity", String(a.fillOpacity != null ? a.fillOpacity : 1));
       path.setAttribute("stroke", a.color);
       path.setAttribute("stroke-width", String(Math.max(1, a.width || 2)));
       path.setAttribute("stroke-linejoin", "round");
@@ -392,6 +523,71 @@
         // Pin the resize grip to the true box corner, not the padded corner.
         hnd.style.cssText = `left:${(a.w + pad) * s}px; top:${(a.h + pad) * s}px; right:auto; bottom:auto;`;
         el.appendChild(hnd);
+      }
+      return el;
+    }
+
+    if (a.kind === "cloudpen") {
+      if (a.closed) {
+        const cp = cloudPathPoly(a.pts, CLOUD_BUMP);
+        if (!cp) return el; // degenerate — render nothing (kept only until cleaned up)
+        el.style.left = (cp.minX - cp.pad) * s + "px";
+        el.style.top = (cp.minY - cp.pad) * s + "px";
+        el.style.width = cp.W * s + "px";
+        el.style.height = cp.H * s + "px";
+        const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+        svg.setAttribute("viewBox", `0 0 ${cp.W} ${cp.H}`);
+        svg.setAttribute("width", "100%");
+        svg.setAttribute("height", "100%");
+        const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+        path.setAttribute("d", cp.d);
+        const filled = a.fill && a.fill !== "none";
+        path.setAttribute("fill", filled ? a.fill : "none");
+        if (filled) path.setAttribute("fill-opacity", String(a.fillOpacity != null ? a.fillOpacity : 1));
+        path.setAttribute("stroke", a.color);
+        path.setAttribute("stroke-width", String(Math.max(1, a.width || 2)));
+        path.setAttribute("stroke-linejoin", "round");
+        svg.appendChild(path);
+        el.appendChild(svg);
+      } else {
+        // In-progress polygon/freehand: plain guide polyline + vertex dots, plus a
+        // rubber-band segment to the cursor while placing polygon vertices.
+        const live = ed._poly && ed._poly.id === a.id && ed._poly.cx != null ? { x: ed._poly.cx, y: ed._poly.cy } : null;
+        const chain = live ? a.pts.concat([live]) : a.pts.slice();
+        const xs = chain.map((p) => p.x), ys = chain.map((p) => p.y);
+        const pad = 6;
+        const minX = Math.min(...xs) - pad, minY = Math.min(...ys) - pad;
+        const w = Math.max(1, Math.max(...xs) + pad - minX);
+        const h = Math.max(1, Math.max(...ys) + pad - minY);
+        el.style.left = minX * s + "px";
+        el.style.top = minY * s + "px";
+        el.style.width = w * s + "px";
+        el.style.height = h * s + "px";
+        const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+        svg.setAttribute("viewBox", `0 0 ${w} ${h}`);
+        svg.setAttribute("width", "100%");
+        svg.setAttribute("height", "100%");
+        if (chain.length > 1) {
+          const poly = document.createElementNS("http://www.w3.org/2000/svg", "polyline");
+          poly.setAttribute("points", chain.map((p) => `${p.x - minX},${p.y - minY}`).join(" "));
+          poly.setAttribute("fill", "none");
+          poly.setAttribute("stroke", a.color);
+          poly.setAttribute("stroke-width", String(Math.max(1, a.width || 2)));
+          poly.setAttribute("stroke-dasharray", "4 3");
+          poly.setAttribute("stroke-linejoin", "round");
+          svg.appendChild(poly);
+        }
+        a.pts.forEach((p, k) => {
+          const dot = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+          dot.setAttribute("cx", String(p.x - minX));
+          dot.setAttribute("cy", String(p.y - minY));
+          dot.setAttribute("r", k === 0 ? "5" : "3"); // first vertex = the close target
+          dot.setAttribute("fill", k === 0 ? "#fff" : a.color);
+          dot.setAttribute("stroke", a.color);
+          dot.setAttribute("stroke-width", "1.5");
+          svg.appendChild(dot);
+        });
+        el.appendChild(svg);
       }
       return el;
     }
@@ -415,11 +611,11 @@
       el.style.background = a.color;
     } else if (a.kind === "box") {
       el.style.border = Math.max(1, (a.width || 2)) * s + "px solid " + a.color;
-      if (a.fill && a.fill !== "none") el.style.background = a.fill;
+      if (a.fill && a.fill !== "none") el.style.background = hexToRgba(a.fill, a.fillOpacity != null ? a.fillOpacity : 1);
     } else if (a.kind === "ellipse") {
       el.style.border = Math.max(1, (a.width || 2)) * s + "px solid " + a.color;
       el.style.borderRadius = "50%";
-      if (a.fill && a.fill !== "none") el.style.background = a.fill;
+      if (a.fill && a.fill !== "none") el.style.background = hexToRgba(a.fill, a.fillOpacity != null ? a.fillOpacity : 1);
     } else if (a.kind === "note") {
       el.style.background = a.color;
       el.title = a.text || "(ghi chú trống)";
@@ -495,11 +691,14 @@
       setFmtBtn("ed-italic", a.italic);
       setFmtBtn("ed-underline", a.underline);
     }
-    if (["draw", "box", "ellipse", "cloud", "arrow"].includes(a.kind) && a.width) $("ed-penwidth").value = String(a.width);
-    if (["box", "ellipse", "cloud"].includes(a.kind)) {
+    if (["draw", "box", "ellipse", "cloud", "cloudpen", "arrow"].includes(a.kind) && a.width) $("ed-penwidth").value = String(a.width);
+    if (["box", "ellipse", "cloud", "cloudpen"].includes(a.kind)) {
       const none = !a.fill || a.fill === "none";
       $("ed-fill-none").checked = none;
       if (!none) $("ed-fill").value = a.fill;
+      const op = a.fillOpacity != null ? a.fillOpacity : 1;
+      $("ed-fill-opacity").value = String(Math.round(op * 100));
+      $("ed-fill-opacity-val").textContent = Math.round(op * 100) + "%";
     }
   }
   function setFmtBtn(id, on) {
@@ -538,7 +737,7 @@
         select(id);
         const a = findAnnot(id).a;
         const orig =
-          a.kind === "draw"
+          a.kind === "draw" || a.kind === "cloudpen"
             ? { pts: a.pts.map((q) => ({ ...q })) }
             : a.kind === "arrow"
             ? { x1: a.x1, y1: a.y1, x2: a.x2, y2: a.y2 }
@@ -572,7 +771,10 @@
     if (ed.tool === "highlight" || ed.tool === "redact" || ed.tool === "box" || ed.tool === "ellipse" || ed.tool === "cloud") {
       const col = ed.tool === "redact" ? ed.redactColor : ed.color;
       const a = { id: ed.seq++, kind: ed.tool, x: p.x, y: p.y, w: 1, h: 1, color: col, width: ed.penWidth };
-      if (ed.tool === "box" || ed.tool === "ellipse" || ed.tool === "cloud") a.fill = effFill();
+      if (ed.tool === "box" || ed.tool === "ellipse" || ed.tool === "cloud") {
+        a.fill = effFill();
+        a.fillOpacity = ed.fillOpacity;
+      }
       pushEdUndo(); // dropped again if the shape ends up tiny/cancelled
       annotsFor(i).push(a);
       ed.sel = a.id;
@@ -606,9 +808,60 @@
       e.preventDefault();
       return;
     }
+
+    if (ed.tool === "cloudpen") {
+      // A polygon is being clicked out: only its own page is interactive. Add a
+      // vertex, or close if the click lands on the first vertex (≥3 points).
+      if (ed._poly) {
+        e.preventDefault();
+        if (ed._poly.layer !== layer) return; // ignore clicks on other pages
+        const hit = findAnnot(ed._poly.id);
+        if (hit) {
+          const first = hit.a.pts[0];
+          const near = first && Math.hypot(p.x - first.x, p.y - first.y) * state.scale < 12;
+          if (near && hit.a.pts.length >= 3) {
+            closePoly();
+          } else {
+            hit.a.pts.push(p);
+            renderLayer(layer, i);
+          }
+        }
+        return;
+      }
+      // New stroke: a drag turns freehand (closed on mouse-up); a plain click
+      // (no drag) starts a click-to-add-vertex polygon.
+      const a = {
+        id: ed.seq++,
+        kind: "cloudpen",
+        pts: [p],
+        closed: false,
+        color: ed.color,
+        width: ed.penWidth,
+        fill: effFill(),
+        fillOpacity: ed.fillOpacity,
+      };
+      pushEdUndo();
+      annotsFor(i).push(a);
+      ed.sel = a.id;
+      drag = { type: "cloudpen", page: i, id: a.id, layer, downX: p.x, downY: p.y, moved: false };
+      e.preventDefault();
+      return;
+    }
   }
 
   function onMove(e) {
+    // Polygon-in-progress rubber band: track the cursor so the open cloud shows a
+    // provisional segment to where the next vertex would land. No active drag here.
+    if (!drag && ed._poly) {
+      const layer = e.target.closest(".annot-layer");
+      if (layer && layer === ed._poly.layer) {
+        const q = layerPoint(layer, e);
+        ed._poly.cx = q.x;
+        ed._poly.cy = q.y;
+        renderLayer(layer, ed._poly.page);
+      }
+      return;
+    }
     if (!drag) return;
     const p = layerPoint(drag.layer, e);
     const hit = findAnnot(drag.id);
@@ -621,7 +874,7 @@
     if (drag.type === "move") {
       const dx = p.x - drag.sx;
       const dy = p.y - drag.sy;
-      if (a.kind === "draw") {
+      if (a.kind === "draw" || a.kind === "cloudpen") {
         a.pts = drag.orig.pts.map((q) => ({ x: q.x + dx, y: q.y + dy }));
       } else if (a.kind === "arrow") {
         a.x1 = drag.orig.x1 + dx;
@@ -645,12 +898,39 @@
       a.h = Math.abs(p.y - drag.sy);
     } else if (drag.type === "draw") {
       a.pts.push(p);
+    } else if (drag.type === "cloudpen") {
+      // Past the click threshold this stroke is a freehand drag → collect points.
+      if (!drag.moved && Math.hypot(p.x - drag.downX, p.y - drag.downY) * state.scale > 5) drag.moved = true;
+      if (drag.moved) a.pts.push(p);
     }
     renderLayer(drag.layer, drag.page);
   }
 
   function onUp() {
     if (!drag) return;
+    // A freehand cloud drag ends by closing the loop; a click (no drag) instead
+    // arms polygon mode so further clicks add vertices.
+    if (drag.type === "cloudpen") {
+      const hit = findAnnot(drag.id);
+      if (hit) {
+        if (drag.moved) {
+          if (cloudPathPoly(hit.a.pts, CLOUD_BUMP)) {
+            hit.a.closed = true;
+          } else {
+            ed.annots[drag.page] = ed.annots[drag.page].filter((x) => x.id !== drag.id);
+            ed.sel = null;
+            dropLastEdUndo();
+          }
+        } else {
+          ed._poly = { page: drag.page, id: drag.id, layer: drag.layer, cx: null, cy: null };
+          $("ed-hint").textContent = "Bấm thêm điểm; bấm vào điểm đầu (hoặc nhấn Enter / bấm đúp) để đóng mây. Esc để huỷ.";
+        }
+      }
+      const layer = drag.layer, page = drag.page;
+      drag = null;
+      renderLayer(layer, page);
+      return;
+    }
     const hit = findAnnot(drag.id);
     if (hit) {
       const a = hit.a;
@@ -668,6 +948,37 @@
     renderLayer(layer, page);
   }
 
+  // Finish a click-to-add-vertex cloud: needs ≥3 points, else it's discarded.
+  function closePoly() {
+    if (!ed._poly) return;
+    const info = ed._poly;
+    ed._poly = null;
+    const hit = findAnnot(info.id);
+    if (hit) {
+      if (hit.a.pts.length >= 3 && cloudPathPoly(hit.a.pts, CLOUD_BUMP)) {
+        hit.a.closed = true;
+      } else {
+        ed.annots[info.page] = (ed.annots[info.page] || []).filter((x) => x.id !== info.id);
+        ed.sel = null;
+        dropLastEdUndo();
+      }
+    }
+    setTool("cloudpen"); // reset the hint text; stays on the tool for the next cloud
+    renderLayer(info.layer, info.page);
+  }
+
+  // Abandon a click-to-add-vertex cloud without closing it (Esc).
+  function cancelPoly() {
+    if (!ed._poly) return;
+    const info = ed._poly;
+    ed._poly = null;
+    ed.annots[info.page] = (ed.annots[info.page] || []).filter((x) => x.id !== info.id);
+    ed.sel = null;
+    dropLastEdUndo();
+    setTool("cloudpen");
+    renderLayer(info.layer, info.page);
+  }
+
   // Esc mid-gesture: abort the in-progress create/move/resize and restore the
   // pre-drag state (the matching undo snapshot is dropped — nothing changed).
   function cancelDrag() {
@@ -677,12 +988,12 @@
     const hit = findAnnot(d.id);
     if (hit) {
       const a = hit.a;
-      if (d.type === "rect" || d.type === "draw" || d.type === "arrow") {
+      if (d.type === "rect" || d.type === "draw" || d.type === "arrow" || d.type === "cloudpen") {
         // creation in progress → remove it entirely
         ed.annots[d.page] = ed.annots[d.page].filter((x) => x.id !== d.id);
         ed.sel = null;
       } else if (d.type === "move") {
-        if (a.kind === "draw") a.pts = d.orig.pts;
+        if (a.kind === "draw" || a.kind === "cloudpen") a.pts = d.orig.pts;
         else if (a.kind === "arrow") {
           a.x1 = d.orig.x1;
           a.y1 = d.orig.y1;
@@ -706,6 +1017,15 @@
     const layer = e.target.closest(".annot-layer");
     if (!layer) return;
     const i = +layer.dataset.index;
+    // Double-click closes a polygon cloud in progress. The two mousedowns of the
+    // dbl-click each pushed a vertex; drop the near-duplicate last one first.
+    if (ed._poly) {
+      e.preventDefault();
+      const hit = findAnnot(ed._poly.id);
+      if (hit && hit.a.pts.length > 3) hit.a.pts.pop();
+      closePoly();
+      return;
+    }
     const noteEl = e.target.closest(".an-note");
     if (noteEl) {
       e.preventDefault();
@@ -845,15 +1165,16 @@
       const f = inp.files && inp.files[0];
       if (!f) return;
       const reader = new FileReader();
-      reader.onload = () => {
-        // Trust the bytes, not the MIME: only PNG/JPEG can be embedded.
-        const fmt = sniffImage(dataUrlToBytes(reader.result));
-        if (!fmt) {
-          toast("Định dạng ảnh không hỗ trợ — chỉ nhận PNG hoặc JPG.", "bad");
+      reader.onload = async () => {
+        // Trust the bytes, not the MIME. PNG/JPEG embed directly; BMP/GIF/WebP
+        // are re-encoded to PNG so they still work despite pdf-lib's PNG/JPEG-only limit.
+        const emb = await toEmbeddable(reader.result);
+        if (!emb) {
+          toast("Không đọc được ảnh này — thử PNG, JPG hoặc BMP.", "bad");
           return;
         }
-        ed.pendingImage = { dataUrl: reader.result, fmt };
-        if (fmt === "jpg")
+        ed.pendingImage = emb;
+        if (emb.fmt === "jpg")
           toast("Đã chọn ảnh JPG (nền đặc) — chữ ký nên dùng PNG nền trong. Bấm lên trang để đặt.", "warn");
         else toast("Đã chọn ảnh — bấm lên trang để đặt.", "good");
       };
@@ -892,26 +1213,99 @@
   // page places it — reusing the exact same path as the "Ảnh" tool. dataUrl must
   // be a PNG or JPEG data URL (pdf-lib can only embed those). Returns false if the
   // image can't be used (no doc open / unsupported format).
-  function beginImagePaste(dataUrl) {
+  async function beginImagePaste(dataUrl) {
     if (!state.bytes) {
       toast("Mở một PDF trước khi dán ảnh.", "bad");
       return false;
     }
-    let fmt;
-    try {
-      fmt = sniffImage(dataUrlToBytes(dataUrl));
-    } catch (_) {
-      fmt = null;
-    }
-    if (!fmt) {
-      toast("Ảnh trong clipboard không dán được (chỉ nhận PNG/JPG).", "bad");
+    const emb = await toEmbeddable(dataUrl);
+    if (!emb) {
+      toast("Ảnh trong clipboard không dán được.", "bad");
       return false;
     }
     if (!ed.active) enter();
-    ed.pendingImage = { dataUrl, fmt };
+    ed.pendingImage = emb;
     setTool("image");
     toast("Bấm lên trang để dán ảnh.", "good");
     return true;
+  }
+
+  // Parse a page-range string like "1-3, 5, 8-10" into a Set of 0-based page
+  // indices within [0, count). Returns null on any malformed token; out-of-range
+  // numbers are silently dropped. Page numbers in the string are 1-based.
+  function parsePageRanges(str, count) {
+    const out = new Set();
+    for (const partRaw of String(str || "").split(",")) {
+      const part = partRaw.trim();
+      if (!part) continue;
+      const m = /^(\d+)\s*-\s*(\d+)$/.exec(part);
+      if (m) {
+        let a = +m[1], b = +m[2];
+        if (a > b) [a, b] = [b, a];
+        for (let n = a; n <= b; n++) if (n >= 1 && n <= count) out.add(n - 1);
+      } else if (/^\d+$/.test(part)) {
+        const n = +part;
+        if (n >= 1 && n <= count) out.add(n - 1);
+      } else {
+        return null;
+      }
+    }
+    return out;
+  }
+
+  function openImgPages() {
+    if (ed.sel == null) {
+      toast("Chọn ảnh / chữ ký cần áp trước.", "bad");
+      return;
+    }
+    const hit = findAnnot(ed.sel);
+    if (!hit || hit.a.kind !== "image") {
+      toast("Chỉ áp được cho ảnh / chữ ký đang chọn.", "bad");
+      return;
+    }
+    const count = (state.pdf && state.pdf.numPages) || 0;
+    $("imgpages-input").value = "";
+    $("imgpages-hint").textContent = `Tài liệu có ${count} trang. Ảnh đang ở trang ${hit.page + 1}.`;
+    $("imgpages-modal").hidden = false;
+    setTimeout(() => $("imgpages-input").focus(), 0);
+  }
+
+  function applyImgPages() {
+    const hit = ed.sel != null ? findAnnot(ed.sel) : null;
+    if (!hit || hit.a.kind !== "image") {
+      $("imgpages-modal").hidden = true;
+      return;
+    }
+    const count = (state.pdf && state.pdf.numPages) || 0;
+    const set = parsePageRanges($("imgpages-input").value, count);
+    if (set === null) {
+      toast("Khoảng trang không hợp lệ. Ví dụ: 1-3, 5, 8-10", "bad");
+      return;
+    }
+    set.delete(hit.page); // the source page already carries the image
+    if (!set.size) {
+      toast("Không có trang hợp lệ để áp (ngoài trang hiện tại).", "warn");
+      return;
+    }
+    pushEdUndo();
+    const src = hit.a;
+    let added = 0;
+    for (const idx of set) {
+      annotsFor(idx).push({
+        id: ed.seq++,
+        kind: "image",
+        x: src.x,
+        y: src.y,
+        w: src.w,
+        h: src.h,
+        dataUrl: src.dataUrl,
+        fmt: src.fmt,
+      });
+      added++;
+    }
+    $("imgpages-modal").hidden = true;
+    syncOverlays();
+    toast(`Đã áp ảnh sang ${added} trang.`, "good");
   }
 
   // ---- PNG rasterisation for baking ---------------------------------------
@@ -1073,7 +1467,10 @@
           borderColor: hexRgb(a.color),
           borderWidth: a.width || 2,
         };
-        if (a.fill && a.fill !== "none") opts.color = hexRgb(a.fill);
+        if (a.fill && a.fill !== "none") {
+          opts.color = hexRgb(a.fill);
+          opts.opacity = a.fillOpacity != null ? a.fillOpacity : 1;
+        }
         page.drawRectangle(opts);
       } else if (a.kind === "ellipse") {
         const [x1, y1] = map(a.x, a.y);
@@ -1086,7 +1483,10 @@
           borderColor: hexRgb(a.color),
           borderWidth: a.width || 2,
         };
-        if (a.fill && a.fill !== "none") opts.color = hexRgb(a.fill);
+        if (a.fill && a.fill !== "none") {
+          opts.color = hexRgb(a.fill);
+          opts.opacity = a.fillOpacity != null ? a.fillOpacity : 1;
+        }
         page.drawEllipse(opts);
       } else if (a.kind === "cloud") {
         // Scallop outline mapped like the freehand path: (0,0) of the SVG sits at
@@ -1095,8 +1495,22 @@
         const { d, pad } = cloudPath(a.w, a.h, CLOUD_BUMP);
         const [bx, by] = map(a.x - pad, a.y - pad);
         const opts = { x: bx, y: by, borderColor: hexRgb(a.color), borderWidth: a.width || 2 };
-        if (a.fill && a.fill !== "none") opts.color = hexRgb(a.fill);
+        if (a.fill && a.fill !== "none") {
+          opts.color = hexRgb(a.fill);
+          opts.opacity = a.fillOpacity != null ? a.fillOpacity : 1;
+        }
         page.drawSvgPath(d, opts);
+      } else if (a.kind === "cloudpen") {
+        const cp = cloudPathPoly(a.pts, CLOUD_BUMP);
+        if (cp) {
+          const [bx, by] = map(cp.minX - cp.pad, cp.minY - cp.pad);
+          const opts = { x: bx, y: by, borderColor: hexRgb(a.color), borderWidth: a.width || 2 };
+          if (a.fill && a.fill !== "none") {
+            opts.color = hexRgb(a.fill);
+            opts.opacity = a.fillOpacity != null ? a.fillOpacity : 1;
+          }
+          page.drawSvgPath(cp.d, opts);
+        }
       } else if (a.kind === "arrow") {
         const c = hexRgb(a.color);
         const w = a.width || 2;
@@ -1388,6 +1802,7 @@
     box: ["color", "penwidth", "fill"],
     ellipse: ["color", "penwidth", "fill"],
     cloud: ["color", "penwidth", "fill"],
+    cloudpen: ["color", "penwidth", "fill"],
     arrow: ["color", "penwidth"],
     note: ["color"],
     image: [],
@@ -1403,9 +1818,10 @@
     box: ["color", "penwidth", "fill"],
     ellipse: ["color", "penwidth", "fill"],
     cloud: ["color", "penwidth", "fill"],
+    cloudpen: ["color", "penwidth", "fill"],
     arrow: ["color", "penwidth"],
     note: ["color"],
-    image: [],
+    image: ["imgpages"],
     redact: ["redact"],
   };
   // Show the palette controls relevant to the current context: for a drawing
@@ -1425,6 +1841,15 @@
   }
 
   function setTool(tool) {
+    // Leaving the cloud-pen tool abandons a polygon still being clicked out.
+    if (ed._poly && tool !== "cloudpen") {
+      const info = ed._poly;
+      ed._poly = null;
+      ed.annots[info.page] = (ed.annots[info.page] || []).filter((x) => x.id !== info.id);
+      if (ed.sel === info.id) ed.sel = null;
+      dropLastEdUndo();
+      renderLayer(info.layer, info.page);
+    }
     ed.tool = tool;
     document.querySelectorAll("#ed-tools .tool").forEach((b) => b.classList.toggle("active", b.dataset.tool === tool));
     syncCtlVisibility(tool);
@@ -1436,6 +1861,7 @@
       box: "Kéo để khoanh một vùng (khung chữ nhật).",
       ellipse: "Kéo để khoanh vùng bằng elip / hình tròn.",
       cloud: "Kéo để khoanh mây (revision cloud) quanh vùng cần lưu ý.",
+      cloudpen: "Giữ chuột kéo để vẽ mây tự do, hoặc bấm từng điểm rồi bấm điểm đầu / Enter / bấm đúp để đóng.",
       arrow: "Kéo từ gốc tới đích để vẽ mũi tên.",
       note: "Bấm lên trang để đặt ghi chú; gõ nội dung rồi Ctrl+Enter.",
       image: "Bấm lên trang để đặt ảnh đã chọn.",
@@ -1493,6 +1919,7 @@
   }
   // "Xong": bake every pending edit into the PDF, then leave edit mode.
   async function exit() {
+    if (ed._poly) closePoly(); // finalize (or drop) a cloud still being drawn
     if (hasAny()) await bakePending();
     clearEdHistory();
     leaveMode();
@@ -1512,6 +1939,7 @@
     ed.watermark = null;
     ed.sel = null;
     ed.pendingImage = null;
+    ed._poly = null;
     clearEdHistory();
   }
 
@@ -1529,6 +1957,15 @@
   $("ed-delete").onclick = deleteSelected;
   $("ed-watermark").onclick = openWatermark;
   $("ed-form").onclick = openForm;
+  $("ed-img-pages").onclick = openImgPages;
+  $("imgpages-ok").onclick = applyImgPages;
+  $("imgpages-cancel").onclick = () => ($("imgpages-modal").hidden = true);
+  $("imgpages-input").addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      applyImgPages();
+    }
+  });
 
   document.querySelectorAll("#ed-tools .tool").forEach((b) => {
     b.onclick = () => {
@@ -1614,7 +2051,7 @@
     ed.penWidth = Math.max(1, +e.target.value || 2);
     if (ed.sel != null) {
       const hit = findAnnot(ed.sel);
-      if (hit && ["draw", "box", "ellipse", "cloud", "arrow"].includes(hit.a.kind)) {
+      if (hit && ["draw", "box", "ellipse", "cloud", "cloudpen", "arrow"].includes(hit.a.kind)) {
         pushEdUndo("pwidth:" + ed.sel);
         hit.a.width = ed.penWidth;
         syncOverlays();
@@ -1626,9 +2063,10 @@
   function applyFillToSel() {
     if (ed.sel == null) return;
     const hit = findAnnot(ed.sel);
-    if (hit && ["box", "ellipse", "cloud"].includes(hit.a.kind)) {
+    if (hit && ["box", "ellipse", "cloud", "cloudpen"].includes(hit.a.kind)) {
       pushEdUndo("fill:" + ed.sel);
       hit.a.fill = effFill();
+      hit.a.fillOpacity = ed.fillOpacity;
       syncOverlays();
     }
   }
@@ -1640,6 +2078,17 @@
   };
   $("ed-fill-none").onchange = (e) => {
     ed.fillOn = !e.target.checked;
+    applyFillToSel();
+  };
+  $("ed-fill-opacity").oninput = (e) => {
+    const pct = Math.min(100, Math.max(0, +e.target.value || 0));
+    ed.fillOpacity = pct / 100;
+    $("ed-fill-opacity-val").textContent = pct + "%";
+    // Adjusting opacity implies a fill is wanted — turn transparency off.
+    if (ed.fillOn === false && pct > 0) {
+      ed.fillOn = true;
+      $("ed-fill-none").checked = false;
+    }
     applyFillToSel();
   };
 
@@ -1655,6 +2104,14 @@
   window.addEventListener("keydown", (e) => {
     if (!ed.active) return;
     const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement && document.activeElement.tagName);
+    // A polygon cloud in progress: Enter closes it; Esc / Delete abandon it.
+    // Handle here before the generic ladders so they don't corrupt _poly state.
+    if (ed._poly && !typing && ["Enter", "Escape", "Delete", "Backspace"].includes(e.key)) {
+      e.preventDefault();
+      if (e.key === "Enter") closePoly();
+      else cancelPoly();
+      return;
+    }
     if ((e.key === "Delete" || e.key === "Backspace") && !typing && ed.sel != null) {
       e.preventDefault();
       deleteSelected();
