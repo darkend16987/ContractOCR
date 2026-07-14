@@ -23,12 +23,13 @@ const FEATURES = [
   { i: "type", t: "Sửa chữ gốc của PDF", d: "Chỉnh trực tiếp văn bản thật trong PDF, dùng cả font hệ thống của máy — không phải vẽ đè." },
   { i: "pages", t: "Ghép · Tách · Chèn · Số trang", d: "Quản lý trang linh hoạt: kéo-thả sắp xếp, ghép/chèn từ file khác, tách trang chọn hoặc tách thành nhiều file (theo N trang / khoảng trang), thêm trang trắng, đánh số trang." },
   { i: "compare", t: "So sánh PDF & bản vẽ", d: "So sánh 2 file PDF theo từng dòng/từ; và so sánh bản vẽ kỹ thuật CAD/Revit bằng diff hình ảnh — chỉ ra vùng thêm/xóa/sửa, xuất bản đánh dấu." },
-  { i: "pen", t: "Chỉnh sửa & chú thích", d: "Hộp văn bản (chọn font, cỡ, đậm/nghiêng/gạch chân), che thông tin (redact chọn màu, an toàn), watermark, điền form, tô sáng, vẽ, chèn ảnh/chữ ký, ghi chú." },
+  { i: "pen", t: "Chỉnh sửa & chú thích", d: "Hộp văn bản (chọn font, cỡ, đậm/nghiêng/gạch chân), che thông tin (redact chọn màu, an toàn), watermark, điền form, tô sáng, vẽ mây tự do, đóng dấu ảnh lên nhiều trang, chèn ảnh/chữ ký, ghi chú." },
   { i: "print", t: "In tài liệu", d: "In trực tiếp từ app (Ctrl+P): chọn khổ giấy, in một mặt hoặc hai mặt (lật cạnh dài/ngắn), kèm cả in trang trắng." },
   { i: "search", t: "Tạo PDF tìm-kiếm-được", d: "OCR thêm lớp text vô hình để PDF scan có thể tìm kiếm và bôi chọn chữ." },
   { i: "archive", t: "Nén PDF", d: "Giảm dung lượng file (tối ưu ảnh) với nhiều mức nén, giữ chất lượng đọc tốt." },
   { i: "shield", t: "Khóa & mã hóa", d: "Đặt mật khẩu, mã hóa, trích xuất ảnh — bảo vệ tài liệu nhạy cảm." },
   { i: "convert", t: "Chuyển đổi PDF ↔ ảnh", d: "Tạo PDF từ ảnh, xuất từng trang ra ảnh, gộp ảnh thành tài liệu theo thứ tự." },
+  { i: "combine", t: "Nhiều cửa sổ & thao tác nhanh", d: "Mở nhiều tài liệu song song trên các cửa sổ riêng, \"Open with Nabu PDF\" từ Explorer, copy/paste & chèn ảnh, menu chuột phải (sao chép/dán/chọn) — làm việc mượt như app gốc." },
 ];
 
 document.getElementById("feature-grid").innerHTML = FEATURES.map((f) => `
