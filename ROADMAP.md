@@ -122,8 +122,13 @@ Text/watermark tiếng Việt render qua canvas hệ thống rồi nhúng PNG (t
   / `drawEllipse` / `drawLine` + đầu mũi tên). **note** = bake **PDF Text annotation thật** (sticky note,
   `/Contents` UTF-16 tiếng Việt qua `PDFHexString.fromText`, đọc/sửa được trong Acrobat/Foxit) **kèm**
   1 marker 💬 vẽ lên trang để vẫn thấy trong mọi trình xem. Validate headless trên pdf-lib vendored — PASS.
-- [ ] **T4.9** ▶️ Test GUI: vẽ box/elip/mũi tên/ghi chú → Áp dụng → Lưu → mở trong Acrobat/Foxit kiểm
-  tra comment (note) bấm đọc được + nội dung tiếng Việt đúng.
+- [x] **T4.8b** (v0.2.30) **Mũi tên kèm nhãn**: annot arrow thêm `label` — vẽ xong tự mở ô nhập ở đầu
+  mũi tên (double-click để sửa); render SVG `<text>`, bake PNG qua `renderTextPng` (dấu tiếng Việt chuẩn).
+  **Ghi chú dạng chuỗi (note-of-note)**: note thêm `replies[]` (chỉ nối thêm, không xoá gốc); panel hiện
+  chuỗi gốc+reply + "Thêm bình luận" + "Sửa gốc"; marker hiện badge số reply; bake gộp gốc+reply vào 1
+  `/Contents` (`noteThreadText()`).
+- [ ] **T4.9** ▶️ Test GUI: vẽ box/elip/mũi tên (+nhãn)/ghi chú (+bình luận) → Áp dụng → Lưu → mở trong
+  Acrobat/Foxit kiểm tra comment (note) bấm đọc được + nội dung tiếng Việt đúng.
 
 ## Phase 6 — Sửa chữ gốc (native text edit, ✅ code + test backend xong)
 
@@ -144,6 +149,23 @@ không phải scan/flat (chỉ là ảnh, không có ký tự). Cách làm = **s
   copy/search không ra đoạn cũ; PDF scan → toast "không có chữ để sửa".
 - [ ] **T6.5** (đã biết) Không reflow (sửa trong 1 span); font subset thiếu glyph → fallback DejaVu
   (kiểu chữ hơi khác); nền màu redact để lại ô trắng; trang đã xoay ô có thể lệch (sửa trước khi xoay).
+
+## Phase 7 — So sánh & Chồng lớp bản vẽ (✅ code + test backend xong)
+
+So sánh 2 tài liệu; với bản vẽ CAD/Revit dùng diff hình ảnh thay vì diff text (nét vẽ đổi
+hiếm khi chạm text run). Backend `src/compare/` (numpy + OpenCV + PyMuPDF, không thêm dep).
+
+- [x] **T7.0** So sánh text (`comparator.py`): word-stream diff giữa 2 PDF (OCR khi là scan) →
+  danh sách thay đổi + box vùng; view side-by-side `compare.js`.
+- [x] **T7.1** So sánh bản vẽ (`drawing.py`, `/compare-drawings`): khớp trang qua fingerprint (dHash +
+  từ khoá), căn lệch nhỏ bằng phase-correlation, diff ink mask (dilation tolerance) → vùng thêm/xoá/sửa;
+  xuất bản B có khoanh mây revision (`/compare-drawings/export`).
+- [x] **T7.2** (v0.2.30) **Chồng lớp (overlay)** — `overlay_drawings()` + `/overlay-drawings`: tái dùng
+  fingerprint page-match + `_register` (phaseCorrelate) → trả cặp trang khớp + offset căn (điểm PDF).
+  Mode "Chồng lớp" trong dialog So sánh → view onion-skin `#overlay-view`: 2 canvas A/B chồng, slider mờ,
+  tô màu khác biệt (A đỏ/B xanh, recolor `source-in` + `mix-blend multiply` → đỏ=chỉ A, xanh=chỉ B,
+  đen=trùng), toggle căn tự động, nudge tay, chuyển cặp (PageUp/Dn), zoom/fit. Test: 5/5 drawing + smoke overlay PASS.
+- [ ] **T7.3** ▶️ Test GUI: 2 phiên bản bản vẽ CAD thật → So sánh + Chồng lớp → soi thay đổi.
 
 ## Phase S — Bảo mật sidecar (✅ code + test backend xong)
 

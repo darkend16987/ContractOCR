@@ -1,7 +1,7 @@
 # Nabu PDF — Hướng dẫn sử dụng
 
-Bộ công cụ PDF chạy trên máy (xem · ghép · tách · xoay · khoanh vùng · ghi chú · watermark ·
-redact · **sửa chữ gốc** · nén · tạo PDF tìm-kiếm-được · OCR + bóc tách hợp đồng). Toàn bộ xử lý
+Bộ công cụ PDF chạy trên máy (xem · ghép · tách · xoay · khoanh vùng · mũi tên · ghi chú · watermark ·
+redact · **sửa chữ gốc** · nén · so sánh & **chồng lớp bản vẽ** · tạo PDF tìm-kiếm-được · OCR + bóc tách hợp đồng). Toàn bộ xử lý
 diễn ra **ngay trên máy bạn** — file PDF không bị gửi lên mạng (trừ tính năng "Bóc tách" dùng AI, xem mục 6).
 
 ---
@@ -12,8 +12,8 @@ Chỉ cần **một file duy nhất**, chọn 1 trong 2 kiểu:
 
 | Kiểu | File copy vào USB | Dùng khi |
 |------|-------------------|----------|
-| **Bản chạy thẳng (khuyên dùng)** | `NabuPDF-0.0.1-portable.exe` (~407 MB) | Cắm USB, chạy luôn, không cài. Tiện mang đi nhiều máy. |
-| **Bản cài đặt** | `NabuPDF-0.0.1-x64.exe` (~407 MB) | Cài cố định vào 1 máy (tạo shortcut, gỡ qua Control Panel). |
+| **Bản chạy thẳng (khuyên dùng)** | `NabuPDF-0.2.30-portable.exe` (~372 MB) | Cắm USB, chạy luôn, không cài. Tiện mang đi nhiều máy. |
+| **Bản cài đặt** | `NabuPDF-0.2.30-x64.exe` (~372 MB) | Cài cố định vào 1 máy (tạo shortcut, gỡ qua Control Panel). |
 
 Hai file này nằm ở: `D:\GitHub\ContractOCR\desktop\dist-app\`
 
@@ -25,12 +25,12 @@ Hai file này nằm ở: `D:\GitHub\ContractOCR\desktop\dist-app\`
 ## 2. Cách chạy
 
 ### Cách A — Bản chạy thẳng (portable)
-1. Copy `NabuPDF-0.0.1-portable.exe` vào USB (hoặc ổ cứng máy đích).
+1. Copy `NabuPDF-0.2.30-portable.exe` vào USB (hoặc ổ cứng máy đích).
 2. Nháy đúp để chạy. Lần đầu nó tự giải nén ra thư mục tạm (mất ~10–20 giây) rồi mở cửa sổ app.
 3. Xong. Không để lại gì trên máy (ngoài cache model, xem mục 4).
 
 ### Cách B — Bản cài đặt (installer)
-1. Copy `NabuPDF-0.0.1-x64.exe` vào máy đích.
+1. Copy `NabuPDF-0.2.30-x64.exe` vào máy đích.
 2. Nháy đúp → chọn thư mục cài → Next → Install.
 3. Chạy từ Start Menu / shortcut desktop. Gỡ qua **Settings → Apps** như phần mềm thường.
 
@@ -59,8 +59,9 @@ Hai file này nằm ở: `D:\GitHub\ContractOCR\desktop\dist-app\`
 | Nhóm tính năng | Cần mạng? | Ghi chú |
 |----------------|-----------|---------|
 | Xem · ghép · tách · chèn · xoay · xóa · sắp xếp · **Lưu** | ❌ Không | Chạy hoàn toàn offline, không cần engine OCR. |
-| Chỉnh sửa overlay: chú thích, khoanh vùng, ghi chú, watermark, redact, điền form | ❌ Không | Offline. |
+| Chỉnh sửa overlay: chú thích, khoanh vùng, mũi tên (kèm nhãn), ghi chú (kèm bình luận), watermark, redact, điền form | ❌ Không | Offline. |
 | **Sửa chữ gốc** · **Nén PDF** | ❌ Không | Offline (dùng thư viện PDF gói sẵn). |
+| **So sánh** 2 PDF · **So sánh & Chồng lớp bản vẽ** (CAD/Revit) | ⚠️ Cần engine | Cần engine bật (badge OCR). Bản vẽ chạy offline; PDF scan cần tải model OCR như mục 3.3. |
 | **Chuyển đổi**: Khoá file (đặt mật khẩu) · Xuất ảnh trong PDF · Trang PDF → ảnh · Ảnh → PDF | ❌ Không | Offline (thư viện PDF gói sẵn). Gom trong nút **Chuyển đổi** trên thanh công cụ + menu "Chuyển đổi". |
 | **Searchable** (PDF tìm-kiếm-được) | ⚠️ Lần đầu | Cần engine OCR; lần đầu/máy mới tải model (mục 3.3). |
 | **Bóc tách** hợp đồng (OCR + AI) | ✅ Có | Cần model OCR **và** key AI (mục 6). |
@@ -77,6 +78,8 @@ Hai file này nằm ở: `D:\GitHub\ContractOCR\desktop\dist-app\`
 >   (Ctrl+S ghi đè thẳng vào file đang mở; file kéo–thả/chưa lưu thì hỏi nơi lưu.)
 > - **Ctrl+Z** Hoàn tác · **Ctrl+Y** Làm lại.
 > - **Ctrl + / Ctrl − / Ctrl 0** Phóng to / Thu nhỏ / Cỡ gốc 100%.
+> - **Vừa bề ngang / Vừa chiều dọc** (nút cạnh ô zoom) — "Vừa chiều dọc" hợp văn bản khổ ngang (landscape).
+> - **↑ / ↓** (ở cửa sổ xem trang) nhảy sang trang trước / trang kế.
 > - **Delete** Xóa trang đang chọn.
 
 Cache model lưu ở: `C:\Users\<tên-bạn>\.paddlex` (và `.cache`). Xóa được nếu cần giải phóng ổ; lần
@@ -102,6 +105,20 @@ Giới hạn đã biết: sửa trong phạm vi từng đoạn (không tự dàn
 > nhắc). Chỉ nhận **PNG / JPG**.
 > ⚠️ Đây là **dán ảnh chữ ký**, không phải **chữ ký số** (digital signature có chứng thư CA). App
 > hiện chưa hỗ trợ chữ ký số pháp lý.
+
+> **Mũi tên kèm nhãn:** chọn công cụ **Mũi tên**, kéo để vẽ — thả ra là hiện ô nhập chữ ngay ở **đầu mũi tên**
+> (gõ nhãn rồi Enter, bỏ trống/Esc nếu không cần). Muốn sửa nhãn sau: **bấm đúp** vào mũi tên.
+
+> **Ghi chú dạng chuỗi (thêm bình luận vào ghi chú):** bấm đúp một ghi chú 💬 để mở bảng — phần trên là
+> nội dung gốc + các bình luận đã có (chỉ đọc), ô dưới để **Thêm bình luận** (không xoá nội dung cũ). Nút
+> **Sửa gốc** để chỉnh nội dung gốc. Marker hiện **số bình luận**. Khi Lưu, cả chuỗi được gộp vào ghi chú
+> của PDF (mọi trình xem đọc được).
+
+> **So sánh & Chồng lớp 2 bản vẽ:** nút **So sánh** → chọn 2 file → chế độ:
+> - **Bản vẽ**: đặt cạnh nhau, khoanh vùng thêm/xoá/sửa (xuất được bản đánh dấu).
+> - **Chồng lớp**: xếp 2 bản vẽ lên nhau, tự căn chỉnh + **tô màu khác biệt** (đỏ = chỉ có ở bản A,
+>   xanh = chỉ có ở bản B, đen = trùng). Chỉnh **độ mờ** lớp trên, **nudge** (phím mũi tên) để căn tay,
+>   PageUp/PageDown đổi cặp trang. Dùng để soi thay đổi giữa 2 phiên bản bản vẽ.
 
 ---
 
@@ -144,4 +161,4 @@ Nhập key **ngay trong app**, không cần đụng tới file hay biến môi t
 
 ---
 
-*Phiên bản: 0.0.1 · Đóng gói portable + installer cho Windows x64.*
+*Phiên bản: 0.2.30 · Đóng gói portable + installer cho Windows x64.*
