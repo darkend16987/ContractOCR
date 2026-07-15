@@ -3,9 +3,9 @@
 Bộ công cụ **PDF desktop** (Electron) cho tiếng Việt: xem · ghép · tách trang ·
 **tách thành nhiều file** · chèn · thêm trang trắng · xoay · **đánh số trang** · chú thích ·
 khoanh vùng (chữ nhật / elip / **khoanh mây revision** — chữ nhật hoặc **vẽ mây tự do** bằng bút/điểm, chọn nét viền + màu nền + **độ mờ nền 0–100%**) ·
-hộp văn bản (font/đậm/nghiêng/gạch chân) · **chèn ảnh / chữ ký** (đóng dấu 1 lần cho **nhiều trang**, nhận PNG/JPG/BMP) ·
+**mũi tên (kèm nhãn text ở đầu)** · hộp văn bản (font/đậm/nghiêng/gạch chân) · **ghi chú dạng chuỗi bình luận (note-of-note)** · **chèn ảnh / chữ ký** (đóng dấu 1 lần cho **nhiều trang**, nhận PNG/JPG/BMP) ·
 watermark · redact (che thông tin chọn màu) · sửa chữ · nén · **in (kết nối máy in)** · so sánh 2 file
-(văn bản & **bản vẽ CAD/Revit** — khoanh mây revision vùng thay đổi, phóng to/vừa màn hình) ·
+(văn bản & **bản vẽ CAD/Revit** — khoanh mây revision vùng thay đổi, **chồng lớp overlay 2 bản vẽ** căn tự động + tô màu khác biệt, phóng to/vừa bề ngang & **vừa chiều dọc**) ·
 tạo PDF tìm-kiếm-được · **dịch PDF (AI) giữ layout** (PDF có text thật, xuất file mới) ·
 **mở nhiều cửa sổ** · **"Open with Nabu PDF"** (mở PDF trực tiếp từ Windows) · **copy/paste ảnh trong trang** ·
 kèm **OCR + bóc tách hợp đồng** bằng AI. Giao diện **song ngữ Việt / Anh**.

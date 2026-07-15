@@ -864,6 +864,20 @@ async function refreshThumb(i) {
   await renderThumbCanvas(i);
 }
 
+// Index of the page currently occupying the top of the viewport — the topmost
+// page whose top edge has reached (scrolled at/above) the viewport top. Used by
+// the ↑/↓ page-jump keys. Falls back to 0 when scrolled above the first page.
+function currentPageIndex() {
+  const v = $("viewer");
+  const vr = v.getBoundingClientRect();
+  let cur = 0;
+  for (const w of v.querySelectorAll(".page-wrap")) {
+    if (w.getBoundingClientRect().top - vr.top <= 2) cur = +w.dataset.index;
+    else break;
+  }
+  return cur;
+}
+
 function scrollToPage(i) {
   // Eager-render the jump target so a sidebar click feels instant instead of
   // waiting for the observer to catch up.
@@ -1421,6 +1435,16 @@ async function fitWidth() {
   if (!maxW1) return;
   const pad = 48; // page margins + scrollbar allowance
   await zoomTo(($("viewer").clientWidth - pad) / maxW1);
+}
+
+// Fit the tallest page to the viewer height (handy for landscape docs).
+async function fitHeight() {
+  if (!state.bytes || !state.pageMetas || !state.pageMetas.length) return;
+  let maxH1 = 0; // tallest page at scale 1
+  for (const m of state.pageMetas) maxH1 = Math.max(maxH1, m.vp.height / state.scale);
+  if (!maxH1) return;
+  const pad = 48; // top/bottom margins allowance
+  await zoomTo(($("viewer").clientHeight - pad) / maxH1);
 }
 
 // Parse whatever is in the zoom box ("150", "150%", " 150 ") and apply it.
@@ -2645,6 +2669,7 @@ $("btn-delete").onclick = deleteSelected;
 $("btn-zoom-in").onclick = () => zoom(0.2);
 $("btn-zoom-out").onclick = () => zoom(-0.2);
 $("btn-fit-width").onclick = fitWidth;
+$("btn-fit-height").onclick = fitHeight;
 // Editable zoom %: Enter/blur applies, Escape reverts.
 $("zoom-input").addEventListener("keydown", (e) => {
   e.stopPropagation();
@@ -2900,6 +2925,30 @@ window.addEventListener("keydown", (e) => {
       e.preventDefault();
       printDoc();
     }
+    return;
+  }
+  // ↑/↓ jump to the previous/next page (instead of the browser's tiny scroll),
+  // but only in the plain page view — never while typing, in an editor overlay,
+  // or with a modal open (those own the arrow keys for their own navigation).
+  const cmpView = $("compare-view");
+  const ovView = $("overlay-view");
+  if (
+    (e.key === "ArrowDown" || e.key === "ArrowUp") &&
+    state.numPages &&
+    !isTyping() &&
+    $("overlay").hidden &&
+    (!cmpView || cmpView.hidden) &&
+    (!ovView || ovView.hidden) &&
+    $("viewer").offsetParent !== null &&
+    !(window.Editor && window.Editor.active && window.Editor.active())
+  ) {
+    e.preventDefault();
+    const cur = currentPageIndex();
+    const next =
+      e.key === "ArrowDown"
+        ? Math.min(state.numPages - 1, cur + 1)
+        : Math.max(0, cur - 1);
+    if (next !== cur) scrollToPage(next);
     return;
   }
   // Delete removes the selected pages — but never while typing or in an editor

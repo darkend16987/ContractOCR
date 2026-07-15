@@ -91,6 +91,10 @@
     if (!cmp.a || !cmp.b) return;
     const mode = el("cmp2-mode").value || "auto";
     cmp.mode = mode;
+    if (mode === "overlay") {
+      await runOverlay();
+      return;
+    }
     el("cmp2-modal").hidden = true;
     showOverlay(
       mode === "drawing"
@@ -483,6 +487,173 @@
     jumpToChange(i, true);
   }
 
+  // ---- overlay (onion-skin of two aligned drawings) ------------------------
+
+  const ov = {
+    pairs: [], // [{a, b, similarity, dx, dy}] from /overlay-drawings
+    idx: 0,
+    scale: 1.1,
+    fit: true,
+    dx: 0, dy: 0,   // auto align offset (PDF points) for the current pair
+    mdx: 0, mdy: 0, // manual nudge (PDF points) on top of the auto offset
+  };
+  const OV_ZOOM_MIN = 0.2;
+  const OV_ZOOM_MAX = 4;
+
+  async function runOverlay() {
+    el("cmp2-modal").hidden = true;
+    showOverlay("Đang căn chỉnh 2 bản vẽ…");
+    try {
+      const res = await sidecarFetch("/overlay-drawings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pdf_a_b64: u8ToB64(cmp.a.bytes), pdf_b_b64: u8ToB64(cmp.b.bytes) }),
+      });
+      const raw = await res.text();
+      let data;
+      try {
+        data = JSON.parse(raw);
+      } catch (_) {
+        toast("Chồng lớp lỗi (máy chủ " + res.status + "): " + (raw || "không rõ").slice(0, 120), "bad");
+        return;
+      }
+      if (!data.success) {
+        toast("Chồng lớp lỗi: " + (data.error || data.detail || "không rõ"), "bad");
+        return;
+      }
+      if (!data.pairs || !data.pairs.length) {
+        toast("Không ghép được cặp trang nào giữa 2 bản vẽ.", "bad");
+        return;
+      }
+      cmp.report = data;
+      cmp.pdfA = await pdfjsLib.getDocument({ data: cmp.a.bytes.slice(), isEvalSupported: false }).promise;
+      cmp.pdfB = await pdfjsLib.getDocument({ data: cmp.b.bytes.slice(), isEvalSupported: false }).promise;
+      ov.pairs = data.pairs;
+      ov.idx = 0;
+      await openOverlay();
+    } catch (err) {
+      toast("Lỗi chồng lớp: " + err.message, "bad");
+    } finally {
+      hideOverlay();
+    }
+  }
+
+  async function openOverlay() {
+    el("overlay-view").hidden = false;
+    const s = cmp.report.summary || {};
+    el("overlay-summary").textContent =
+      `${ov.pairs.length} cặp trang khớp · A: ${s.pages_a || "?"} trang · B: ${s.pages_b || "?"} trang`;
+    ov.fit = true;
+    await loadPair(0);
+  }
+
+  async function loadPair(k) {
+    ov.idx = Math.max(0, Math.min(ov.pairs.length - 1, k));
+    const p = ov.pairs[ov.idx];
+    ov.dx = p.dx || 0;
+    ov.dy = p.dy || 0;
+    ov.mdx = 0;
+    ov.mdy = 0; // fresh manual offset per pair
+    el("overlay-pagenum").textContent =
+      `Cặp ${ov.idx + 1}/${ov.pairs.length} · A tr ${p.a + 1} ↔ B tr ${p.b + 1}`;
+    if (ov.fit) ov.scale = await ovFitScale(p);
+    await renderOverlay();
+  }
+
+  async function ovFitScale(pair) {
+    const stage = el("overlay-stage");
+    const avail = Math.max(200, (stage.clientWidth || 0) - 32);
+    let maxW = 1;
+    for (const [pdf, idx] of [[cmp.pdfA, pair.a], [cmp.pdfB, pair.b]]) {
+      try {
+        const pg = await pdf.getPage(idx + 1);
+        maxW = Math.max(maxW, pg.getViewport({ scale: 1 }).width);
+      } catch (_) {}
+    }
+    return Math.min(OV_ZOOM_MAX, Math.max(OV_ZOOM_MIN, avail / maxW));
+  }
+
+  // Render one page onto a canvas. `tint` (a CSS colour) recolours the ink and
+  // leaves the background transparent, so stacked layers reveal each other.
+  async function ovRenderPage(pdf, i, canvas, tint) {
+    const page = await pdf.getPage(i + 1);
+    const vp = page.getViewport({ scale: ov.scale });
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = Math.floor(vp.width * dpr);
+    canvas.height = Math.floor(vp.height * dpr);
+    canvas.style.width = vp.width + "px";
+    canvas.style.height = vp.height + "px";
+    const ctx = canvas.getContext("2d");
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, canvas.width, canvas.height); // transparent background
+    await page.render({
+      canvasContext: ctx,
+      viewport: vp,
+      transform: dpr !== 1 ? [dpr, 0, 0, dpr, 0, 0] : undefined,
+    }).promise;
+    if (tint) {
+      // Keep the ink's alpha (antialiased edges included), replace its colour.
+      ctx.save();
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.globalCompositeOperation = "source-in";
+      ctx.fillStyle = tint;
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.restore();
+    }
+    return { w: vp.width, h: vp.height };
+  }
+
+  async function renderOverlay() {
+    const p = ov.pairs[ov.idx];
+    const tint = el("overlay-tint").checked;
+    const base = el("overlay-base");
+    const top = el("overlay-top");
+    const da = await ovRenderPage(cmp.pdfA, p.a, base, tint ? "#e01010" : null);
+    const db = await ovRenderPage(cmp.pdfB, p.b, top, tint ? "#1060e0" : null);
+    const stack = el("overlay-stack");
+    stack.style.width = Math.max(da.w, db.w) + "px";
+    stack.style.height = Math.max(da.h, db.h) + "px";
+    applyOverlayView();
+  }
+
+  // Cheap updates (no re-raster): top-layer offset, opacity and blend mode.
+  function applyOverlayView() {
+    const top = el("overlay-top");
+    const useAlign = el("overlay-align").checked;
+    const tint = el("overlay-tint").checked;
+    const tx = ((useAlign ? ov.dx : 0) + ov.mdx) * ov.scale;
+    const ty = ((useAlign ? ov.dy : 0) + ov.mdy) * ov.scale;
+    top.style.transform = `translate(${tx}px, ${ty}px)`;
+    top.style.opacity = String((+el("overlay-opacity").value || 0) / 100);
+    top.style.mixBlendMode = tint ? "multiply" : "normal";
+    el("overlay-zoom").textContent = Math.round(ov.scale * 100) + "%";
+  }
+
+  function ovNudge(ddxPx, ddyPx) {
+    // Nudge in screen pixels → convert to points so it holds across zoom.
+    ov.mdx += ddxPx / ov.scale;
+    ov.mdy += ddyPx / ov.scale;
+    applyOverlayView();
+  }
+
+  async function ovZoomBy(f) {
+    ov.scale = Math.min(OV_ZOOM_MAX, Math.max(OV_ZOOM_MIN, ov.scale * f));
+    ov.fit = false;
+    await renderOverlay();
+  }
+
+  async function ovFit() {
+    ov.fit = true;
+    ov.scale = await ovFitScale(ov.pairs[ov.idx]);
+    await renderOverlay();
+  }
+
+  function closeOverlay() {
+    el("overlay-view").hidden = true;
+    ov.pairs = [];
+    reset();
+  }
+
   // ---- wiring --------------------------------------------------------------
 
   function init() {
@@ -499,6 +670,46 @@
       modeSel.onchange = () => {
         el("cmp2-sens-wrap").hidden = modeSel.value !== "drawing";
       };
+    }
+    // Overlay controls
+    on("overlay-close", closeOverlay);
+    on("overlay-prev", () => loadPair(ov.idx - 1));
+    on("overlay-next", () => loadPair(ov.idx + 1));
+    on("overlay-zoom-in", () => ovZoomBy(1.2));
+    on("overlay-zoom-out", () => ovZoomBy(1 / 1.2));
+    on("overlay-fit", () => ovFit());
+    on("overlay-nudge-l", () => ovNudge(-2, 0));
+    on("overlay-nudge-r", () => ovNudge(2, 0));
+    on("overlay-nudge-u", () => ovNudge(0, -2));
+    on("overlay-nudge-d", () => ovNudge(0, 2));
+    on("overlay-nudge-reset", () => { ov.mdx = 0; ov.mdy = 0; applyOverlayView(); });
+    const oOpacity = el("overlay-opacity");
+    if (oOpacity) oOpacity.oninput = applyOverlayView;
+    const oAlign = el("overlay-align");
+    if (oAlign) oAlign.onchange = applyOverlayView;
+    const oTint = el("overlay-tint");
+    if (oTint) oTint.onchange = () => renderOverlay(); // recolour needs a re-raster
+    document.addEventListener("keydown", (e) => {
+      if (el("overlay-view").hidden) return;
+      if (e.key === "Escape") { closeOverlay(); }
+      else if (e.key === "+" || e.key === "=") { e.preventDefault(); ovZoomBy(1.2); }
+      else if (e.key === "-" || e.key === "_") { e.preventDefault(); ovZoomBy(1 / 1.2); }
+      else if (e.key === "0") { e.preventDefault(); ovFit(); }
+      else if (e.key === "PageDown") { e.preventDefault(); loadPair(ov.idx + 1); }
+      else if (e.key === "PageUp") { e.preventDefault(); loadPair(ov.idx - 1); }
+      else if (e.key === "ArrowLeft") { e.preventDefault(); ovNudge(-2, 0); }
+      else if (e.key === "ArrowRight") { e.preventDefault(); ovNudge(2, 0); }
+      else if (e.key === "ArrowUp") { e.preventDefault(); ovNudge(0, -2); }
+      else if (e.key === "ArrowDown") { e.preventDefault(); ovNudge(0, 2); }
+    });
+    const oStage = el("overlay-stage");
+    if (oStage) {
+      oStage.addEventListener("wheel", (e) => {
+        if (el("overlay-view").hidden) return;
+        if (!(e.ctrlKey || e.metaKey)) return;
+        e.preventDefault();
+        ovZoomBy(e.deltaY < 0 ? 1.1 : 1 / 1.1);
+      }, { passive: false });
     }
     on("compare-export", exportMarked);
     on("compare-close", closeView);

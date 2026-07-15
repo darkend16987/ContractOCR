@@ -61,6 +61,7 @@
         <symbol id="ic-convert" viewBox="0 0 24 24"><path d="M4 8h11l-3-3M20 16H9l3 3"/></symbol>
         <symbol id="ic-chevron" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></symbol>
         <symbol id="ic-fit" viewBox="0 0 24 24"><path d="M3 8V5a2 2 0 0 1 2-2h3"/><path d="M16 3h3a2 2 0 0 1 2 2v3"/><path d="M21 16v3a2 2 0 0 1-2 2h-3"/><path d="M8 21H5a2 2 0 0 1-2-2v-3"/><path d="M8 12h8"/><path d="m10 9-3 3 3 3"/><path d="m14 9 3 3-3 3"/></symbol>
+        <symbol id="ic-fit-h" viewBox="0 0 24 24"><path d="M3 8V5a2 2 0 0 1 2-2h3"/><path d="M16 3h3a2 2 0 0 1 2 2v3"/><path d="M21 16v3a2 2 0 0 1-2 2h-3"/><path d="M8 21H5a2 2 0 0 1-2-2v-3"/><path d="M12 8v8"/><path d="m9 10 3-3 3 3"/><path d="m9 14 3 3 3-3"/></symbol>
       </defs>
     </svg>
 
@@ -82,6 +83,7 @@
           <input id="zoom-input" class="zoom-input" type="text" value="100%" disabled title="Gõ tỷ lệ zoom (40–300) rồi Enter" spellcheck="false" />
           <button id="btn-zoom-in" class="icon-only" disabled title="Phóng to (Ctrl+lăn chuột lên)"><svg class="ic"><use href="#ic-plus"/></svg></button>
           <button id="btn-fit-width" class="icon-only" disabled title="Vừa bề ngang"><svg class="ic"><use href="#ic-fit"/></svg></button>
+          <button id="btn-fit-height" class="icon-only" disabled title="Vừa chiều dọc (văn bản ngang)"><svg class="ic"><use href="#ic-fit-h"/></svg></button>
         </div>
 
         <div class="sep"></div>
@@ -771,6 +773,7 @@
             <option value="text">Chỉ văn bản (nhanh, không OCR)</option>
             <option value="ocr">Bắt buộc OCR mọi trang</option>
             <option value="drawing">Bản vẽ (so sánh hình ảnh — CAD/Revit)</option>
+            <option value="overlay">Chồng lớp (overlay 2 bản vẽ để soi khác biệt)</option>
           </select>
         </label>
         <label id="cmp2-sens-wrap" hidden>Độ nhạy
@@ -810,6 +813,46 @@
         <div class="compare-panes">
           <div class="compare-pane"><div class="compare-pane-h" id="compare-a-h">File A</div><div class="compare-scroll" id="compare-a"></div></div>
           <div class="compare-pane"><div class="compare-pane-h" id="compare-b-h">File B</div><div class="compare-scroll" id="compare-b"></div></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Overlay: full-screen onion-skin of two aligned drawings -->
+    <div class="compare-view" id="overlay-view" hidden>
+      <div class="compare-bar">
+        <b>Chồng lớp bản vẽ</b>
+        <span id="overlay-summary" class="compare-summary"></span>
+        <div class="spacer"></div>
+        <button id="overlay-prev" class="ghost" title="Cặp trang trước">‹ Cặp trước</button>
+        <span id="overlay-pagenum" class="readout"></span>
+        <button id="overlay-next" class="ghost" title="Cặp trang sau">Cặp sau ›</button>
+        <div class="sep"></div>
+        <label class="overlay-ctl" title="Độ mờ của lớp B (bản vẽ trên)">B <input id="overlay-opacity" type="range" min="0" max="100" value="55" /></label>
+        <label class="overlay-ctl chk" title="Tô A đỏ / B xanh để chỗ khác biệt nổi lên"><input id="overlay-tint" type="checkbox" checked /> Tô màu khác biệt</label>
+        <label class="overlay-ctl chk" title="Dịch B theo offset căn tự động từ máy chủ"><input id="overlay-align" type="checkbox" checked /> Căn tự động</label>
+        <div class="sep"></div>
+        <span class="overlay-ctl" title="Dịch lớp B thủ công (phím mũi tên cũng được)">
+          Nudge
+          <button id="overlay-nudge-l" class="ghost nudge">←</button>
+          <button id="overlay-nudge-u" class="ghost nudge">↑</button>
+          <button id="overlay-nudge-d" class="ghost nudge">↓</button>
+          <button id="overlay-nudge-r" class="ghost nudge">→</button>
+          <button id="overlay-nudge-reset" class="ghost" title="Về căn tự động">Reset</button>
+        </span>
+        <div class="sep"></div>
+        <button id="overlay-zoom-out" class="ghost" title="Thu nhỏ (−)">−</button>
+        <span id="overlay-zoom" class="readout" title="Mức phóng to">100%</span>
+        <button id="overlay-zoom-in" class="ghost" title="Phóng to (+)">+</button>
+        <button id="overlay-fit" class="ghost" title="Vừa màn hình">Vừa màn hình</button>
+        <div class="sep"></div>
+        <button id="overlay-close" class="primary">Đóng</button>
+      </div>
+      <div class="compare-body">
+        <div class="overlay-stage" id="overlay-stage">
+          <div class="overlay-stack" id="overlay-stack">
+            <canvas id="overlay-base"></canvas>
+            <canvas id="overlay-top"></canvas>
+          </div>
         </div>
       </div>
     </div>

@@ -395,6 +395,65 @@ def compare_drawings(pdf_a: bytes, pdf_b: bytes, sensitivity: str = "normal") ->
         doc_b.close()
 
 
+def overlay_drawings(pdf_a: bytes, pdf_b: bytes) -> dict[str, Any]:
+    """Match pages of two drawings and compute the translation that best
+    aligns each matched pair, for an on-screen onion-skin overlay.
+
+    Reuses the fingerprint page-matching and phase-correlation registration of
+    the diff pipeline, but renders nothing back — the frontend rasterises both
+    PDFs itself (pdf.js) and just needs, per matched pair, the offset (in the A
+    page's PDF points) to shift B by so the linework lines up.
+
+    Returns ``{success, pairs:[{a, b, similarity, dx, dy}], only_a, only_b,
+    summary:{...}}``. ``dx/dy`` are in PDF points; positive shifts B right/down.
+    """
+    import fitz  # PyMuPDF
+
+    doc_a = fitz.open(stream=pdf_a, filetype="pdf")
+    doc_b = fitz.open(stream=pdf_b, filetype="pdf")
+    try:
+        cv2 = _cv2()
+        na = min(doc_a.page_count, _MAX_PAGES)
+        nb = min(doc_b.page_count, _MAX_PAGES)
+        fps_a = [_fingerprint(doc_a[i]) for i in range(na)]
+        fps_b = [_fingerprint(doc_b[i]) for i in range(nb)]
+        pairs, only_a, only_b = _align_pages(fps_a, fps_b)
+
+        out_pairs: list[dict[str, Any]] = []
+        for ia, ib, sim in pairs:
+            ga, scale_a = _page_gray(doc_a[ia], _WORK_LONG)
+            gb, _ = _page_gray(doc_b[ib], _WORK_LONG)
+            if gb.shape != ga.shape:
+                gb = cv2.resize(gb, (ga.shape[1], ga.shape[0]), interpolation=cv2.INTER_AREA)
+            _, (tx, ty) = _register(ga, gb)
+            # tx/ty are pixels on A's grid; scale_a is px per A-point.
+            out_pairs.append(
+                {
+                    "a": ia,
+                    "b": ib,
+                    "similarity": round(sim, 3),
+                    "dx": round(tx / scale_a, 2),
+                    "dy": round(ty / scale_a, 2),
+                }
+            )
+
+        return {
+            "success": True,
+            "pairs": out_pairs,
+            "only_a": only_a,
+            "only_b": only_b,
+            "summary": {
+                "pages_a": doc_a.page_count,
+                "pages_b": doc_b.page_count,
+                "matched": len(out_pairs),
+                "truncated": doc_a.page_count > _MAX_PAGES or doc_b.page_count > _MAX_PAGES,
+            },
+        }
+    finally:
+        doc_a.close()
+        doc_b.close()
+
+
 # Stroke colours for exported markup, by change kind.
 _MARKUP_COLORS = {
     "del": (0.85, 0.10, 0.10),   # removed → red

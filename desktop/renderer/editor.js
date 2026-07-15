@@ -416,6 +416,17 @@
     if (ed.watermark) layer.appendChild(renderWatermarkEl());
   }
 
+  // Flatten a note + its replies into one text block (tooltip + PDF Contents).
+  // Original text stays first; each reply is appended, never overwriting it.
+  function noteThreadText(a) {
+    let s = a.text || "";
+    for (const r of a.replies || []) {
+      const ts = r.ts ? new Date(r.ts).toLocaleString() : "";
+      s += "\n\n— " + (ts ? "[" + ts + "] " : "") + (r.text || "");
+    }
+    return s;
+  }
+
   function renderAnnot(a, s) {
     const el = document.createElement("div");
     el.className = "an an-" + a.kind;
@@ -491,6 +502,23 @@
       head.setAttribute("fill", a.color);
       svg.appendChild(line);
       svg.appendChild(head);
+      // Optional head label: sits just beyond the tip along the arrow direction.
+      // SVG overflow is visible (app.css) so it paints outside the padded box.
+      if (a.label) {
+        const fs = a.labelSize || 14;
+        const gap = hl + fs * 0.6;
+        const t = document.createElementNS("http://www.w3.org/2000/svg", "text");
+        t.setAttribute("x", String(ex + Math.cos(ang) * gap));
+        t.setAttribute("y", String(ey + Math.sin(ang) * gap));
+        t.setAttribute("fill", a.color);
+        t.setAttribute("font-size", String(fs));
+        t.setAttribute("font-family", "system-ui, Arial, sans-serif");
+        t.setAttribute("text-anchor", "middle");
+        t.setAttribute("dominant-baseline", "central");
+        t.style.whiteSpace = "pre";
+        t.textContent = a.label;
+        svg.appendChild(t);
+      }
       el.appendChild(svg);
       return el;
     }
@@ -618,8 +646,16 @@
       if (a.fill && a.fill !== "none") el.style.background = hexToRgba(a.fill, a.fillOpacity != null ? a.fillOpacity : 1);
     } else if (a.kind === "note") {
       el.style.background = a.color;
-      el.title = a.text || "(ghi chú trống)";
+      el.title = noteThreadText(a) || "(ghi chú trống)";
       el.textContent = "💬";
+      // Badge with the reply count so a thread is visible at a glance.
+      const n = (a.replies || []).length;
+      if (n) {
+        const b = document.createElement("span");
+        b.className = "note-badge";
+        b.textContent = String(n);
+        el.appendChild(b);
+      }
     } else if (a.kind === "image") {
       const img = document.createElement("img");
       img.src = a.dataUrl;
@@ -942,6 +978,16 @@
         dropLastEdUndo(); // the creation was discarded — state is back at that snapshot
       }
     }
+    // A freshly drawn arrow immediately offers a head label (blank/Esc = none).
+    // The undo snapshot from creation already covers the label, so no extra push.
+    if (drag.type === "arrow") {
+      const still = findAnnot(drag.id);
+      const la = drag.layer, pg = drag.page;
+      drag = null;
+      renderLayer(la, pg);
+      if (still) openArrowLabelEditor(la, pg, still.a, false);
+      return;
+    }
     const layer = drag.layer;
     const page = drag.page;
     drag = null;
@@ -1033,6 +1079,12 @@
       openNoteEditor(layer, i, { x: a.x, y: a.y }, a);
       return;
     }
+    const arrowEl = e.target.closest(".an-arrow");
+    if (arrowEl) {
+      e.preventDefault();
+      openArrowLabelEditor(layer, i, findAnnot(+arrowEl.dataset.id).a, true);
+      return;
+    }
     const anEl = e.target.closest(".an-text");
     if (!anEl) return;
     e.preventDefault();
@@ -1110,15 +1162,123 @@
 
   // ---- note editor (comment anchored to a point) ---------------------------
 
+  // A note is a small comment thread: the original text plus append-only
+  // replies. New note → one textarea (create). Existing note → read-only thread
+  // on top, a box to add a reply, and a "Sửa gốc" toggle to edit the original.
   function openNoteEditor(layer, i, p, existing) {
+    const panel = document.createElement("div");
+    panel.className = "annot-note-panel";
+    panel.style.left = (p.x + 20) * state.scale + "px";
+    panel.style.top = p.y * state.scale + "px";
+    // Clicks inside the panel must not start a drag / new note on the layer.
+    panel.addEventListener("mousedown", (e) => e.stopPropagation());
+
+    if (existing) {
+      const thread = document.createElement("div");
+      thread.className = "note-thread";
+      const orig = document.createElement("div");
+      orig.className = "note-orig-line";
+      orig.textContent = existing.text || "(ghi chú trống)";
+      thread.appendChild(orig);
+      for (const r of existing.replies || []) {
+        const rd = document.createElement("div");
+        rd.className = "note-reply-line";
+        rd.textContent = "↳ " + (r.text || "");
+        thread.appendChild(rd);
+      }
+      panel.appendChild(thread);
+    }
+
     const ta = document.createElement("textarea");
     ta.className = "annot-text-edit annot-note-edit";
-    ta.placeholder = "Nội dung ghi chú…";
-    ta.style.left = (p.x + 20) * state.scale + "px";
-    ta.style.top = p.y * state.scale + "px";
-    ta.value = existing ? existing.text : "";
+    ta.placeholder = existing ? "Thêm bình luận…" : "Nội dung ghi chú…";
+    panel.appendChild(ta);
+
+    const row = document.createElement("div");
+    row.className = "note-actions";
+    const btnAdd = document.createElement("button");
+    btnAdd.textContent = existing ? "Thêm bình luận" : "Lưu";
+    row.appendChild(btnAdd);
+    if (existing) {
+      const btnEdit = document.createElement("button");
+      btnEdit.textContent = "Sửa gốc";
+      row.appendChild(btnEdit);
+      btnEdit.addEventListener("click", () => {
+        mode = "editOrig";
+        ta.value = existing.text || "";
+        ta.placeholder = "Sửa nội dung ghi chú gốc…";
+        btnAdd.textContent = "Lưu ghi chú gốc";
+        ta.focus();
+      });
+    }
+    const btnClose = document.createElement("button");
+    btnClose.textContent = "Đóng";
+    row.appendChild(btnClose);
+    panel.appendChild(row);
+
+    layer.appendChild(panel);
+    ta.focus();
+
+    let mode = existing ? "reply" : "new"; // reply | new | editOrig
+    let done = false;
+    const close = () => {
+      if (done) return;
+      done = true;
+      panel.remove();
+      renderLayer(layer, i);
+    };
+    const save = () => {
+      const text = ta.value.replace(/\s+$/, "");
+      if (mode === "new") {
+        if (text) {
+          pushEdUndo();
+          const a = { id: ed.seq++, kind: "note", x: p.x, y: p.y, w: 18, h: 18, text, color: ed.color, replies: [] };
+          annotsFor(i).push(a);
+          ed.sel = a.id;
+        }
+      } else if (mode === "editOrig") {
+        if (text !== (existing.text || "")) {
+          pushEdUndo();
+          existing.text = text;
+        }
+      } else {
+        // reply: append without touching the original or earlier replies
+        if (text) {
+          pushEdUndo();
+          if (!existing.replies) existing.replies = [];
+          existing.replies.push({ text, ts: Date.now() });
+        }
+      }
+      close();
+    };
+    btnAdd.addEventListener("click", save);
+    btnClose.addEventListener("click", close);
+    ta.addEventListener("keydown", (e) => {
+      e.stopPropagation();
+      if (e.key === "Escape") {
+        close();
+      } else if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+        e.preventDefault();
+        save();
+      }
+    });
+  }
+
+  // ---- arrow head label (text anchored to the arrow tip) -------------------
+
+  // `fresh=false` (just-drawn arrow): the label rides the creation undo snapshot,
+  // so no extra push. `fresh=true` (double-click edit): push before changing.
+  function openArrowLabelEditor(layer, i, a, editing) {
+    const ta = document.createElement("textarea");
+    ta.className = "annot-text-edit annot-note-edit";
+    ta.placeholder = "Nhãn mũi tên… (Enter xong, Esc bỏ qua)";
+    ta.style.left = (a.x2 + 8) * state.scale + "px";
+    ta.style.top = (a.y2 - 12) * state.scale + "px";
+    ta.style.color = a.color;
+    ta.value = a.label || "";
     layer.appendChild(ta);
     ta.focus();
+    ta.select();
 
     let done = false;
     const commit = () => {
@@ -1126,21 +1286,9 @@
       done = true;
       const text = ta.value.replace(/\s+$/, "");
       ta.remove();
-      if (existing) {
-        if (text && text !== existing.text) {
-          pushEdUndo();
-          existing.text = text;
-        } else if (!text) {
-          // cleared note text -> remove the note
-          pushEdUndo();
-          ed.annots[i] = annotsFor(i).filter((x) => x.id !== existing.id);
-          ed.sel = null;
-        }
-      } else if (text) {
-        pushEdUndo();
-        const a = { id: ed.seq++, kind: "note", x: p.x, y: p.y, w: 18, h: 18, text, color: ed.color };
-        annotsFor(i).push(a);
-        ed.sel = a.id;
+      if (text !== (a.label || "")) {
+        if (editing) pushEdUndo();
+        a.label = text || undefined;
       }
       renderLayer(layer, i);
     };
@@ -1150,7 +1298,9 @@
       if (e.key === "Escape") {
         done = true;
         ta.remove();
-      } else if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+        renderLayer(layer, i);
+      } else if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
         commit();
       }
     });
@@ -1533,6 +1683,20 @@
           thickness: w,
           color: c,
         });
+        // Head label — rendered to PNG (same path as text annots, so Vietnamese
+        // diacritics embed reliably), centred on the point just beyond the tip.
+        if (a.label) {
+          const fs = a.labelSize || 14;
+          const { bytes, wPt, hPt } = renderTextPng(a.label, fs, a.color, {});
+          // Anchor in overlay coords (y-down), matching the on-screen placement.
+          const angO = Math.atan2(a.y2 - a.y1, a.x2 - a.x1);
+          const gap = hl + fs * 0.6;
+          const cxO = a.x2 + Math.cos(angO) * gap;
+          const cyO = a.y2 + Math.sin(angO) * gap;
+          const img = await doc.embedPng(bytes);
+          const [bx, by] = map(cxO - wPt / 2, cyO + hPt / 2);
+          page.drawImage(img, { x: bx, y: by, width: wPt, height: hPt, rotate: pageRotate(page) });
+        }
       } else if (a.kind === "note") {
         // 1. Visible marker square so the note shows in any viewer (incl. ours).
         const c = hexRgb(a.color);
@@ -1555,7 +1719,7 @@
           Subtype: "Text",
           Name: "Comment",
           Rect: [Math.min(rx1, rx2), Math.min(ry1, ry2), Math.max(rx1, rx2), Math.max(ry1, ry2)],
-          Contents: PDFHexString.fromText(a.text || ""),
+          Contents: PDFHexString.fromText(noteThreadText(a)),
           Open: false,
           C: [c.red, c.green, c.blue],
         });

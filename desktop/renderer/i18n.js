@@ -44,6 +44,7 @@
     "Thu nhỏ (Ctrl+lăn chuột xuống)": "Zoom out (Ctrl+scroll down)",
     "Phóng to (Ctrl+lăn chuột lên)": "Zoom in (Ctrl+scroll up)",
     "Vừa bề ngang": "Fit width",
+    "Vừa chiều dọc (văn bản ngang)": "Fit height (landscape docs)",
     "Gõ tỷ lệ zoom (40–300) rồi Enter": "Type a zoom % (40–300) then Enter",
     "Tìm trong tài liệu…": "Find in document…",
     "Kết quả trước (Shift+Enter)": "Previous match (Shift+Enter)",

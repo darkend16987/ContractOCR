@@ -2353,6 +2353,41 @@ async def compare_drawings_ep(req: CompareDrawingsRequest):
         return CompareResponse(success=False, error=str(e))
 
 
+class OverlayDrawingsRequest(BaseModel):
+    """Body for POST /overlay-drawings — two drawing PDFs to onion-skin."""
+    pdf_a_b64: str
+    pdf_b_b64: str
+
+
+@app.post("/overlay-drawings")
+async def overlay_drawings_ep(req: OverlayDrawingsRequest):
+    """Match pages of two drawings and return the per-pair alignment offset
+    (PDF points) so the frontend can overlay them as aligned layers."""
+    _require_fitz()
+
+    for label, b64 in (("A", req.pdf_a_b64), ("B", req.pdf_b_b64)):
+        if not b64:
+            raise HTTPException(status_code=400, detail=f"Thiếu file {label}")
+        if len(b64) > _MAX_PDF_B64:
+            raise HTTPException(status_code=400, detail=f"File {label} quá lớn (tối đa ~200MB).")
+
+    try:
+        pdf_a = base64.b64decode(req.pdf_a_b64)
+        pdf_b = base64.b64decode(req.pdf_b_b64)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Dữ liệu PDF không hợp lệ")
+
+    try:
+        from src.compare.drawing import overlay_drawings
+
+        return overlay_drawings(pdf_a, pdf_b)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("overlay-drawings error")
+        return {"success": False, "error": str(e)}
+
+
 class CompareExportRequest(BaseModel):
     """Body for POST /compare-drawings/export — stamp change regions onto a PDF."""
     pdf_b64: str

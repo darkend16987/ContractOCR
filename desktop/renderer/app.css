@@ -230,7 +230,10 @@ button.ghost { background: transparent; }
 }
 
 /* ---- viewer ---- */
-.viewer { flex: 1; overflow: auto; padding: 24px; display: flex; flex-direction: column; align-items: center; gap: 18px; }
+/* `safe center`: center pages while they fit, but pack to the start once a page
+   is wider/taller than the viewer so the overflow stays reachable by scrolling
+   (plain `center` clips the left/top overflow in a scroll container). */
+.viewer { flex: 1; overflow: auto; padding: 24px; display: flex; flex-direction: column; align-items: safe center; gap: 18px; }
 .viewer .page-wrap { box-shadow: 0 4px 18px rgba(0,0,0,0.4); background: #fff; }
 .viewer canvas { display: block; }
 
@@ -416,6 +419,37 @@ body.editing .annot-layer .an { cursor: move; }
   line-height: 1.3;
   resize: both;
   z-index: 30;
+}
+
+/* ---- note comment thread (editor) ---- */
+.annot-note-panel {
+  position: absolute; z-index: 31;
+  display: flex; flex-direction: column; gap: 6px;
+  width: 240px; padding: 8px;
+  background: rgba(255, 255, 255, 0.97); color: #000;
+  border: 1px solid var(--accent); border-radius: 6px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35);
+}
+.annot-note-panel .annot-note-edit { position: static; min-width: 0; width: 100%; box-sizing: border-box; }
+.note-thread {
+  max-height: 160px; overflow-y: auto;
+  display: flex; flex-direction: column; gap: 5px;
+  font-size: 12px; line-height: 1.35;
+}
+.note-orig-line { font-weight: 600; white-space: pre-wrap; }
+.note-reply-line {
+  white-space: pre-wrap; padding-left: 8px;
+  border-left: 2px solid var(--accent); color: #333;
+}
+.note-actions { display: flex; gap: 6px; }
+.note-actions button { flex: 0 0 auto; font-size: 12px; padding: 3px 8px; }
+.note-badge {
+  position: absolute; top: -6px; right: -6px;
+  min-width: 14px; height: 14px; padding: 0 3px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 9px; font-weight: 700; line-height: 1;
+  color: #fff; background: var(--accent);
+  border-radius: 8px; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
 }
 
 /* ---- baked sticky-note markers (readable in our own viewer) ---- */
@@ -681,6 +715,17 @@ body.editing .text-layer, body.text-editing .text-layer {
 .compare-bar .sep { width: 1px; height: 22px; background: var(--line); margin: 0 4px; }
 .compare-summary { font-size: 12px; color: var(--muted); }
 .compare-body { flex: 1; display: flex; min-height: 0; }
+
+/* Overlay (onion-skin) view. Reuses .compare-view / .compare-bar / .compare-body. */
+.overlay-ctl { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: var(--muted); white-space: nowrap; }
+.overlay-ctl.chk { cursor: pointer; }
+.overlay-ctl input[type="range"] { width: 90px; }
+.compare-bar button.nudge { min-width: 26px; padding: 3px 6px; }
+.overlay-stage { flex: 1; overflow: auto; padding: 16px; display: flex; justify-content: safe center; align-items: safe center; background: #fff; }
+.overlay-stack { position: relative; flex: 0 0 auto; }
+.overlay-stack canvas { position: absolute; left: 0; top: 0; }
+#overlay-base { z-index: 1; }
+#overlay-top { z-index: 2; }
 
 /* Left rail: ordered change list. */
 .compare-changes {
