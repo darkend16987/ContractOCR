@@ -4,7 +4,11 @@
 > [DESIGN.md](DESIGN.md) (kiến trúc), [ROADMAP.md](ROADMAP.md) (tiến độ chi tiết),
 > [SETUP.md](SETUP.md) (dựng môi trường).
 
-_Cập nhật: 2026-07-15 · v0.2.30_
+_Cập nhật: 2026-07-15 · v0.2.31_
+
+> v0.2.31 — **Hotfix: chồng lớp (overlay) — chế độ Tô màu khác biệt phủ full màn hình** (chỉ renderer `compare.js`; sidecar KHÔNG đổi — không rebuild):
+> - **Lỗi**: pdf.js render nền **đục** (trắng/sheet bản vẽ) → mọi pixel có alpha. Code cũ tô màu bằng `globalCompositeOperation="source-in"` + fillRect → source-in tô **mọi pixel có alpha** = cả canvas → nguyên mảng màu che hết. (Non-tint cũng lỗi ngầm: lớp B nền trắng che lớp A.)
+> - **Sửa** ([`compare.js`](desktop/renderer/compare.js) `keyOutBackground()`): suy alpha từ độ tối từng pixel — `alpha = 255 − luminance` (nét đậm→đục, nền trắng→trong suốt) cho **cả 2 lớp**; tint mode đổi màu nét (A đỏ / B xanh). Giờ 2 bản vẽ chồng lộ nhau: đỏ=chỉ A, xanh=chỉ B, đen=trùng. Robust dù pdf.js render nền đục hay trong. `node --check` OK. **CHƯA GUI-test tay.**
 
 > v0.2.30 — **Sửa zoom bị crop + Vừa chiều dọc + phím ↑/↓ nhảy trang + mũi tên kèm nhãn + ghi chú dạng chuỗi bình luận + chồng lớp 2 bản vẽ** (renderer + sidecar CÓ đổi — endpoint overlay mới, phải rebuild binary):
 > - **Zoom hết crop** ([`app.css`](desktop/renderer/app.css)): `.viewer` là scroll-container nhưng dùng `align-items:center` → khi trang rộng/cao hơn viewer, phần tràn trái/trên không kéo tới được (như bị cắt). Đổi `align-items: safe center` (căn giữa khi vừa, về đầu khi tràn).
