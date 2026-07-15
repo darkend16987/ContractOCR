@@ -591,16 +591,35 @@
       viewport: vp,
       transform: dpr !== 1 ? [dpr, 0, 0, dpr, 0, 0] : undefined,
     }).promise;
-    if (tint) {
-      // Keep the ink's alpha (antialiased edges included), replace its colour.
-      ctx.save();
-      ctx.setTransform(1, 0, 0, 1, 0, 0);
-      ctx.globalCompositeOperation = "source-in";
-      ctx.fillStyle = tint;
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
-      ctx.restore();
-    }
+    // pdf.js paints an OPAQUE (white / sheet) background, so a plain stack would
+    // have the top layer completely cover the base — and a `source-in` fill on an
+    // opaque canvas floods the whole page with the tint colour. Instead derive
+    // alpha from darkness (dark ink → opaque, white paper → transparent) so the
+    // layers reveal each other; in tint mode also recolour the ink.
+    keyOutBackground(ctx, canvas.width, canvas.height, tint);
     return { w: vp.width, h: vp.height };
+  }
+
+  // Turn a white-paper / dark-ink render into transparent-paper / coloured-ink.
+  function keyOutBackground(ctx, w, h, tint) {
+    let rgb = null;
+    if (tint) {
+      const m = /^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(tint);
+      if (m) rgb = [parseInt(m[1], 16), parseInt(m[2], 16), parseInt(m[3], 16)];
+    }
+    const im = ctx.getImageData(0, 0, w, h);
+    const d = im.data;
+    for (let i = 0; i < d.length; i += 4) {
+      const lum = (d[i] * 299 + d[i + 1] * 587 + d[i + 2] * 114) / 1000;
+      const ink = 255 - lum; // darkness → opacity
+      if (rgb) {
+        d[i] = rgb[0];
+        d[i + 1] = rgb[1];
+        d[i + 2] = rgb[2];
+      }
+      d[i + 3] = Math.round((d[i + 3] / 255) * ink);
+    }
+    ctx.putImageData(im, 0, 0);
   }
 
   async function renderOverlay() {
