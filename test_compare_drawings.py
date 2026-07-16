@@ -143,6 +143,51 @@ def test_annotate_pdf_clouds():
         doc.close()
 
 
+def test_change_box_refs():
+    """Every change points at its own box — the link the cloud picker needs."""
+    pdf_a, pdf_b = _make_docs()
+    rep = compare_drawings(pdf_a, pdf_b)
+    kind_of = {"delete": "del", "insert": "ins", "replace": "rep"}
+    seen_b = set()
+    for c in rep["changes"]:
+        assert "a_box" in c and "b_box" in c, c
+        for side, ref in (("a", c["a_box"]), ("b", c["b_box"])):
+            if ref is None:
+                # No box on that side only when the page is missing there too.
+                assert c[f"{side}_page"] is None, c
+                continue
+            pno, i = ref
+            assert pno == c[f"{side}_page"], c
+            box = rep[f"{side}_boxes"][str(pno)][i]  # must resolve
+            assert box[4] == kind_of[c["type"]], (c, box)
+        if c["b_box"]:
+            seen_b.add(tuple(c["b_box"]))
+    # The refs are a bijection onto b_boxes: no box orphaned, none claimed twice.
+    assert len(seen_b) == sum(len(v) for v in rep["b_boxes"].values())
+
+
+def test_export_selected_subset_only():
+    """Clouding a chosen subset stamps exactly those regions — the picker flow."""
+    pdf_a, pdf_b = _make_docs()
+    rep = compare_drawings(pdf_a, pdf_b)
+    picked = [c for c in rep["changes"] if c["b_box"]][::2]  # user ticks every other
+    assert len(picked) >= 2, "need a few regions to make this meaningful"
+
+    boxes: dict[str, list] = {}
+    for c in picked:
+        pno, i = c["b_box"]
+        boxes.setdefault(str(pno), []).append(rep["b_boxes"][str(pno)][i])
+
+    doc = fitz.open(stream=annotate_pdf(pdf_b, boxes, style="cloud"), filetype="pdf")
+    try:
+        total = sum(len(list(doc[i].annots() or [])) for i in range(doc.page_count))
+        assert total == len(picked), f"{total} clouds for {len(picked)} picked regions"
+        for pstr, blist in boxes.items():
+            assert len(list(doc[int(pstr)].annots() or [])) == len(blist)
+    finally:
+        doc.close()
+
+
 def test_annotate_pdf_ignores_garbage_boxes():
     pdf_a, _ = _make_docs()
     out = annotate_pdf(
@@ -163,6 +208,8 @@ if __name__ == "__main__":
         test_identical_docs,
         test_shifted_content_not_flagged,
         test_annotate_pdf_clouds,
+        test_change_box_refs,
+        test_export_selected_subset_only,
         test_annotate_pdf_ignores_garbage_boxes,
     ):
         fn()

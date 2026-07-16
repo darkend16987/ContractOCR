@@ -116,6 +116,8 @@ Giới hạn đã biết: sửa trong phạm vi từng đoạn (không tự dàn
 
 > **So sánh & Chồng lớp 2 bản vẽ:** nút **So sánh** → chọn 2 file → chế độ:
 > - **Bản vẽ**: đặt cạnh nhau, khoanh vùng thêm/xoá/sửa (xuất được bản đánh dấu).
+>   Danh sách thay đổi bên trái có **ô tick từng vùng** (mặc định **chọn tất**) — bỏ tick vùng nào thì
+>   vùng đó **mờ đi trên cả 2 bản** và **không được khoanh mây** khi xuất bản B. Nút xuất hiện số đã chọn.
 > - **Chồng lớp**: xếp 2 bản vẽ lên nhau, tự căn chỉnh + **tô màu khác biệt** (đỏ = chỉ có ở bản A,
 >   xanh = chỉ có ở bản B, đen = trùng). Chỉnh **độ mờ** lớp trên, **nudge** (phím mũi tên) để căn tay,
 >   PageUp/PageDown đổi cặp trang. Dùng để soi thay đổi giữa 2 phiên bản bản vẽ.

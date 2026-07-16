@@ -739,10 +739,24 @@ body.editing .text-layer, body.text-editing .text-layer {
 .cmp-diffs-head { font-weight: 600; margin-bottom: 8px; color: var(--fg); }
 .cmp-nodiff { color: var(--muted); }
 .cmp-change {
-  display: block; width: 100%; text-align: left; margin-bottom: 6px;
+  display: block; width: 100%; text-align: left;
   padding: 7px 9px; border-radius: 6px; border: 1px solid var(--line);
   border-left-width: 3px; background: transparent; color: var(--fg);
 }
+/* Drawing compare: a tick per change picks which regions get a revision cloud. */
+.cmp-change-row { display: flex; align-items: flex-start; gap: 7px; margin-bottom: 6px; }
+.cmp-change-row .cmp-change { flex: 1; min-width: 0; }
+.cmp-pick { flex: 0 0 auto; margin: 9px 0 0 2px; accent-color: var(--accent); cursor: pointer; }
+.cmp-pick:disabled { cursor: default; opacity: .4; }
+.cmp-pick-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  margin-bottom: 8px; padding-bottom: 8px; border-bottom: 1px solid var(--line);
+  color: var(--muted); font-size: 11px;
+}
+.cmp-pick-head label { display: flex; align-items: center; gap: 6px; cursor: pointer; color: var(--fg); font-size: 12px; }
+.cmp-pick-head input { accent-color: var(--accent); cursor: pointer; }
+/* Un-ticked: still listed and still drawn, just clearly not going in the export. */
+.cmp-change-row.off .cmp-change { opacity: .5; }
 .cmp-change:hover { background: var(--bg-hover); }
 .cmp-change.active { border-color: var(--accent); border-left-color: var(--accent); background: var(--bg-3); }
 .cmp-change.del { border-left-color: var(--danger); }
@@ -771,6 +785,8 @@ body.editing .text-layer, body.text-editing .text-layer {
 .cmp-box-del { background: rgba(239,68,68,.22); outline: 1px solid rgba(239,68,68,.65); }
 .cmp-box-ins { background: rgba(34,197,94,.22); outline: 1px solid rgba(34,197,94,.65); }
 .cmp-box-replace { background: rgba(250,204,21,.22); outline: 1px solid rgba(250,204,21,.7); }
+/* Un-ticked region: no cloud on export. Dashed + faded, on both A and B. */
+.cmp-box-off { background: transparent; outline-style: dashed; opacity: .5; }
 /* Flash the changed regions when the user jumps to a diff. */
 .cmp-box-pulse { animation: cmp-box-pulse 1.1s ease-out 1; }
 @keyframes cmp-box-pulse {

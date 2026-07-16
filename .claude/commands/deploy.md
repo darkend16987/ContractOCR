@@ -29,8 +29,10 @@ of the current `desktop/package.json` version.
 
 ## 1. Tests
 
-- Run the Python test: `.venv\Scripts\python test_export.py` (expect
-  `Test complete...`, no traceback).
+- Run the Python tests (expect the closing line of each, no traceback):
+  - `.venv\Scripts\python test_export.py` → `Test complete...`
+  - `.venv\Scripts\python test_compare_drawings.py` → `All drawing-compare tests passed.`
+  - `.venv\Scripts\python test_translate_layout.py` → `All translate-layout tests passed.`
 - Quick static check of the renderer (no test runner there):
   `node --check desktop/renderer/app.js`, `editor.js`, `text-edit.js`.
 - **Any failure → stop and report.** Do not continue.

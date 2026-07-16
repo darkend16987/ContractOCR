@@ -300,6 +300,11 @@ def compare_drawings(pdf_a: bytes, pdf_b: bytes, sensitivity: str = "normal") ->
     Returns the same shape as :func:`comparator.compare_pdfs` (``a_boxes`` /
     ``b_boxes`` / ``changes`` / ``summary``) so the existing compare renderer
     displays it unchanged, plus ``summary.page_pairs`` with the alignment.
+
+    Every change also carries ``a_box`` / ``b_box``: ``[page, i]`` pointing at
+    its own entry in ``a_boxes[page]`` / ``b_boxes[page]``, or ``None`` when
+    that side has no box (a page that exists in only one document). The UI needs
+    that link to let the user tick which regions get a revision cloud on export.
     """
     import fitz  # PyMuPDF
 
@@ -325,8 +330,12 @@ def compare_drawings(pdf_a: bytes, pdf_b: bytes, sensitivity: str = "normal") ->
             )
             if not regions_a:
                 continue
-            a_boxes.setdefault(ia, []).extend(regions_a)
-            b_boxes.setdefault(ib, []).extend(regions_b)
+            # Where this pair's regions land in each page's box list, so every
+            # change can point at its own box (``a_box`` / ``b_box`` below).
+            base_a = len(a_boxes.setdefault(ia, []))
+            base_b = len(b_boxes.setdefault(ib, []))
+            a_boxes[ia].extend(regions_a)
+            b_boxes[ib].extend(regions_b)
             kind_names = {"del": "Xoá nét vẽ", "ins": "Thêm nét vẽ", "rep": "Sửa nét vẽ"}
             kind_types = {"del": "delete", "ins": "insert", "rep": "replace"}
             for k, (boxa, boxb) in enumerate(zip(regions_a, regions_b)):
@@ -339,12 +348,16 @@ def compare_drawings(pdf_a: bytes, pdf_b: bytes, sensitivity: str = "normal") ->
                         "b_text": label if kind != "del" else "",
                         "a_page": ia,
                         "b_page": ib,
+                        "a_box": [ia, base_a + k],
+                        "b_box": [ib, base_b + k],
                     }
                 )
 
         for ia in only_a:
             r = doc_a[ia].rect
-            a_boxes.setdefault(ia, []).append([0, 0, round(r.width, 2), round(r.height, 2), "del"])
+            lst = a_boxes.setdefault(ia, [])
+            idx = len(lst)
+            lst.append([0, 0, round(r.width, 2), round(r.height, 2), "del"])
             changes.append(
                 {
                     "type": "delete",
@@ -352,11 +365,15 @@ def compare_drawings(pdf_a: bytes, pdf_b: bytes, sensitivity: str = "normal") ->
                     "b_text": "",
                     "a_page": ia,
                     "b_page": None,
+                    "a_box": [ia, idx],
+                    "b_box": None,  # nothing to cloud on B — the page is gone
                 }
             )
         for ib in only_b:
             r = doc_b[ib].rect
-            b_boxes.setdefault(ib, []).append([0, 0, round(r.width, 2), round(r.height, 2), "ins"])
+            lst = b_boxes.setdefault(ib, [])
+            idx = len(lst)
+            lst.append([0, 0, round(r.width, 2), round(r.height, 2), "ins"])
             changes.append(
                 {
                     "type": "insert",
@@ -364,6 +381,8 @@ def compare_drawings(pdf_a: bytes, pdf_b: bytes, sensitivity: str = "normal") ->
                     "b_text": f"Trang {ib + 1} (B) là trang mới",
                     "a_page": None,
                     "b_page": ib,
+                    "a_box": None,
+                    "b_box": [ib, idx],
                 }
             )
 

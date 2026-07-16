@@ -36,6 +36,10 @@
     wrapsB: [],
     obsA: null,
     obsB: null,
+    // Drawing compare: which changes get a revision cloud on export. Holds
+    // change indices; every cloudable change starts ticked.
+    sel: null,
+    owner: null, // { a: Map("page:i" -> changeIdx), b: Map(...) } — box → change
   };
 
   function reset() {
@@ -49,6 +53,8 @@
     cmp.changeIdx = -1;
     cmp.wrapsA = [];
     cmp.wrapsB = [];
+    cmp.sel = null;
+    cmp.owner = null;
   }
 
   // ---- pick-files modal ----------------------------------------------------
@@ -160,6 +166,7 @@
     el("compare-b-h").textContent = "B · " + cmp.b.name;
     // Marked-up export only makes sense for the drawing diff (region boxes).
     el("compare-export").hidden = !(cmp.mode === "drawing" && !cmp.report.summary.identical);
+    initSelection();
     renderSummary();
     renderChangeList();
     // Start at a scale that fits the page width to the pane (the view is now
@@ -169,11 +176,108 @@
     updateZoomReadout();
     buildPane("a", cmp.pdfA, cmp.aBoxes);
     buildPane("b", cmp.pdfB, cmp.bBoxes);
+    syncSelectionUI();
     if (cmp.changes.length) {
       cmp.changeIdx = 0;
       jumpToChange(0, false);
     } else {
       el("compare-pagenum").textContent = "0 thay đổi";
+    }
+  }
+
+  // ---- pick which regions get a revision cloud ------------------------------
+
+  // The picker needs each change to point at its own box. Drawing reports carry
+  // that link (`b_box`); the text diff doesn't, and neither does an older
+  // sidecar — in both cases the picker stays hidden and export clouds
+  // everything, exactly as before.
+  function canSelect() {
+    return cmp.mode === "drawing" && (cmp.changes || []).some((c) => c.b_box);
+  }
+
+  function cloudableCount() {
+    return (cmp.changes || []).filter((c) => c.b_box).length;
+  }
+
+  // Everything cloudable starts ticked — clouding every difference is the
+  // common case; deselecting is the exception.
+  function initSelection() {
+    cmp.sel = new Set();
+    cmp.owner = { a: new Map(), b: new Map() };
+    if (!canSelect()) return;
+    cmp.changes.forEach((c, i) => {
+      if (c.a_box) cmp.owner.a.set(c.a_box[0] + ":" + c.a_box[1], i);
+      if (c.b_box) {
+        cmp.owner.b.set(c.b_box[0] + ":" + c.b_box[1], i);
+        cmp.sel.add(i);
+      }
+    });
+  }
+
+  function setSelected(i, on) {
+    if (on) cmp.sel.add(i);
+    else cmp.sel.delete(i);
+    syncSelectionUI();
+  }
+
+  function selectAll(on) {
+    cmp.sel.clear();
+    if (on) cmp.changes.forEach((c, i) => { if (c.b_box) cmp.sel.add(i); });
+    for (const cb of el("compare-changes").querySelectorAll(".cmp-pick")) {
+      if (!cb.disabled) cb.checked = on;
+    }
+    syncSelectionUI();
+  }
+
+  // "Chọn tất" line above the change list.
+  function buildPickHead() {
+    const w = document.createElement("div");
+    w.className = "cmp-pick-head";
+    const lab = document.createElement("label");
+    const all = document.createElement("input");
+    all.type = "checkbox";
+    all.id = "cmp-pick-all";
+    all.checked = true;
+    all.onchange = () => selectAll(all.checked);
+    lab.appendChild(all);
+    lab.appendChild(document.createTextNode("Chọn tất"));
+    const cnt = document.createElement("span");
+    cnt.id = "cmp-pick-count";
+    w.appendChild(lab);
+    w.appendChild(cnt);
+    return w;
+  }
+
+  // Reflect the ticks everywhere: the export button's count, the header, and the
+  // boxes on the pages themselves — an un-ticked region is dimmed so the view
+  // always shows what the exported file will actually contain.
+  function syncSelectionUI() {
+    if (!canSelect()) return;
+    const total = cloudableCount();
+    const n = cmp.sel.size;
+    const btn = el("compare-export");
+    if (btn) {
+      btn.textContent = `Tải B đã đánh dấu (${n}/${total})`;
+      btn.disabled = n === 0;
+    }
+    const cnt = el("cmp-pick-count");
+    if (cnt) cnt.textContent = `${n}/${total} vùng khoanh mây`;
+    const all = el("cmp-pick-all");
+    if (all) {
+      all.checked = n === total && total > 0;
+      all.indeterminate = n > 0 && n < total;
+    }
+    for (const row of el("compare-changes").querySelectorAll(".cmp-change-row")) {
+      const i = Number(row.dataset.i);
+      row.classList.toggle("off", Boolean(cmp.changes[i]?.b_box) && !cmp.sel.has(i));
+    }
+    for (const side of ["a", "b"]) {
+      const host = el(side === "a" ? "compare-a" : "compare-b");
+      if (!host) continue;
+      for (const d of host.querySelectorAll(".cmp-box")) {
+        const owner = cmp.owner[side].get(d.dataset.p + ":" + d.dataset.bi);
+        d.classList.toggle("cmp-box-off", owner !== undefined && !cmp.sel.has(owner));
+      }
     }
   }
 
@@ -268,8 +372,26 @@
     head.textContent = cmp.changes.length + " thay đổi";
     box.appendChild(head);
 
+    const pick = canSelect();
+    if (pick) box.appendChild(buildPickHead());
+
     cmp.changes.forEach((c, i) => {
       const { cls, txt } = changeLabel(c);
+      const row = document.createElement("div");
+      row.className = "cmp-change-row";
+      row.dataset.i = String(i);
+      if (pick) {
+        const cb = document.createElement("input");
+        cb.type = "checkbox";
+        cb.className = "cmp-pick";
+        cb.checked = cmp.sel.has(i);
+        cb.disabled = !c.b_box;
+        cb.title = c.b_box
+          ? "Khoanh mây vùng này khi xuất bản B"
+          : "Vùng này không có trên bản B — không khoanh mây được";
+        cb.onchange = () => setSelected(i, cb.checked);
+        row.appendChild(cb);
+      }
       const b = document.createElement("button");
       b.className = "cmp-change " + cls;
       b.dataset.i = String(i);
@@ -287,7 +409,8 @@
         cmp.changeIdx = i;
         jumpToChange(i, true);
       };
-      box.appendChild(b);
+      row.appendChild(b);
+      box.appendChild(row);
     });
   }
 
@@ -370,32 +493,61 @@
       return;
     }
     const boxes = boxesMap[String(i)];
-    if (boxes) drawBoxes(pageDiv, boxes);
+    if (boxes) drawBoxes(pageDiv, boxes, side, i);
   }
 
   // Boxes are in scale-1 PDF-point space → on screen it's just bbox * scale.
-  function drawBoxes(pageDiv, boxes) {
+  // Each box carries its page + index so the cloud picker can find it again;
+  // pages render lazily, so a box drawn after a tick reads the state here.
+  function drawBoxes(pageDiv, boxes, side, pageIdx) {
     const s = cmp.scale;
-    for (const b of boxes) {
+    boxes.forEach((b, bi) => {
       const [x0, y0, x1, y1, kind] = b;
       const d = document.createElement("div");
       d.className =
         "cmp-box " +
         (kind === "del" ? "cmp-box-del" : kind === "ins" ? "cmp-box-ins" : "cmp-box-replace");
+      d.dataset.p = String(pageIdx);
+      d.dataset.bi = String(bi);
+      const owner = cmp.owner && cmp.owner[side] ? cmp.owner[side].get(pageIdx + ":" + bi) : undefined;
+      if (owner !== undefined && cmp.sel && !cmp.sel.has(owner)) d.classList.add("cmp-box-off");
       d.style.left = x0 * s + "px";
       d.style.top = y0 * s + "px";
       d.style.width = Math.max(3, x1 - x0) * s + "px";
       d.style.height = Math.max(6, y1 - y0) * s + "px";
       pageDiv.appendChild(d);
-    }
+    });
   }
 
   // ---- export marked-up B ---------------------------------------------------
 
-  // Save a copy of file B with a revision cloud around every changed region.
+  // The ticked subset of b_boxes, in the same {page: [box, ...]} shape the
+  // export endpoint takes. Falls back to the whole map when there is no picker.
+  function selectedBoxes() {
+    if (!canSelect()) return cmp.bBoxes;
+    const out = {};
+    for (const i of cmp.sel) {
+      const c = cmp.changes[i];
+      if (!c || !c.b_box) continue;
+      const [p, k] = c.b_box;
+      const box = (cmp.bBoxes[String(p)] || [])[k];
+      if (!box) continue;
+      if (!out[String(p)]) out[String(p)] = [];
+      out[String(p)].push(box);
+    }
+    if (!Object.keys(out).length) {
+      toast("Chưa chọn vùng nào để khoanh mây.", "bad");
+      return null;
+    }
+    return out;
+  }
+
+  // Save a copy of file B with a revision cloud around each ticked region.
   // The clouds are real PDF annotations — any viewer can move/delete them.
   async function exportMarked() {
     if (!cmp.b || !cmp.bBoxes) return;
+    const boxes = selectedBoxes();
+    if (!boxes) return;
     showOverlay("Đang tạo bản B có đánh dấu…");
     try {
       const res = await sidecarFetch("/compare-drawings/export", {
@@ -403,7 +555,7 @@
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           pdf_b64: u8ToB64(cmp.b.bytes),
-          boxes: cmp.bBoxes,
+          boxes,
           style: "cloud",
         }),
       });
