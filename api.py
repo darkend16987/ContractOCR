@@ -563,6 +563,28 @@ def _font_covers(text: str, *, fontfile: str | None = None, fontname: str | None
         return False
 
 
+def _fresh_fontname(page, base: str) -> str:
+    """A font resource name `page` is not already using.
+
+    Page.insert_font() matches on the RESOURCE name: if the page already has one,
+    it returns that font and IGNORES the fontfile we passed. A previous edit round
+    leaves its own /vnedit, /loc… behind — and subset_fonts() has since stripped
+    them down to just that round's glyphs — so reusing a name silently redraws with
+    a subset that can't cover the new text, giving notdef boxes (□) for every char
+    the earlier round didn't happen to use. Always embed under an unused name.
+    """
+    try:
+        used = {f[4] for f in page.get_fonts()}
+    except Exception:
+        return base
+    if base not in used:
+        return base
+    i = 1
+    while f"{base}{i}" in used:
+        i += 1
+    return f"{base}{i}"
+
+
 # PyMuPDF Base14 names by (bold, italic). Real font variants, no faux needed.
 _BUILTIN_VARIANTS = {
     "helv": {(False, False): "helv", (True, False): "hebo", (False, True): "heit", (True, True): "hebi"},
@@ -1939,7 +1961,7 @@ async def edit_text(req: EditTextRequest):
                 if not vp:
                     embedded[key] = None
                     return None
-                fn = "vnedit" + ("b" if bold else "") + ("i" if italic else "")
+                fn = _fresh_fontname(page, "vnedit" + ("b" if bold else "") + ("i" if italic else ""))
                 try:
                     page.insert_font(fontname=fn, fontfile=vp)
                     embedded[key] = (fn, vp)
@@ -1952,7 +1974,6 @@ async def edit_text(req: EditTextRequest):
             # one PyMuPDF fontname per (name, bold, italic). Returns (fontname,
             # fontfile) or None when the family can't be resolved on this machine.
             local_embedded: dict[tuple[str, bool, bool], tuple[str, str] | None] = {}
-            local_seq = [0]
 
             def embed_local(name: str, bold: bool, italic: bool):
                 key = (name, bold, italic)
@@ -1962,8 +1983,7 @@ async def edit_text(req: EditTextRequest):
                 if not vp:
                     local_embedded[key] = None
                     return None
-                fn = "loc%d" % local_seq[0]
-                local_seq[0] += 1
+                fn = _fresh_fontname(page, "loc")
                 try:
                     page.insert_font(fontname=fn, fontfile=vp)
                     local_embedded[key] = (fn, vp)
@@ -2618,7 +2638,6 @@ async def translate_pdf(req: TranslateRequest):
             # 2. Lazily embed fonts (same scheme as /edit-text), then re-typeset.
             embedded: dict[tuple[bool, bool], tuple[str, str] | None] = {}
             local_embedded: dict[tuple[str, bool, bool], tuple[str, str] | None] = {}
-            local_seq = [0]
 
             def embed_vn(bold: bool, italic: bool):
                 key = (bold, italic)
@@ -2628,7 +2647,9 @@ async def translate_pdf(req: TranslateRequest):
                 if not vp:
                     embedded[key] = None
                     return None
-                fn = "trvn" + ("b" if bold else "") + ("i" if italic else "")
+                # _fresh_fontname: translating an already-translated file would
+                # otherwise re-ask for this page's own /trvn — see /edit-text.
+                fn = _fresh_fontname(page, "trvn" + ("b" if bold else "") + ("i" if italic else ""))
                 try:
                     page.insert_font(fontname=fn, fontfile=vp)
                     embedded[key] = (fn, vp)
@@ -2644,8 +2665,7 @@ async def translate_pdf(req: TranslateRequest):
                 if not vp:
                     local_embedded[key] = None
                     return None
-                fn = "trloc%d" % local_seq[0]
-                local_seq[0] += 1
+                fn = _fresh_fontname(page, "trloc")
                 try:
                     page.insert_font(fontname=fn, fontfile=vp)
                     local_embedded[key] = (fn, vp)

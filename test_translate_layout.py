@@ -392,6 +392,45 @@ def test_plain_page_keeps_the_old_geometry():
         assert b["layout"] == b["bbox"]
 
 
+def test_retranslating_an_output_does_not_draw_boxes():
+    """Translating a file that has already been through /translate-pdf must not turn
+    the new text into notdef boxes (□).
+
+    Same trap as /edit-text: insert_font() matches on the RESOURCE name, so asking
+    for this page's own /trvn returns the font already there and silently ignores
+    the fontfile — and the earlier pass's subset_fonts() has since stripped that
+    font's unicode cmap, so every lookup lands on glyph 0. Nothing raises: the
+    endpoint reports success and hands back a page of boxes, which is why this
+    asserts on the drawn glyphs.
+
+    Three passes, because the first re-typeset resolves the family locally (/trloc)
+    and only the second reaches for /trvn — the third is the one that repeats it.
+    """
+    def notdef(pdf_bytes: bytes) -> int:
+        d = fitz.open(stream=pdf_bytes, filetype="pdf")
+        try:
+            return sum(l.count("\x00") for l in d[0].get_text().splitlines())
+        finally:
+            d.close()
+
+    doc = fitz.open()
+    page = doc.new_page(width=W, height=H)
+    page.insert_font(fontname="F0", fontfile=api._vietnamese_font())
+    for i, t in enumerate(("Contract line one here", "Contract line two here",
+                           "Contract line three")):
+        page.insert_text((60, 100 + i * 30), t, fontname="F0", fontsize=12)
+    pdf = doc.tobytes(deflate=True, garbage=3)
+    doc.close()
+
+    for book in ({"Contract line one here": "Dòng hợp đồng thứ nhất đây"},
+                 {"Contract line two here": "Dòng hợp đồng thứ hai đây nhé"},
+                 {"Contract line three": "Dòng hợp đồng thứ ba là đây"}):
+        resp, out, _ = _translate(pdf, book)
+        out.close()
+        pdf = base64.b64decode(resp.data_b64)
+        assert notdef(pdf) == 0, "re-translate drew boxes — a stale font resource was reused"
+
+
 def test_fit_fontsize_never_overflows():
     """Whatever size `_fit_fontsize` returns, insert_textbox must accept it.
 
@@ -435,6 +474,7 @@ if __name__ == "__main__":
         test_underline_under_text_survives,
         test_long_translation_shrinks_but_survives,
         test_plain_page_keeps_the_old_geometry,
+        test_retranslating_an_output_does_not_draw_boxes,
         test_fit_fontsize_never_overflows,
     ):
         fn()
