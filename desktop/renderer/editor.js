@@ -46,6 +46,13 @@
     _poly: null, // freehand-cloud polygon in progress: { page, id, layer, cx, cy }
     _form: null,
     _formDoc: null,
+    // Measure/dimension tool: calibration from one known length + last-used unit.
+    // unitsPerPoint = real-world units per PDF point; reset per edit session (a
+    // different drawing has a different scale). See the "measure" tool branches.
+    measureCal: null, // { unitsPerPoint } or null (not yet calibrated)
+    measureUnit: "m", // unit label appended to auto dim text
+    measureDecimals: 2, // decimal places for the measured value
+    _dimPending: null, // drag awaiting the calibration modal: { id, page, layer, pdfDist }
   };
 
   // ---- model helpers -------------------------------------------------------
@@ -523,6 +530,62 @@
       return el;
     }
 
+    if (a.kind === "dim") {
+      // Dimension line: a stroke between the two picked points, a perpendicular
+      // tick at each end, and the measured value centred just off the midpoint.
+      const minX = Math.min(a.x1, a.x2);
+      const minY = Math.min(a.y1, a.y2);
+      const w = Math.max(1, Math.abs(a.x2 - a.x1));
+      const h = Math.max(1, Math.abs(a.y2 - a.y1));
+      const fs = a.labelSize || 14;
+      const pad = (a.width || 2) * 3 + fs + 8; // room for ticks + label
+      el.style.left = (minX - pad) * s + "px";
+      el.style.top = (minY - pad) * s + "px";
+      el.style.width = (w + 2 * pad) * s + "px";
+      el.style.height = (h + 2 * pad) * s + "px";
+      const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+      svg.setAttribute("viewBox", `0 0 ${w + 2 * pad} ${h + 2 * pad}`);
+      svg.setAttribute("width", "100%");
+      svg.setAttribute("height", "100%");
+      const sx = a.x1 - minX + pad;
+      const sy = a.y1 - minY + pad;
+      const ex = a.x2 - minX + pad;
+      const ey = a.y2 - minY + pad;
+      const ang = Math.atan2(ey - sy, ex - sx);
+      const nx = -Math.sin(ang); // unit perpendicular
+      const ny = Math.cos(ang);
+      const tick = Math.max(5, (a.width || 2) * 3);
+      const mkLine = (x1, y1, x2, y2) => {
+        const ln = document.createElementNS("http://www.w3.org/2000/svg", "line");
+        ln.setAttribute("x1", x1);
+        ln.setAttribute("y1", y1);
+        ln.setAttribute("x2", x2);
+        ln.setAttribute("y2", y2);
+        ln.setAttribute("stroke", a.color);
+        ln.setAttribute("stroke-width", String(a.width || 2));
+        ln.setAttribute("stroke-linecap", "round");
+        svg.appendChild(ln);
+      };
+      mkLine(sx, sy, ex, ey);
+      mkLine(sx - nx * tick, sy - ny * tick, sx + nx * tick, sy + ny * tick);
+      mkLine(ex - nx * tick, ey - ny * tick, ex + nx * tick, ey + ny * tick);
+      if (a.text) {
+        const t = document.createElementNS("http://www.w3.org/2000/svg", "text");
+        t.setAttribute("x", String((sx + ex) / 2 + nx * (tick + fs * 0.7)));
+        t.setAttribute("y", String((sy + ey) / 2 + ny * (tick + fs * 0.7)));
+        t.setAttribute("fill", a.color);
+        t.setAttribute("font-size", String(fs));
+        t.setAttribute("font-family", "system-ui, Arial, sans-serif");
+        t.setAttribute("text-anchor", "middle");
+        t.setAttribute("dominant-baseline", "central");
+        t.style.whiteSpace = "pre";
+        t.textContent = a.text;
+        svg.appendChild(t);
+      }
+      el.appendChild(svg);
+      return el;
+    }
+
     if (a.kind === "cloud") {
       // The element covers the padded box (scallops included) so it renders and
       // hit-tests over the whole cloud, like the freehand/arrow overlays.
@@ -775,7 +838,7 @@
         const orig =
           a.kind === "draw" || a.kind === "cloudpen"
             ? { pts: a.pts.map((q) => ({ ...q })) }
-            : a.kind === "arrow"
+            : a.kind === "arrow" || a.kind === "dim"
             ? { x1: a.x1, y1: a.y1, x2: a.x2, y2: a.y2 }
             : { x: a.x, y: a.y };
         pushEdUndo(); // one undo step per move gesture
@@ -825,6 +888,20 @@
       annotsFor(i).push(a);
       ed.sel = a.id;
       drag = { type: "arrow", page: i, id: a.id, layer };
+      e.preventDefault();
+      return;
+    }
+
+    if (ed.tool === "measure") {
+      // Drag out the segment (like arrow). Its dim text is filled on mouseup:
+      // the first segment calibrates (asks the real length), later ones are auto
+      // numbered by the stored ratio. `text` is a live preview during the drag.
+      const a = { id: ed.seq++, kind: "dim", x1: p.x, y1: p.y, x2: p.x, y2: p.y,
+                  color: ed.color, width: ed.penWidth, text: "", labelSize: 14 };
+      pushEdUndo();
+      annotsFor(i).push(a);
+      ed.sel = a.id;
+      drag = { type: "measure", page: i, id: a.id, layer };
       e.preventDefault();
       return;
     }
@@ -912,7 +989,7 @@
       const dy = p.y - drag.sy;
       if (a.kind === "draw" || a.kind === "cloudpen") {
         a.pts = drag.orig.pts.map((q) => ({ x: q.x + dx, y: q.y + dy }));
-      } else if (a.kind === "arrow") {
+      } else if (a.kind === "arrow" || a.kind === "dim") {
         a.x1 = drag.orig.x1 + dx;
         a.y1 = drag.orig.y1 + dy;
         a.x2 = drag.orig.x2 + dx;
@@ -924,6 +1001,12 @@
     } else if (drag.type === "arrow") {
       a.x2 = p.x;
       a.y2 = p.y;
+    } else if (drag.type === "measure") {
+      a.x2 = p.x;
+      a.y2 = p.y;
+      // Live preview: show the length while dragging once a scale is known.
+      const d = Math.hypot(a.x2 - a.x1, a.y2 - a.y1);
+      a.text = ed.measureCal ? formatDim(d * ed.measureCal.unitsPerPoint) : "";
     } else if (drag.type === "resize") {
       a.w = Math.max(4, drag.orig.w + (p.x - drag.sx));
       a.h = Math.max(4, drag.orig.h + (p.y - drag.sy));
@@ -972,7 +1055,8 @@
       const a = hit.a;
       // Discard accidental zero-size rectangles / single-point scribbles.
       const tinyArrow = drag.type === "arrow" && Math.hypot(a.x2 - a.x1, a.y2 - a.y1) < 6;
-      if ((drag.type === "rect" && (a.w < 4 || a.h < 4)) || (drag.type === "draw" && a.pts.length < 2) || tinyArrow) {
+      const tinyDim = drag.type === "measure" && Math.hypot(a.x2 - a.x1, a.y2 - a.y1) < 6;
+      if ((drag.type === "rect" && (a.w < 4 || a.h < 4)) || (drag.type === "draw" && a.pts.length < 2) || tinyArrow || tinyDim) {
         ed.annots[drag.page] = ed.annots[drag.page].filter((x) => x.id !== drag.id);
         ed.sel = null;
         dropLastEdUndo(); // the creation was discarded — state is back at that snapshot
@@ -986,6 +1070,25 @@
       drag = null;
       renderLayer(la, pg);
       if (still) openArrowLabelEditor(la, pg, still.a, false);
+      return;
+    }
+    if (drag.type === "measure") {
+      const still = findAnnot(drag.id);
+      const la = drag.layer, pg = drag.page;
+      drag = null;
+      renderLayer(la, pg);
+      if (still) {
+        const a = still.a;
+        const d = Math.hypot(a.x2 - a.x1, a.y2 - a.y1);
+        if (!ed.measureCal) {
+          // First segment sets the scale: ask its real length, then back-fill text.
+          ed._dimPending = { id: a.id, page: pg, layer: la, pdfDist: d };
+          openDimModal();
+        } else {
+          a.text = formatDim(d * ed.measureCal.unitsPerPoint);
+          renderLayer(la, pg);
+        }
+      }
       return;
     }
     const layer = drag.layer;
@@ -1697,6 +1800,32 @@
           const [bx, by] = map(cxO - wPt / 2, cyO + hPt / 2);
           page.drawImage(img, { x: bx, y: by, width: wPt, height: hPt, rotate: pageRotate(page) });
         }
+      } else if (a.kind === "dim") {
+        const c = hexRgb(a.color);
+        const w = a.width || 2;
+        const [sx, sy] = map(a.x1, a.y1);
+        const [ex, ey] = map(a.x2, a.y2);
+        page.drawLine({ start: { x: sx, y: sy }, end: { x: ex, y: ey }, thickness: w, color: c });
+        // End ticks: perpendicular in overlay (y-down) space, endpoints mapped.
+        const angO = Math.atan2(a.y2 - a.y1, a.x2 - a.x1);
+        const nxO = -Math.sin(angO);
+        const nyO = Math.cos(angO);
+        const tick = Math.max(5, w * 3);
+        for (const pt of [[a.x1, a.y1], [a.x2, a.y2]]) {
+          const [t1x, t1y] = map(pt[0] - nxO * tick, pt[1] - nyO * tick);
+          const [t2x, t2y] = map(pt[0] + nxO * tick, pt[1] + nyO * tick);
+          page.drawLine({ start: { x: t1x, y: t1y }, end: { x: t2x, y: t2y }, thickness: w, color: c });
+        }
+        // Measured value — PNG (same Vietnamese-safe path as text/arrow labels).
+        if (a.text) {
+          const fs = a.labelSize || 14;
+          const { bytes, wPt, hPt } = renderTextPng(a.text, fs, a.color, {});
+          const img = await doc.embedPng(bytes);
+          const mxO = (a.x1 + a.x2) / 2 + nxO * (tick + fs * 0.7);
+          const myO = (a.y1 + a.y2) / 2 + nyO * (tick + fs * 0.7);
+          const [bx, by] = map(mxO - wPt / 2, myO + hPt / 2);
+          page.drawImage(img, { x: bx, y: by, width: wPt, height: hPt, rotate: pageRotate(page) });
+        }
       } else if (a.kind === "note") {
         // 1. Visible marker square so the note shows in any viewer (incl. ours).
         const c = hexRgb(a.color);
@@ -1849,6 +1978,71 @@
     toast("Đã thêm watermark — bấm Áp dụng để ghi vào PDF.", "good");
   }
 
+  // ---- measure / dimension tool -------------------------------------------
+
+  // Format a measured value to the configured decimals, drop trailing zeros, and
+  // append the unit ("10.00 m" → "10 m", "3.14159 m" → "3.14 m").
+  function formatDim(value) {
+    const dec = Math.max(0, Math.min(6, ed.measureDecimals | 0));
+    let s = Number(value).toFixed(dec);
+    if (dec > 0) s = s.replace(/\.?0+$/, "");
+    return ed.measureUnit ? `${s} ${ed.measureUnit}`.trim() : s;
+  }
+
+  // Show the calibration dialog for the just-drawn known-length segment. Seeds the
+  // inputs from the last-used unit/decimals so repeat calibrations are one keypress.
+  function openDimModal() {
+    $("dim-length").value = "";
+    $("dim-unit").value = ed.measureUnit || "m";
+    $("dim-decimals").value = String(ed.measureDecimals);
+    $("dim-modal").hidden = false;
+    setTimeout(() => $("dim-length").focus(), 0);
+  }
+
+  // OK on the calibration dialog: turn the entered real length into a scale ratio,
+  // back-fill the pending segment's text, and keep the tool ready for the rest.
+  function applyDim() {
+    const p = ed._dimPending;
+    if (!p) {
+      $("dim-modal").hidden = true;
+      return;
+    }
+    const real = parseFloat(String($("dim-length").value).replace(",", "."));
+    if (!(real > 0)) {
+      toast("Nhập chiều dài thật (số dương) của đoạn đã vẽ.", "bad");
+      return;
+    }
+    ed.measureUnit = ($("dim-unit").value || "").trim();
+    ed.measureDecimals = Math.max(0, Math.min(6, parseInt($("dim-decimals").value, 10) || 0));
+    ed.measureCal = { unitsPerPoint: real / p.pdfDist };
+    const hit = findAnnot(p.id);
+    if (hit) hit.a.text = formatDim(real);
+    ed._dimPending = null;
+    $("dim-modal").hidden = true;
+    renderLayer(p.layer, p.page);
+    if (ed.tool === "measure") setTool("measure"); // refresh the hint to "calibrated"
+    toast("Đã hiệu chuẩn tỷ lệ — kéo các đoạn khác để tự ghi kích thước.", "good");
+  }
+
+  // Cancel calibration: drop the pending (uncalibrated) segment entirely.
+  function cancelDim() {
+    const p = ed._dimPending;
+    $("dim-modal").hidden = true;
+    if (!p) return;
+    ed.annots[p.page] = (ed.annots[p.page] || []).filter((x) => x.id !== p.id);
+    if (ed.sel === p.id) ed.sel = null;
+    dropLastEdUndo();
+    ed._dimPending = null;
+    renderLayer(p.layer, p.page);
+  }
+
+  // "Hiệu chuẩn lại": forget the scale so the next drawn segment recalibrates.
+  function recalibrateMeasure() {
+    ed.measureCal = null;
+    if (ed.tool === "measure") setTool("measure");
+    toast("Kéo một đoạn có kích thước đã biết để hiệu chuẩn lại.", "");
+  }
+
   // ---- form fill -----------------------------------------------------------
 
   async function openForm() {
@@ -1971,6 +2165,7 @@
     note: ["color"],
     image: [],
     redact: ["redact"],
+    measure: ["color", "penwidth", "measure"],
   };
   // Which controls an already-placed annotation of a given kind can tweak. Used
   // by the Select tool so the palette shows only what the *selected* item needs
@@ -1987,6 +2182,7 @@
     note: ["color"],
     image: ["imgpages"],
     redact: ["redact"],
+    dim: ["color", "penwidth"],
   };
   // Show the palette controls relevant to the current context: for a drawing
   // tool, the tool's controls; for Select, only the selected annotation's (or
@@ -2030,6 +2226,9 @@
       note: "Bấm lên trang để đặt ghi chú; gõ nội dung rồi Ctrl+Enter.",
       image: "Bấm lên trang để đặt ảnh đã chọn.",
       redact: "Kéo để che — nội dung gốc sẽ bị xoá khi áp dụng.",
+      measure: ed.measureCal
+        ? `Kéo một đoạn để tự ghi kích thước (tỷ lệ đã hiệu chuẩn, đơn vị ${ed.measureUnit}). Bấm "Hiệu chuẩn lại" để đổi.`
+        : "Kéo đoạn có kích thước ĐÃ BIẾT rồi nhập số thật để hiệu chuẩn; sau đó các đoạn khác tự ra số.",
     };
     $("ed-hint").textContent = hints[tool] || "";
   }
@@ -2063,6 +2262,8 @@
   function enter() {
     if (!state.bytes) return;
     ed.active = true;
+    ed.measureCal = null; // a different drawing has a different scale — recalibrate
+    ed._dimPending = null;
     clearEdHistory(); // fresh annotation-undo timeline per session
     $("edit-bar").hidden = false;
     $("btn-edit").classList.add("active");
@@ -2130,6 +2331,17 @@
       applyImgPages();
     }
   });
+
+  // Measure/dimension calibration dialog + re-calibrate button.
+  $("dim-ok").onclick = applyDim;
+  $("dim-cancel").onclick = cancelDim;
+  $("dim-length").addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      applyDim();
+    }
+  });
+  $("ed-recalibrate").onclick = recalibrateMeasure;
 
   document.querySelectorAll("#ed-tools .tool").forEach((b) => {
     b.onclick = () => {

@@ -483,6 +483,21 @@ def _vietnamese_font() -> str | None:
     if _FONT_PATH is not None:
         return _FONT_PATH or None
     candidates: list[str] = []
+    # In the frozen (PyInstaller) app matplotlib.get_data_path() can point somewhere
+    # the collected fonts didn't land, so the DejaVu lookup silently fails and the
+    # editor drops Vietnamese text to a Latin-1 builtin (→ □). Search the bundle root
+    # (sys._MEIPASS) and the executable dir FIRST so a rebuild always finds the font.
+    import sys as _sys
+    frozen_roots: list[Path] = []
+    mei = getattr(_sys, "_MEIPASS", None)
+    if mei:
+        frozen_roots.append(Path(mei))
+    frozen_roots.append(Path(_sys.executable).resolve().parent)
+    frozen_roots.append(Path(__file__).resolve().parent)
+    for root in frozen_roots:
+        candidates.append(str(root / "matplotlib" / "mpl-data" / "fonts" / "ttf" / "DejaVuSans.ttf"))
+        candidates.append(str(root / "fonts" / "DejaVuSans.ttf"))
+        candidates.append(str(root / "DejaVuSans.ttf"))
     try:
         # NB: use the data path (a real str), not font_manager.findfont(), which
         # returns a FontPath object that PyMuPDF rejects as "bad fontfile".
@@ -522,6 +537,30 @@ def _dejavu_variant(base_path: str, bold: bool, italic: bool) -> str | None:
         return base_path
     cand = Path(base_path).with_name(f"DejaVuSans{suffix}.ttf")
     return str(cand) if cand.is_file() else None
+
+
+def _font_covers(text: str, *, fontfile: str | None = None, fontname: str | None = None) -> bool:
+    """True if the font has a real glyph for every char in `text`.
+
+    Guards the text-edit redraw: a Base-14 builtin (helv/tiro/cour) or a mis-resolved
+    local TTF may lack Vietnamese diacritics, in which case insert_text SILENTLY draws
+    notdef boxes (□) instead of raising — so we must check coverage up front and fall
+    back to the bundled DejaVu when any glyph is missing.
+    """
+    try:
+        import fitz
+        f = fitz.Font(fontfile=fontfile) if fontfile else fitz.Font(fontname=fontname)
+    except Exception:
+        return False
+    try:
+        for ch in set(text):
+            if ch.isspace():
+                continue
+            if f.has_glyph(ord(ch)) == 0:
+                return False
+        return True
+    except Exception:
+        return False
 
 
 # PyMuPDF Base14 names by (bold, italic). Real font variants, no faux needed.
@@ -1518,6 +1557,102 @@ def _norm_color(c) -> tuple[float, float, float]:
     return (0.0, 0.0, 0.0)
 
 
+# ---- legacy / broken Vietnamese text detection & recovery -----------------
+# CAD/Revit PDFs frequently carry Vietnamese text that get_text() cannot decode:
+#   1. Legacy TCVN3 ".Vn" fonts (VnArial, VnTime…): single-byte WinAnsi encoding
+#      whose high bytes are Vietnamese glyphs → extraction returns mojibake.
+#   2. Type0/Identity-H fonts with a broken/absent ToUnicode CMap (e.g. a subset
+#      Arial-BoldMT that maps to Cyrillic garbage).
+# Neither is fixable by picking a font — the extracted STRING is already wrong. We
+# (a) flag such spans so the UI can recover them, (b) try a fast TCVN3 transcode,
+# and (c) fall back to OCR-ing the span's pixels (the only universal recovery).
+
+# Font-name prefixes that indicate legacy TCVN3/VNI encodings.
+_LEGACY_FONT_MARKERS = (".vn", "vn", "vni", "tcvn")
+
+
+def _is_legacy_font(font: str) -> bool:
+    f = _clean_font_name(font or "").lower().lstrip(".")
+    return f.startswith("vn") or "tcvn" in f or f.startswith("vni")
+
+
+def _has_mojibake_chars(text: str) -> bool:
+    """True if `text` contains code points that a Vietnamese/Latin document should
+    never legitimately hold — the signature of a broken ToUnicode CMap."""
+    for ch in text:
+        o = ord(ch)
+        if 0x0080 <= o <= 0x009F:  # C1 control block
+            return True
+        if 0x0400 <= o <= 0x04FF:  # Cyrillic (garbage in a Vietnamese drawing)
+            return True
+        if 0x0370 <= o <= 0x03FF:  # Greek
+            return True
+        if 0xE000 <= o <= 0xF8FF:  # Private Use Area
+            return True
+        if o == 0xFFFD:            # replacement char
+            return True
+        if o < 0x20 and ch not in "\t\n\r":  # stray control chars (e.g. \x03)
+            return True
+    return False
+
+
+def _span_is_suspect(text: str, font: str) -> bool:
+    """Whether a span's extracted text is likely wrong (legacy/broken encoding).
+
+    Conservative on purpose — legacy .Vn fonts routinely carry perfectly-correct
+    ASCII (part codes, coordinates, short labels), so those must NOT be flagged
+    (OCR-ing correct text only makes it worse). A span is suspect only when it
+    actually shows the signature of mis-decoding:
+      * mojibake code points (Cyrillic/C1/PUA/…) — a broken ToUnicode CMap, or
+      * a legacy .Vn font carrying non-ASCII bytes — mangled TCVN3 diacritics.
+    (Silently-dropped diacritics leave clean ASCII and can't be auto-detected;
+    the UI offers a manual OCR action for those.)
+    """
+    if not text.strip():
+        return False
+    if _has_mojibake_chars(text):
+        return True
+    if _is_legacy_font(font) and any(ord(c) >= 0x80 for c in text):
+        return True
+    return False
+
+
+# TCVN3 (TCVN 5712 / "ABC") → Unicode. Key = the character get_text() returns after
+# WinAnsi-decoding the font byte; value = the real Vietnamese character. Only the
+# code points that differ from plain ASCII/Latin-1 are listed. Applied ONLY to
+# legacy-font spans and only accepted when the result validates (see _transcode_tcvn3).
+_TCVN3_MAP = {
+    "µ": "à", "¸": "á", "¶": "ả", "·": "ã", "¹": "ạ",
+    "¨": "ă", "»": "ằ", "¾": "ắ", "¼": "ẳ", "½": "ẵ", "Æ": "ặ",
+    "©": "â", "Ç": "ầ", "Ê": "ấ", "È": "ẩ", "É": "ẫ", "Ë": "ậ",
+    "Ì": "è", "Ð": "é", "Î": "ẻ", "Ï": "ẽ", "Ñ": "ẹ",
+    "ª": "ê", "Ò": "ề", "Õ": "ế", "Ó": "ể", "Ô": "ễ", "Ö": "ệ",
+    "×": "ì", "Ý": "í", "Ø": "ỉ", "Ü": "ĩ", "Þ": "ị",
+    "ß": "ò", "ã": "ó", "á": "ỏ", "â": "õ", "ä": "ọ",
+    "«": "ô", "å": "ồ", "è": "ố", "æ": "ổ", "ç": "ỗ", "é": "ộ",
+    "¬": "ơ", "ê": "ờ", "í": "ớ", "ë": "ở", "ì": "ỡ", "î": "ợ",
+    "ï": "ù", "ó": "ú", "ñ": "ủ", "ò": "ũ", "ô": "ụ",
+    "­": "ư", "õ": "ừ", "ø": "ứ", "ö": "ử", "÷": "ữ", "ù": "ự",
+    "ú": "ỳ", "ý": "ý", "û": "ỷ", "ü": "ỹ", "þ": "ỵ",
+    "®": "đ",
+    # Upper-case forms use the same lead bytes in TCVN3's paired range.
+    "§": "Đ", "¡": "Ă", "¢": "Â", "£": "Ê", "¤": "Ô", "¥": "Ơ", "¦": "Ư",
+}
+
+
+def _transcode_tcvn3(text: str) -> str:
+    """Map a TCVN3-decoded string to Unicode. Non-mapped chars pass through."""
+    return "".join(_TCVN3_MAP.get(ch, ch) for ch in text)
+
+
+def _looks_vietnamese(text: str) -> bool:
+    """Accept a recovered string only if it reads as clean Vietnamese/Latin: no
+    remaining mojibake and at least one real Vietnamese diacritic present."""
+    if _has_mojibake_chars(text):
+        return False
+    return any(0x00C0 <= ord(c) <= 0x1EF9 for c in text)
+
+
 class TextSpansRequest(BaseModel):
     """Request body for reading a page's editable text spans."""
     pdf_b64: str
@@ -1527,12 +1662,14 @@ class TextSpansRequest(BaseModel):
 class TextSpan(BaseModel):
     id: int
     text: str
-    bbox: list[float]  # [x0, y0, x1, y1] in PDF points, top-left origin
+    bbox: list[float]  # [x0, y0, x1, y1] in PDF points, UNROTATED page space (redraw uses this)
+    bbox_view: list[float]  # [x0, y0, x1, y1] in DISPLAYED (rotation-applied) space (overlay uses this)
     origin: list[float]  # [x, y] text baseline origin (for faithful re-drawing)
     size: float
     font: str
     color: int  # packed sRGB
     flags: int  # PyMuPDF span flags (bold/italic/etc.)
+    suspect: bool = False  # extracted text likely wrong (legacy/broken font) → offer OCR
 
 
 class TextSpansResponse(BaseModel):
@@ -1585,6 +1722,12 @@ async def text_spans(req: TextSpansRequest):
         spans: list[TextSpan] = []
         sid = 0
         data = page.get_text("dict")
+        # get_text returns bbox in UNROTATED page space, but page.rect and the pdf.js
+        # viewport are in DISPLAYED (rotation-applied) space. On a rotated CAD/Revit
+        # page (/Rotate 90/270) the raw bbox lands in the wrong place and looks turned
+        # 90°, so map each box through rotation_matrix for the overlay. On an unrotated
+        # page rotation_matrix is the identity → bbox_view == bbox (no behaviour change).
+        rot_mat = page.rotation_matrix
         for block in data.get("blocks", []):
             for line in block.get("lines", []):
                 for sp in line.get("spans", []):
@@ -1592,17 +1735,35 @@ async def text_spans(req: TextSpansRequest):
                     if not txt.strip():
                         continue
                     x0, y0, x1, y1 = sp["bbox"]
+                    # Drop degenerate boxes (zero/near-zero area or inverted) — these
+                    # are the stray marks that showed up highlighted over non-text.
+                    if (x1 - x0) < 0.5 or (y1 - y0) < 0.5:
+                        continue
                     ox, oy = sp.get("origin", (x0, y1))
+                    vr = fitz.Rect(x0, y0, x1, y1) * rot_mat
+                    vr.normalize()  # rotation can flip corners; keep x0<x1, y0<y1
+                    font_name = str(sp.get("font", ""))
+                    suspect = _span_is_suspect(txt, font_name)
+                    # Fast path: a legacy .Vn span whose TCVN3 transcode validates as
+                    # clean Vietnamese is recovered here (no OCR needed). Otherwise the
+                    # span stays flagged so the UI can OCR its pixels on demand.
+                    if suspect and _is_legacy_font(font_name):
+                        conv = _transcode_tcvn3(txt)
+                        if conv != txt and _looks_vietnamese(conv):
+                            txt = conv
+                            suspect = False
                     spans.append(
                         TextSpan(
                             id=sid,
                             text=txt,
                             bbox=[x0, y0, x1, y1],
+                            bbox_view=[vr.x0, vr.y0, vr.x1, vr.y1],
                             origin=[ox, oy],
                             size=float(sp.get("size", 11.0)),
-                            font=str(sp.get("font", "")),
+                            font=font_name,
                             color=int(sp.get("color", 0)),
                             flags=int(sp.get("flags", 0)),
+                            suspect=suspect,
                         )
                     )
                     sid += 1
@@ -1622,6 +1783,77 @@ async def text_spans(req: TextSpansRequest):
         return TextSpansResponse(success=False, error=str(e))
     finally:
         doc.close()
+
+
+class OcrSpanRequest(BaseModel):
+    """Recover the real text of one span by OCR-ing its pixels (for legacy/broken
+    fonts get_text can't decode). bbox is the span's UNROTATED page-space box."""
+    pdf_b64: str
+    page: int = 0
+    bbox: list[float]  # [x0, y0, x1, y1] in unrotated PDF points
+    zoom: float = 4.0  # render scale for the crop (higher = better OCR on small text)
+
+
+class OcrSpanResponse(BaseModel):
+    success: bool
+    text: str = ""
+    error: str | None = None
+
+
+@app.post("/ocr-span", response_model=OcrSpanResponse)
+async def ocr_span(req: OcrSpanRequest):
+    """OCR a single span region and return the recognised text."""
+    try:
+        import fitz  # PyMuPDF
+    except ImportError:
+        raise HTTPException(status_code=503, detail="PyMuPDF (fitz) chưa cài — không OCR được vùng.")
+    if len(req.pdf_b64) > _MAX_PDF_B64:
+        raise HTTPException(status_code=400, detail="PDF quá lớn (tối đa ~200MB).")
+    try:
+        pdf_bytes = base64.b64decode(req.pdf_b64)
+    except Exception:
+        raise HTTPException(status_code=400, detail="pdf_b64 không hợp lệ")
+    if len(req.bbox) != 4:
+        raise HTTPException(status_code=400, detail="bbox phải có 4 số")
+
+    try:
+        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Không mở được PDF: {e}")
+    try:
+        if req.page < 0 or req.page >= doc.page_count:
+            raise HTTPException(status_code=400, detail="Số trang không hợp lệ")
+        page = doc[req.page]
+        x0, y0, x1, y1 = req.bbox
+        # Pad a little so ascenders/descenders and diacritics aren't clipped, then
+        # map the (unrotated) box into displayed space — get_pixmap renders the page
+        # rotation-applied, so the crop comes out horizontal and ready for OCR.
+        h = max(1.0, y1 - y0)
+        padx = h * 0.25
+        pady = h * 0.35
+        clip = fitz.Rect(x0 - padx, y0 - pady, x1 + padx, y1 + pady) * page.rotation_matrix
+        clip.normalize()
+        clip = clip & page.rect  # keep inside the page
+        z = max(1.0, min(8.0, float(req.zoom or 4.0)))
+        pix = page.get_pixmap(matrix=fitz.Matrix(z, z), clip=clip)
+        png = pix.tobytes("png")
+    except HTTPException:
+        raise
+    except Exception as e:
+        doc.close()
+        logger.exception("ocr-span render error")
+        return OcrSpanResponse(success=False, error=str(e))
+    finally:
+        doc.close()
+
+    try:
+        image = Image.open(io.BytesIO(png)).convert("RGB")
+        engine = _get_ocr()
+        text = (engine.recognize(image) or "").strip()
+        return OcrSpanResponse(success=True, text=text)
+    except Exception as e:
+        logger.exception("ocr-span recognize error")
+        return OcrSpanResponse(success=False, error=str(e))
 
 
 class TextEdit(BaseModel):
@@ -1791,6 +2023,16 @@ async def edit_text(req: EditTextRequest):
                     lf = embed_local(fam_raw, bool(e.bold), bool(e.italic))
                     if lf:
                         fontname, fontfile = lf
+
+                # Coverage guard for non-Latin-1 text (Vietnamese diacritics, etc.).
+                # A mis-resolved local TTF — or the "keep original font" name matching
+                # a font without Vietnamese glyphs — makes insert_text draw notdef
+                # boxes (□) SILENTLY. Only a real embedded TTF that actually covers
+                # the text is trusted: Base-14 builtins report false coverage, so an
+                # unset `fontfile` counts as unsafe and we drop to DejaVu below.
+                if needs_unicode and not (fontfile and _font_covers(txt, fontfile=fontfile)):
+                    fontname = None
+                    fontfile = None
 
                 # Fallback to bundled DejaVu (real bold/italic variant) when nothing
                 # above resolved; faux styling only as the final resort.

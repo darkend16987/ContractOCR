@@ -4,7 +4,14 @@
 > [DESIGN.md](DESIGN.md) (kiến trúc), [ROADMAP.md](ROADMAP.md) (tiến độ chi tiết),
 > [SETUP.md](SETUP.md) (dựng môi trường).
 
-_Cập nhật: 2026-07-15 · v0.2.31_
+_Cập nhật: 2026-07-16 · v0.2.32_
+
+> v0.2.32 — **Sửa chữ tiếng Việt bản vẽ CAD/Revit: chữ lỗi font (OCR lấy lại) + ô nhận diện đúng vị trí trên trang xoay + công cụ Đo & ghi kích thước (dim)** (renderer + sidecar CÓ đổi `api.py` — phải rebuild binary):
+> - **Ô sửa chữ sai vị trí / tự xoay dọc trên bản vẽ xoay** ([`api.py`](api.py) `/text-spans`, [`text-edit.js`](desktop/renderer/text-edit.js)): trang CAD `/Rotate 90/270` — `get_text` trả bbox hệ CHƯA xoay còn viewport ĐÃ xoay → ô lệch. Thêm `bbox_view = bbox × page.rotation_matrix` cho overlay (trang không xoay → identity, không đổi gì); lọc span rác (w/h<0.5). Redraw vốn đã dùng bbox/origin chưa xoay nên đúng sẵn. Verify: file thật xoay 270° — 375/375 span vào đúng vùng.
+> - **Chữ Việt lỗi font → OCR lấy lại** ([`api.py`](api.py) `/ocr-span` + dò `suspect`, [`text-edit.js`](desktop/renderer/text-edit.js)): PDF CAD/Revit hay dùng font `get_text` giải mã sai (Arial-BoldMT ToUnicode hỏng → mojibake Cyrillic; font `.Vn` TCVN3 cổ). Đổi font vô ích vì chuỗi đã sai. Ô chữ lỗi tô **cam nét đứt**, bấm vào **tự OCR** vùng đó (rotation-aware) điền chữ đúng; nút **"OCR ô này"** thủ công cho ô rớt dấu. Dò `suspect` bảo thủ (chỉ mojibake / `.Vn` non-ASCII — KHÔNG đụng mã ASCII đúng). Fast-path transcode TCVN3→Unicode (có validation gate). Verify file thật: `&+,7,ӂ7...`→`CHI TIẾT SƠN ĐỖ XE PCCC...`; 116 span tốt→0 gắn cờ sai.
+> - **Guard font khi gõ chữ mới** ([`api.py`](api.py) `/edit-text`): `insert_text(helv)` im lặng vẽ ô vuông cho chữ có dấu — thêm `_font_covers()` + ép DejaVu, không bao giờ helv cho Unicode; `_vietnamese_font()` tìm thêm `sys._MEIPASS`/exe-dir (frozen app trước mất DejaVu).
+> - **Công cụ Đo & ghi kích thước (dim)** ([`editor.js`](desktop/renderer/editor.js), [`index.html`](desktop/renderer/index.html), [`app.css`](desktop/renderer/app.css)): công cụ `measure` (icon thước) — kéo 1 đoạn ĐÃ BIẾT rồi nhập số thật → hiệu chuẩn tỷ lệ; các đoạn khác kéo ra **tự ghi kích thước theo tỷ lệ**. Annot `kind:"dim"` (đường + tick 2 đầu + nhãn), bake pdf-lib. Nút "Hiệu chuẩn lại". (Dò dim trống tự động = phase sau, cần CV.)
+> - **An toàn**: chỉ thêm nhánh/endpoint mới, không đụng logic cũ; trang không xoay & font tốt không đổi hành vi (verify 0 regression). `node --check` toàn bộ JS + AST/import `api.py` OK; test E2E `/text-spans`+`/ocr-span`+`/edit-text` trên file thật. **CHƯA GUI-test thao tác tay trong app thật** (OCR-on-click, công cụ dim).
 
 > v0.2.31 — **Hotfix: chồng lớp (overlay) — chế độ Tô màu khác biệt phủ full màn hình** (chỉ renderer `compare.js`; sidecar KHÔNG đổi — không rebuild):
 > - **Lỗi**: pdf.js render nền **đục** (trắng/sheet bản vẽ) → mọi pixel có alpha. Code cũ tô màu bằng `globalCompositeOperation="source-in"` + fillRect → source-in tô **mọi pixel có alpha** = cả canvas → nguyên mảng màu che hết. (Non-tint cũng lỗi ngầm: lớp B nền trắng che lớp A.)

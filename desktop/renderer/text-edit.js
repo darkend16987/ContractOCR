@@ -29,6 +29,8 @@
     meta: null, // /text-spans response (width/height/rotation)
     editing: null, // span id currently open in a textarea (null = none)
     lastSpanId: null, // last span clicked (target for toolbar control changes)
+    _ta: null, // the open <textarea> element (for the OCR-this-box button)
+    _sp: null, // the span object currently open
   };
 
   // ---- formatting controls (text colour / bg / font / size / B I U) --------
@@ -170,14 +172,22 @@
     layer.innerHTML = "";
     const s = state.scale;
     for (const sp of te.spans) {
-      const [x0, y0, x1, y1] = sp.bbox;
+      // bbox_view is the box in DISPLAYED (rotation-applied) space — the same space
+      // as the pdf.js canvas — so rotated CAD/Revit pages line up. Falls back to the
+      // raw bbox for older sidecars that don't send it.
+      const [x0, y0, x1, y1] = sp.bbox_view || sp.bbox;
       const box = document.createElement("div");
-      box.className = "span-box" + (te.edits[sp.id] ? " edited" : "");
+      // `suspect` = legacy/broken font whose text get_text mis-decoded; clicking it
+      // auto-OCRs the region to recover the real Vietnamese.
+      box.className =
+        "span-box" + (te.edits[sp.id] ? " edited" : sp.suspect ? " suspect" : "");
       box.style.left = x0 * s + "px";
       box.style.top = y0 * s + "px";
       box.style.width = Math.max(4, x1 - x0) * s + "px";
       box.style.height = Math.max(6, y1 - y0) * s + "px";
-      box.title = "Bấm để sửa: " + sp.text;
+      box.title = sp.suspect
+        ? "Chữ lỗi font — bấm để tự OCR lấy lại chữ đúng"
+        : "Bấm để sửa: " + sp.text;
       box.dataset.id = String(sp.id);
       box.addEventListener("click", () => beginEdit(sp, box));
       layer.appendChild(box);
@@ -204,6 +214,14 @@
     layer.appendChild(ta);
     ta.focus();
     ta.select();
+
+    // Track the open editor so the "OCR ô này" button can target it.
+    te._ta = ta;
+    te._sp = sp;
+    $("te-ocr").disabled = false;
+    // Suspect spans (legacy/broken font) carry garbled text — recover via OCR the
+    // moment the box is opened, so the user sees the real Vietnamese to edit.
+    if (sp.suspect && !te.edits[sp.id]) ocrSpan(sp, ta);
 
     let done = false;
     // Stage the edit into te.edits. Keeps it if text OR style changed from the
@@ -238,11 +256,17 @@
       delete te.edits[sp.id];
       return false;
     };
+    const clearOpen = () => {
+      te.editing = null;
+      te._ta = null;
+      te._sp = null;
+      $("te-ocr").disabled = true;
+    };
     const commit = () => {
       if (done) return;
       done = true;
       ta.remove();
-      te.editing = null;
+      clearOpen();
       stage();
       renderBoxes();
       updateHint();
@@ -251,7 +275,7 @@
       if (done) return;
       done = true;
       ta.remove();
-      te.editing = null;
+      clearOpen();
     };
     ta.addEventListener("blur", commit);
     ta.addEventListener("keydown", (e) => {
@@ -344,14 +368,58 @@
     $("tedit-bar").hidden = false;
     document.body.classList.add("text-editing");
     $("btn-text-edit").classList.add("active");
-    if (data.rotation) {
-      toast("Trang đang xoay — ô chữ có thể lệch vị trí; nên sửa trước khi xoay.", "");
-    }
+    // (Rotated pages are handled: overlay uses bbox_view in displayed space and the
+    // redraw uses the unrotated bbox/origin, so no position warning is needed.)
     updateToolbar();
     scrollToPage(page);
     renderBoxes();
     updateHint();
     loadSystemFonts(); // fill the font picker with installed families (once)
+  }
+
+  // Recover a span's real text by OCR-ing its pixels (for legacy .Vn / broken-font
+  // text get_text mis-decodes). Fills the open textarea with the result. Runs
+  // automatically when a suspect box is opened, and on demand via the "OCR ô này"
+  // button. Sends the UNROTATED bbox — the sidecar handles page rotation.
+  async function ocrSpan(sp, ta) {
+    if (!ta || typeof sidecar === "undefined" || sidecar.state !== "ready" || !sidecar.base) {
+      toast("Engine OCR chưa sẵn sàng.", "bad");
+      return;
+    }
+    const prev = ta.value;
+    // readOnly (not disabled) keeps focus — disabling would blur the textarea and
+    // its blur handler would commit+remove it mid-request.
+    ta.value = "⏳ đang OCR…";
+    ta.readOnly = true;
+    $("te-ocr").disabled = true;
+    let data = null;
+    let err = null;
+    try {
+      const res = await sidecarFetch("/ocr-span", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pdf_b64: u8ToB64(state.bytes), page: te.page, bbox: sp.bbox }),
+      });
+      data = await res.json();
+    } catch (e) {
+      err = e;
+    }
+    // The editor may have been closed (blur/commit) while OCR was running — bail if
+    // this textarea is no longer the open one.
+    if (te._ta !== ta) return;
+    ta.readOnly = false;
+    $("te-ocr").disabled = false;
+    if (err) {
+      ta.value = prev;
+      toast("Lỗi OCR: " + err.message, "bad");
+    } else if (data && data.success && data.text) {
+      ta.value = data.text;
+      toast("Đã OCR lại chữ — kiểm tra rồi Áp dụng.", "good");
+    } else {
+      ta.value = prev;
+      toast("OCR không đọc được chữ ở ô này.", "");
+    }
+    ta.focus();
   }
 
   // Populate the "Font máy" optgroup from the sidecar's /fonts list. Runs once;
@@ -458,8 +526,12 @@
     te.meta = null;
     te.editing = null;
     te.lastSpanId = null;
+    te._ta = null;
+    te._sp = null;
     const bar = $("tedit-bar");
     if (bar) bar.hidden = true;
+    const ocrBtn = $("te-ocr");
+    if (ocrBtn) ocrBtn.disabled = true;
     document.body.classList.remove("text-editing");
     const btn = $("btn-text-edit");
     if (btn) btn.classList.remove("active");
@@ -472,6 +544,18 @@
   $("te-apply").onclick = apply;
   // Exiting with staged (un-applied) edits used to drop them silently — ask first.
   $("te-exit").onclick = confirmExit;
+
+  // "OCR ô này": re-recognise the currently-open span. preventDefault on mousedown
+  // so clicking the button doesn't blur (and thereby commit/close) the textarea.
+  {
+    const ob = $("te-ocr");
+    if (ob) {
+      ob.addEventListener("mousedown", (e) => e.preventDefault());
+      ob.addEventListener("click", () => {
+        if (te._sp && te._ta) ocrSpan(te._sp, te._ta);
+      });
+    }
+  }
 
   // Format toggle buttons: preventDefault on mousedown so the open span textarea
   // keeps focus (clicking a button would otherwise blur+commit it).
