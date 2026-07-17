@@ -82,6 +82,13 @@ extra_hiddenimports = [
     # explicitly to be safe against a frozen-app ModuleNotFoundError.
     "src.compare",
     "src.compare.comparator",
+    # PDF helper modules (Phase 4 refactor). api.py imports these statically so the
+    # analysis already follows them; pinned here too to match the project's cautious
+    # convention against stale/partial frozen builds.
+    "src.pdf.util",
+    "src.pdf.fonts",
+    "src.pdf.legacy_text",
+    "src.pdf.layout",
     # Add modules here as PyInstaller reports them missing at runtime.
 ]
 

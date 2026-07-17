@@ -15,6 +15,7 @@ import zipfile
 from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
+import re as _re
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request
@@ -33,6 +34,51 @@ from src.utils.config import (
     get_gemini_model,
     set_gemini_key,
     set_gemini_model,
+)
+from src.pdf.util import (
+    _MAX_PDF_B64,
+    _decode_pdf_b64,
+    _fmt_page_label,
+    _hex_rgb01,
+    _open_pdf_stream,
+    _parse_ranges,
+    _require_fitz,
+)
+from src.pdf.fonts import (
+    _BUILTIN_VARIANTS,
+    _DEJAVU_SUFFIX,
+    _clean_font_name,
+    _dejavu_variant,
+    _family_index,
+    _font_covers,
+    _fresh_fontname,
+    _list_local_font_families,
+    _norm_fam,
+    _resolve_local_font,
+    _vietnamese_font,
+)
+from src.pdf.legacy_text import (
+    _has_mojibake_chars,
+    _is_legacy_font,
+    _looks_vietnamese,
+    _span_is_suspect,
+    _transcode_tcvn3,
+)
+from src.pdf.layout import (
+    _MASK_CLOSE,
+    _MASK_OPEN,
+    _block_from_spans,
+    _cell_layout,
+    _cell_of,
+    _fit_fontsize,
+    _mask_terms,
+    _page_text_blocks,
+    _run_boxes,
+    _split_block_by_cells,
+    _split_runs,
+    _table_cells,
+    _unmask_terms,
+    _visual_lines,
 )
 
 # Curated Gemini models offered in the app's Settings dropdown. The user can
@@ -124,10 +170,6 @@ app.add_middleware(
 # Gemini bill). If SIDECAR_TOKEN is unset (running api.py/app.py directly in dev),
 # the check is skipped for backwards compatibility.
 _SIDECAR_TOKEN = os.environ.get("SIDECAR_TOKEN") or None
-
-# Reject oversized payloads before decoding to avoid blowing up memory.
-# ~200 MB of binary => ~280 MB of base64 text.
-_MAX_PDF_B64 = 280_000_000
 
 
 @app.middleware("http")
@@ -469,223 +511,6 @@ async def export(req: ExportRequest):
     )
 
 
-# Cache the resolved Unicode font path (Vietnamese-capable) across requests.
-_FONT_PATH: str | None = None
-
-
-def _vietnamese_font() -> str | None:
-    """Find a TTF that covers Vietnamese diacritics for the invisible text layer.
-
-    Prefers DejaVu Sans (full Vietnamese coverage), which ships with matplotlib —
-    already a transitive dependency. P5 packaging should bundle this TTF explicitly.
-    """
-    global _FONT_PATH
-    if _FONT_PATH is not None:
-        return _FONT_PATH or None
-    candidates: list[str] = []
-    # In the frozen (PyInstaller) app matplotlib.get_data_path() can point somewhere
-    # the collected fonts didn't land, so the DejaVu lookup silently fails and the
-    # editor drops Vietnamese text to a Latin-1 builtin (→ □). Search the bundle root
-    # (sys._MEIPASS) and the executable dir FIRST so a rebuild always finds the font.
-    import sys as _sys
-    frozen_roots: list[Path] = []
-    mei = getattr(_sys, "_MEIPASS", None)
-    if mei:
-        frozen_roots.append(Path(mei))
-    frozen_roots.append(Path(_sys.executable).resolve().parent)
-    frozen_roots.append(Path(__file__).resolve().parent)
-    for root in frozen_roots:
-        candidates.append(str(root / "matplotlib" / "mpl-data" / "fonts" / "ttf" / "DejaVuSans.ttf"))
-        candidates.append(str(root / "fonts" / "DejaVuSans.ttf"))
-        candidates.append(str(root / "DejaVuSans.ttf"))
-    try:
-        # NB: use the data path (a real str), not font_manager.findfont(), which
-        # returns a FontPath object that PyMuPDF rejects as "bad fontfile".
-        import matplotlib
-        candidates.append(str(Path(matplotlib.get_data_path()) / "fonts" / "ttf" / "DejaVuSans.ttf"))
-    except Exception:  # pragma: no cover - matplotlib always present via deps
-        pass
-    try:
-        for site in __import__("site").getsitepackages():
-            candidates.append(str(Path(site) / "imgaug" / "DejaVuSans.ttf"))
-    except Exception:
-        pass
-    for c in candidates:
-        if c and Path(c).is_file():
-            _FONT_PATH = c
-            return c
-    _FONT_PATH = ""  # cache "not found" to avoid re-searching
-    return None
-
-
-# DejaVu ships style variants beside the regular TTF. Using the real bold/oblique
-# file renders far cleaner than faux-bold stroking (the old approach blobbed at
-# small sizes). Returns None when the variant file is absent → caller faux-styles.
-_DEJAVU_SUFFIX = {
-    (False, False): "",
-    (True, False): "-Bold",
-    (False, True): "-Oblique",
-    (True, True): "-BoldOblique",
-}
-
-
-def _dejavu_variant(base_path: str, bold: bool, italic: bool) -> str | None:
-    if not base_path:
-        return None
-    suffix = _DEJAVU_SUFFIX[(bold, italic)]
-    if not suffix:
-        return base_path
-    cand = Path(base_path).with_name(f"DejaVuSans{suffix}.ttf")
-    return str(cand) if cand.is_file() else None
-
-
-def _font_covers(text: str, *, fontfile: str | None = None, fontname: str | None = None) -> bool:
-    """True if the font has a real glyph for every char in `text`.
-
-    Guards the text-edit redraw: a Base-14 builtin (helv/tiro/cour) or a mis-resolved
-    local TTF may lack Vietnamese diacritics, in which case insert_text SILENTLY draws
-    notdef boxes (□) instead of raising — so we must check coverage up front and fall
-    back to the bundled DejaVu when any glyph is missing.
-    """
-    try:
-        import fitz
-        f = fitz.Font(fontfile=fontfile) if fontfile else fitz.Font(fontname=fontname)
-    except Exception:
-        return False
-    try:
-        for ch in set(text):
-            if ch.isspace():
-                continue
-            if f.has_glyph(ord(ch)) == 0:
-                return False
-        return True
-    except Exception:
-        return False
-
-
-def _fresh_fontname(page, base: str) -> str:
-    """A font resource name `page` is not already using.
-
-    Page.insert_font() matches on the RESOURCE name: if the page already has one,
-    it returns that font and IGNORES the fontfile we passed. A previous edit round
-    leaves its own /vnedit, /loc… behind — and subset_fonts() has since stripped
-    them down to just that round's glyphs — so reusing a name silently redraws with
-    a subset that can't cover the new text, giving notdef boxes (□) for every char
-    the earlier round didn't happen to use. Always embed under an unused name.
-    """
-    try:
-        used = {f[4] for f in page.get_fonts()}
-    except Exception:
-        return base
-    if base not in used:
-        return base
-    i = 1
-    while f"{base}{i}" in used:
-        i += 1
-    return f"{base}{i}"
-
-
-# PyMuPDF Base14 names by (bold, italic). Real font variants, no faux needed.
-_BUILTIN_VARIANTS = {
-    "helv": {(False, False): "helv", (True, False): "hebo", (False, True): "heit", (True, True): "hebi"},
-    "tiro": {(False, False): "tiro", (True, False): "tibo", (False, True): "tiit", (True, True): "tibi"},
-    "cour": {(False, False): "cour", (True, False): "cobo", (False, True): "coit", (True, True): "cobi"},
-}
-
-
-# ---- local system fonts (text edit) --------------------------------------
-# matplotlib's font_manager already indexes the machine's installed fonts
-# (C:\Windows\Fonts on Windows). We reuse it both to list families for the UI
-# and to resolve a family + style → an actual TTF the editor can embed, so an
-# edited span can keep its original font instead of falling back to DejaVu.
-import re as _re
-
-_LOCAL_FONT_CACHE: dict[tuple[str, bool, bool], str] = {}
-
-
-def _clean_font_name(name: str) -> str:
-    """Normalise a PDF/PostScript font name to a plain family for lookup.
-
-    Strips the 6-char subset prefix ("ABCDEF+Arial") and common style suffixes
-    ("TimesNewRomanPS-BoldMT" → "TimesNewRoman").
-    """
-    if "+" in name and len(name.split("+", 1)[0]) == 6:
-        name = name.split("+", 1)[1]
-    name = name.split(",")[0].split("-")[0]
-    name = _re.sub(r"(PSMT|PS|MT)$", "", name)
-    return name.strip() or name
-
-
-# Normalised index of installed families: {alnum-lowercased name: real family}.
-# A PDF font name like "TimesNewRomanPSMT" cleans to "TimesNewRoman" (no spaces),
-# which matplotlib can't match against the installed "Times New Roman". Normalising
-# both sides (drop spaces/case) lets us recover the real family so findfont resolves.
-_FAM_INDEX: dict[str, str] | None = None
-
-
-def _norm_fam(s: str) -> str:
-    return _re.sub(r"[^a-z0-9]", "", s.lower())
-
-
-def _family_index() -> dict[str, str]:
-    global _FAM_INDEX
-    if _FAM_INDEX is None:
-        idx: dict[str, str] = {}
-        try:
-            from matplotlib import font_manager as fm
-            for f in fm.fontManager.ttflist:
-                idx.setdefault(_norm_fam(f.name), f.name)
-        except Exception as fe:
-            logger.debug("build family index failed: %s", fe)
-        _FAM_INDEX = idx
-    return _FAM_INDEX
-
-
-def _resolve_local_font(name: str, bold: bool, italic: bool) -> str | None:
-    """Resolve a font family name + style to a local TTF path, or None.
-
-    Uses matplotlib.font_manager.findfont with fallback disabled so a missing
-    family raises (→ None) instead of silently returning DejaVu — the caller
-    then applies its own DejaVu fallback for Vietnamese safety.
-    """
-    key = (name, bold, italic)
-    if key in _LOCAL_FONT_CACHE:
-        return _LOCAL_FONT_CACHE[key] or None
-    path = ""
-    try:
-        from matplotlib import font_manager as fm
-
-        cleaned = _clean_font_name(name)
-        # Map the cleaned name onto a real installed family when possible (handles
-        # space-collapsed PDF names like "TimesNewRoman" -> "Times New Roman").
-        family = _family_index().get(_norm_fam(cleaned), cleaned)
-        fp = fm.FontProperties(
-            family=family,
-            weight="bold" if bold else "normal",
-            style="italic" if italic else "normal",
-        )
-        found = fm.findfont(fp, fallback_to_default=False)
-        # findfont returns a FontPath (a str subclass carrying a face index) that
-        # PyMuPDF's insert_font rejects as "bad fontfile" — coerce to a plain str.
-        if found and Path(found).is_file():
-            path = str(found)
-    except Exception as fe:  # ValueError when no family matches
-        logger.debug("resolve local font '%s' failed: %s", name, fe)
-        path = ""
-    _LOCAL_FONT_CACHE[key] = path
-    return path or None
-
-
-def _list_local_font_families() -> list[str]:
-    try:
-        from matplotlib import font_manager as fm
-
-        return sorted({f.name for f in fm.fontManager.ttflist})
-    except Exception as fe:
-        logger.debug("list local fonts failed: %s", fe)
-        return []
-
-
 class SearchableRequest(BaseModel):
     """Request body for building a searchable PDF (invisible OCR text layer)."""
     pdf_b64: str  # the source PDF, base64 (no data URL prefix)
@@ -987,47 +812,6 @@ async def decrypt(req: DecryptRequest):
     )
 
 
-# ---- shared PDF helpers (used by the P7 conversion endpoints below) -------
-#
-# Every PDF endpoint repeats the same three steps: size-check the base64, decode
-# it, and open it with fitz. These helpers centralise that for the new endpoints
-# (existing endpoints keep their inline version to stay surgical).
-
-
-def _decode_pdf_b64(pdf_b64: str) -> bytes:
-    """Validate size + decode a base64 PDF payload, raising HTTPException on error."""
-    if len(pdf_b64) > _MAX_PDF_B64:
-        raise HTTPException(status_code=400, detail="PDF quá lớn (tối đa ~200MB).")
-    try:
-        return base64.b64decode(pdf_b64)
-    except Exception:
-        raise HTTPException(status_code=400, detail="pdf_b64 không hợp lệ")
-
-
-def _require_fitz():
-    """Import PyMuPDF or raise a 503 with a Vietnamese message (frozen builds bundle it)."""
-    try:
-        import fitz  # PyMuPDF
-
-        return fitz
-    except ImportError:
-        raise HTTPException(status_code=503, detail="PyMuPDF (fitz) chưa cài — không xử lý được PDF.")
-
-
-def _open_pdf_stream(pdf_bytes: bytes):
-    """Open decoded PDF bytes with PyMuPDF, raising the shared 400 on a bad file.
-
-    Centralises the identical open+try/except that every PDF endpoint repeated;
-    the caller keeps its own `fitz` binding for the constants/classes it uses next.
-    """
-    import fitz  # PyMuPDF (cached; the caller already ensured it imports)
-
-    try:
-        return fitz.open(stream=pdf_bytes, filetype="pdf")
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Không mở được PDF: {e}")
-
-
 # ---- P7: lock a PDF (set open/owner password) -----------------------------
 
 
@@ -1277,31 +1061,6 @@ class PageNumberRequest(BaseModel):
     margin: float = 28.0             # points from the page edge
 
 
-def _fmt_page_label(fmt: str, n: int, total: int) -> str:
-    """Render the visible label for page number `n` of `total`. ASCII only, so the
-    built-in Helvetica (no embedded font) covers every preset."""
-    if fmt == "n_of_n":
-        return f"{n} / {total}"
-    if fmt == "page_n":
-        return f"Trang {n}"
-    if fmt == "page_n_of_n":
-        return f"Trang {n} / {total}"
-    if fmt == "dash_n":
-        return f"- {n} -"
-    return str(n)
-
-
-def _hex_rgb01(hex_str: str) -> tuple[float, float, float]:
-    """'#rrggbb' → (r, g, b) in 0..1. Falls back to black on anything unexpected."""
-    s = (hex_str or "").lstrip("#")
-    if len(s) != 6:
-        return (0.0, 0.0, 0.0)
-    try:
-        return (int(s[0:2], 16) / 255, int(s[2:4], 16) / 255, int(s[4:6], 16) / 255)
-    except ValueError:
-        return (0.0, 0.0, 0.0)
-
-
 @app.post("/add-page-numbers", response_model=PdfBytesResponse)
 async def add_page_numbers(req: PageNumberRequest):
     """Stamp incrementing page numbers onto every page (except skipped leaders).
@@ -1448,33 +1207,6 @@ class SplitRequest(BaseModel):
     ranges: str = ""              # range spec when mode="ranges"
 
 
-def _parse_ranges(spec: str, page_count: int) -> list[tuple[int, int]]:
-    """Parse "1-3,5,8-10" into 0-based inclusive (start, end) pairs, clamped.
-
-    Invalid/empty tokens are skipped; out-of-range values are clamped into
-    [0, page_count-1]. A bare "5" becomes (4, 4).
-    """
-    out: list[tuple[int, int]] = []
-    for tok in spec.replace(" ", "").split(","):
-        if not tok:
-            continue
-        try:
-            if "-" in tok:
-                a_s, b_s = tok.split("-", 1)
-                a = int(a_s)
-                b = int(b_s)
-            else:
-                a = b = int(tok)
-        except ValueError:
-            continue
-        if a > b:
-            a, b = b, a
-        a = max(1, min(a, page_count))
-        b = max(1, min(b, page_count))
-        out.append((a - 1, b - 1))
-    return out
-
-
 @app.post("/split", response_model=ZipResponse)
 async def split_pdf(req: SplitRequest):
     """Split a PDF into multiple PDFs, returned as one .zip.
@@ -1567,98 +1299,6 @@ def _norm_color(c) -> tuple[float, float, float]:
             vals = [v / 255.0 for v in vals]
         return (vals[0], vals[1], vals[2])
     return (0.0, 0.0, 0.0)
-
-
-# ---- legacy / broken Vietnamese text detection & recovery -----------------
-# CAD/Revit PDFs frequently carry Vietnamese text that get_text() cannot decode:
-#   1. Legacy TCVN3 ".Vn" fonts (VnArial, VnTime…): single-byte WinAnsi encoding
-#      whose high bytes are Vietnamese glyphs → extraction returns mojibake.
-#   2. Type0/Identity-H fonts with a broken/absent ToUnicode CMap (e.g. a subset
-#      Arial-BoldMT that maps to Cyrillic garbage).
-# Neither is fixable by picking a font — the extracted STRING is already wrong. We
-# (a) flag such spans so the UI can recover them, (b) try a fast TCVN3 transcode,
-# and (c) fall back to OCR-ing the span's pixels (the only universal recovery).
-
-def _is_legacy_font(font: str) -> bool:
-    f = _clean_font_name(font or "").lower().lstrip(".")
-    return f.startswith("vn") or "tcvn" in f or f.startswith("vni")
-
-
-def _has_mojibake_chars(text: str) -> bool:
-    """True if `text` contains code points that a Vietnamese/Latin document should
-    never legitimately hold — the signature of a broken ToUnicode CMap."""
-    for ch in text:
-        o = ord(ch)
-        if 0x0080 <= o <= 0x009F:  # C1 control block
-            return True
-        if 0x0400 <= o <= 0x04FF:  # Cyrillic (garbage in a Vietnamese drawing)
-            return True
-        if 0x0370 <= o <= 0x03FF:  # Greek
-            return True
-        if 0xE000 <= o <= 0xF8FF:  # Private Use Area
-            return True
-        if o == 0xFFFD:            # replacement char
-            return True
-        if o < 0x20 and ch not in "\t\n\r":  # stray control chars (e.g. \x03)
-            return True
-    return False
-
-
-def _span_is_suspect(text: str, font: str) -> bool:
-    """Whether a span's extracted text is likely wrong (legacy/broken encoding).
-
-    Conservative on purpose — legacy .Vn fonts routinely carry perfectly-correct
-    ASCII (part codes, coordinates, short labels), so those must NOT be flagged
-    (OCR-ing correct text only makes it worse). A span is suspect only when it
-    actually shows the signature of mis-decoding:
-      * mojibake code points (Cyrillic/C1/PUA/…) — a broken ToUnicode CMap, or
-      * a legacy .Vn font carrying non-ASCII bytes — mangled TCVN3 diacritics.
-    (Silently-dropped diacritics leave clean ASCII and can't be auto-detected;
-    the UI offers a manual OCR action for those.)
-    """
-    if not text.strip():
-        return False
-    if _has_mojibake_chars(text):
-        return True
-    if _is_legacy_font(font) and any(ord(c) >= 0x80 for c in text):
-        return True
-    return False
-
-
-# TCVN3 (TCVN 5712 / "ABC") → Unicode. Key = the character get_text() returns after
-# WinAnsi-decoding the font byte; value = the real Vietnamese character. Only the
-# code points that differ from plain ASCII/Latin-1 are listed. Applied ONLY to
-# legacy-font spans and only accepted when the result validates (see _transcode_tcvn3).
-_TCVN3_MAP = {
-    "µ": "à", "¸": "á", "¶": "ả", "·": "ã", "¹": "ạ",
-    "¨": "ă", "»": "ằ", "¾": "ắ", "¼": "ẳ", "½": "ẵ", "Æ": "ặ",
-    "©": "â", "Ç": "ầ", "Ê": "ấ", "È": "ẩ", "É": "ẫ", "Ë": "ậ",
-    "Ì": "è", "Ð": "é", "Î": "ẻ", "Ï": "ẽ", "Ñ": "ẹ",
-    "ª": "ê", "Ò": "ề", "Õ": "ế", "Ó": "ể", "Ô": "ễ", "Ö": "ệ",
-    "×": "ì", "Ý": "í", "Ø": "ỉ", "Ü": "ĩ", "Þ": "ị",
-    "ß": "ò", "ã": "ó", "á": "ỏ", "â": "õ", "ä": "ọ",
-    "«": "ô", "å": "ồ", "è": "ố", "æ": "ổ", "ç": "ỗ", "é": "ộ",
-    "¬": "ơ", "ê": "ờ", "í": "ớ", "ë": "ở", "ì": "ỡ", "î": "ợ",
-    "ï": "ù", "ó": "ú", "ñ": "ủ", "ò": "ũ", "ô": "ụ",
-    "­": "ư", "õ": "ừ", "ø": "ứ", "ö": "ử", "÷": "ữ", "ù": "ự",
-    "ú": "ỳ", "ý": "ý", "û": "ỷ", "ü": "ỹ", "þ": "ỵ",
-    "®": "đ",
-    # Upper-case forms use the same lead bytes in TCVN3's paired range.
-    "§": "Đ", "¡": "Ă", "¢": "Â", "£": "Ê", "¤": "Ô", "¥": "Ơ", "¦": "Ư",
-}
-
-
-def _transcode_tcvn3(text: str) -> str:
-    """Map a TCVN3-decoded string to Unicode. Non-mapped chars pass through."""
-    return "".join(_TCVN3_MAP.get(ch, ch) for ch in text)
-
-
-def _looks_vietnamese(text: str) -> bool:
-    """Accept a recovered string only if it reads as clean Vietnamese/Latin: no
-    remaining mojibake and at least one real Vietnamese diacritic present."""
-    if _has_mojibake_chars(text):
-        return False
-    return any(0x00C0 <= ord(c) <= 0x1EF9 for c in text)
 
 
 class TextSpansRequest(BaseModel):
@@ -2127,338 +1767,6 @@ _LANG_NAMES = {
     "th": "Thai",
     "ru": "Russian",
 }
-
-# Sentinel-wrapped placeholder for a masked term (private-use chars, unlikely in
-# real text). Numbers/dates/emails are swapped out before translation and put
-# back verbatim after, so Gemini can't "helpfully" rewrite an amount or a code.
-_MASK_OPEN = ""
-_MASK_CLOSE = ""
-_MASK_TERM_RE = _re.compile(
-    r"[\w.+-]+@[\w-]+\.[\w.-]+"          # email
-    r"|\d{1,4}[/.\-]\d{1,2}[/.\-]\d{1,4}"  # date dd/mm/yyyy & co
-    r"|\d[\d.,]*"                          # number (incl. 1.234,56)
-)
-_MASK_RESTORE_RE = _re.compile(_MASK_OPEN + r"(\d+)" + _MASK_CLOSE)
-
-
-def _mask_terms(text: str) -> tuple[str, list[str]]:
-    """Replace numbers/dates/emails with sentinel tokens; return (masked, store)."""
-    store: list[str] = []
-
-    def repl(m):
-        store.append(m.group(0))
-        return f"{_MASK_OPEN}{len(store) - 1}{_MASK_CLOSE}"
-
-    return _MASK_TERM_RE.sub(repl, text), store
-
-
-def _unmask_terms(text: str, store: list[str]) -> str:
-    """Restore sentinel tokens back to their original terms."""
-    def repl(m):
-        i = int(m.group(1))
-        return store[i] if 0 <= i < len(store) else m.group(0)
-
-    return _MASK_RESTORE_RE.sub(repl, text)
-
-
-def _fit_fontsize(font, text: str, width: float, height: float,
-                  start: float, min_size: float = 5.0) -> float:
-    """Largest font size (≤ start) at which `text` wraps within width×height.
-
-    Greedy word-wrap measured with the real font metrics; no drawing side effects.
-    Falls back to min_size if even that overflows (insert_textbox then clips).
-
-    The height a size needs is insert_textbox's own rule — one line costs
-    ``fontsize * (ascender - descender)`` and the first one also pays
-    ``fontsize * -descender`` on top. Guessing that factor is not safe: come in
-    under it by a fraction of a point and insert_textbox quietly draws *nothing*
-    (it returns a negative number and raises no error), so the text disappears.
-    """
-    if width <= 1 or height <= 1:
-        return max(min_size, min(start, 8.0))
-
-    try:
-        lead = float(font.ascender) - float(font.descender)
-        first = -float(font.descender)
-    except Exception:
-        lead, first = 0.0, 0.0
-    if not 0.5 < lead < 3.0:  # nonsense metrics → DejaVu's, which are typical
-        lead, first = 1.164, 0.236
-
-    def line_count(fs: float) -> int:
-        total = 0
-        for para in text.split("\n"):
-            lines = 0
-            cur = ""
-            for word in para.split(" "):
-                ww = font.text_length(word, fontsize=fs)
-                if ww > width:
-                    # No line can hold this word, so insert_textbox splits it
-                    # mid-word across as many lines as it takes. Counting it as
-                    # one line under-counts the height and loses the text.
-                    if cur:
-                        lines += 1
-                        cur = ""
-                    lines += -(-int(ww * 1000) // int(width * 1000))  # ceil
-                    continue
-                trial = word if not cur else cur + " " + word
-                if not cur or font.text_length(trial, fontsize=fs) <= width:
-                    cur = trial
-                else:
-                    lines += 1
-                    cur = word
-            if cur or lines == 0:
-                lines += 1
-            total += lines
-        return max(1, total)
-
-    fs = float(start)
-    while fs >= min_size:
-        if fs * (line_count(fs) * lead + first) <= height:
-            return fs
-        fs -= 0.5
-    return min_size
-
-
-# Keep re-typeset cell text clear of the gridlines by this much (points).
-_CELL_PAD = 2.0
-# A gap this many font-sizes wide is a tab stop inside a merged cell, not a
-# word space — the two sides of it are laid out independently.
-_RUN_GAP = 2.0
-
-
-def _table_cells(page) -> list:
-    """Cell rectangles of every table on the page, or [] if it has none.
-
-    MuPDF groups a whole table *row* into a single text block, so translating a
-    block as a unit turns the row into one left-aligned paragraph and the
-    columns collapse. Knowing the cells lets each one be translated and redrawn
-    on its own. No table found → [], and nothing about the page changes.
-    """
-    fitz = _require_fitz()
-    out: list = []
-    try:
-        tables = page.find_tables()
-    except Exception as e:
-        logger.debug("find_tables skipped: %s", e)
-        return out
-    for t in getattr(tables, "tables", []):
-        for row in t.rows:
-            for c in row.cells:
-                if not c:
-                    continue  # merged / empty cell
-                r = fitz.Rect(c)
-                if r.is_valid and not r.is_empty and r.width > 4 and r.height > 4:
-                    out.append(r)
-    return out
-
-
-def _cell_of(cells: list, rect) -> int:
-    """Index of the cell holding `rect`'s centre, or -1 if it sits outside."""
-    p = ((rect.x0 + rect.x1) / 2, (rect.y0 + rect.y1) / 2)
-    for i, c in enumerate(cells):
-        if c.x0 <= p[0] <= c.x1 and c.y0 <= p[1] <= c.y1:
-            return i
-    return -1
-
-
-def _cell_layout(text, cell) -> tuple:
-    """(rect, align) to re-typeset a translated cell into.
-
-    The aligned edge is pinned exactly where the source glyphs sat, so a
-    translation that still fits does not move at all, and the box grows into the
-    cell's free space — which is what stops a longer translation from being
-    shrunk to 5pt inside a bbox that hugged the original text. Alignment is read
-    back from where the text sits in its cell (number columns are right-aligned,
-    headers usually centred), because re-typesetting all of them flush left is
-    itself a layout change.
-    """
-    fitz = _require_fitz()
-    x0, x1 = cell.x0 + _CELL_PAD, cell.x1 - _CELL_PAD
-    if x1 - x0 < 4:  # cell too narrow to lay anything out in
-        return fitz.Rect(text), 0
-    y0 = text.y0
-    y1 = max(text.y1, cell.y1 - _CELL_PAD)  # room to wrap downwards
-    left_gap, right_gap = text.x0 - x0, x1 - text.x1
-    tol = max(2.0, 0.05 * (x1 - x0))
-    if abs(left_gap - right_gap) <= tol:  # centred
-        mid = (text.x0 + text.x1) / 2
-        half = min(mid - x0, x1 - mid)
-        return fitz.Rect(mid - half, y0, mid + half, y1), 1
-    if right_gap + tol < left_gap:  # right-aligned
-        return fitz.Rect(x0, y0, text.x1, y1), 2
-    return fitz.Rect(text.x0, y0, x1, y1), 0  # left-aligned
-
-
-def _visual_lines(spans: list[dict]) -> list[list[dict]]:
-    """Group a cell's spans into the lines they actually form on the page.
-
-    MuPDF's block "lines" are text objects, not rows: in a CAD/Word/invoice
-    export each cell — and each label and value inside a merged one — tends to
-    be its own "line". The y position is what really says whether two spans sit
-    side by side, so group on that.
-    """
-    out: list[list[dict]] = []
-    for sp in sorted(spans, key=lambda s: (s["bbox"][1], s["bbox"][0])):
-        near = max(float(sp.get("size", 9.0)), 1.0) * 0.6
-        for row in out:
-            if abs(row[0]["bbox"][1] - sp["bbox"][1]) <= near:
-                row.append(sp)
-                break
-        else:
-            out.append([sp])
-    return out
-
-
-def _split_runs(spans: list[dict]) -> list[list[dict]]:
-    """Split one line of a cell into runs separated by a tab-stop-sized gap.
-
-    A merged cell — an invoice's totals row spans the whole table width — holds
-    several label/value groups sitting far apart. Joined into one string they
-    become a single sentence: the gap collapses and the amount is dragged out of
-    its money column. Kept apart, each group is laid out where it started, and a
-    pure-number run is left untouched entirely (it translates to itself).
-    """
-    ordered = sorted(spans, key=lambda s: s["bbox"][0])
-    runs = [[ordered[0]]]
-    for sp in ordered[1:]:
-        prev = runs[-1][-1]
-        gap = sp["bbox"][0] - prev["bbox"][2]
-        # Relative to the font: a word space is a fraction of it, a tab stop is
-        # multiples. Anything in between is left joined.
-        if gap > _RUN_GAP * max(float(sp.get("size", 9.0)), 1.0):
-            runs.append([sp])
-        else:
-            runs[-1].append(sp)
-    return runs
-
-
-def _run_boxes(runs: list[list[dict]], cell):
-    """A sub-cell per run: the cell split at the midpoint of each gap.
-
-    Each run then lays out in its own share of the merged cell, so a longer
-    translation grows into the empty space beside it instead of over its
-    neighbour.
-    """
-    fitz = _require_fitz()
-    out = []
-    for k, run in enumerate(runs):
-        x0 = cell.x0 if k == 0 else (runs[k - 1][-1]["bbox"][2] + run[0]["bbox"][0]) / 2
-        x1 = cell.x1 if k == len(runs) - 1 else (run[-1]["bbox"][2] + runs[k + 1][0]["bbox"][0]) / 2
-        out.append(fitz.Rect(x0, cell.y0, x1, cell.y1))
-    return out
-
-
-def _block_from_spans(spans: list[dict], box) -> dict | None:
-    """One translatable block: the spans' text, tight bbox, and where to redraw."""
-    fitz = _require_fitz()
-    text = " ".join(sp["text"].strip() for sp in spans if sp["text"].strip()).strip()
-    if not text:
-        return None
-    tight = fitz.Rect(spans[0]["bbox"])
-    for sp in spans[1:]:
-        tight |= fitz.Rect(sp["bbox"])
-    lay, align = _cell_layout(tight, box)
-    first = spans[0]
-    flags = int(first.get("flags", 0))
-    return {
-        # bbox stays tight around the glyphs: it is what gets redacted, and a
-        # redaction over the whole cell would take the gridlines with it.
-        "bbox": [tight.x0, tight.y0, tight.x1, tight.y1],
-        "layout": [lay.x0, lay.y0, lay.x1, lay.y1],
-        "align": align,
-        "text": text,
-        "font": str(first.get("font", "")),
-        "size": float(first.get("size", 11.0)),
-        "color": int(first.get("color", 0)),
-        "bold": bool(flags & 16),
-        "italic": bool(flags & 2),
-    }
-
-
-def _split_block_by_cells(b: dict, cells: list) -> list[dict]:
-    """Split one text block into a block per table cell it covers.
-
-    Returns [] when any span of the block falls outside every cell — the block
-    is then not cleanly a table row, and the caller keeps the plain path.
-    """
-    fitz = _require_fitz()
-    groups: dict[int, list[dict]] = {}
-    for line in b.get("lines", []):
-        for sp in line.get("spans", []):
-            if not sp.get("text", "").strip():
-                continue
-            ci = _cell_of(cells, fitz.Rect(sp["bbox"]))
-            if ci < 0:
-                return []
-            groups.setdefault(ci, []).append(sp)
-    if not groups:
-        return []
-
-    out: list[dict] = []
-    for ci, spans in groups.items():
-        cell = cells[ci]
-        rows = _visual_lines(spans)
-        if len(rows) == 1:
-            runs = _split_runs(rows[0])
-        else:
-            # A wrapped cell: those gaps are line breaks, not tab stops, so the
-            # lines belong together as one paragraph.
-            runs = [spans]
-        for run, box in zip(runs, _run_boxes(runs, cell)):
-            blk = _block_from_spans(run, box)
-            if blk:
-                out.append(blk)
-    return out
-
-
-def _page_text_blocks(page) -> list[dict]:
-    """Editable text blocks on a page: joined text + bbox + first-span style.
-
-    Each block also carries `layout` (the rect its translation is typeset into)
-    and `align`. Outside a table those are just the bbox and flush left; inside
-    one they are the cell's own box and alignment — see `_split_block_by_cells`.
-    """
-    cells = _table_cells(page)
-    out: list[dict] = []
-    data = page.get_text("dict")
-    for b in data.get("blocks", []):
-        if b.get("type", 0) != 0:  # skip image blocks
-            continue
-        if cells:
-            parts = _split_block_by_cells(b, cells)
-            if parts:
-                out.extend(parts)
-                continue
-        first = None
-        line_txts: list[str] = []
-        for line in b.get("lines", []):
-            spans = line.get("spans", [])
-            lt = "".join(sp.get("text", "") for sp in spans)
-            if lt.strip():
-                line_txts.append(lt)
-            if first is None:
-                for sp in spans:
-                    if sp.get("text", "").strip():
-                        first = sp
-                        break
-        text = " ".join(s.strip() for s in line_txts).strip()
-        if not text or first is None:
-            continue
-        flags = int(first.get("flags", 0))
-        bbox = [float(v) for v in b["bbox"]]
-        out.append({
-            "bbox": bbox,
-            "layout": bbox,
-            "align": 0,
-            "text": text,
-            "font": str(first.get("font", "")),
-            "size": float(first.get("size", 11.0)),
-            "color": int(first.get("color", 0)),
-            "bold": bool(flags & 16),
-            "italic": bool(flags & 2),
-        })
-    return out
 
 
 def _translate_blocks(agent, items: list[dict], target: str, source: str) -> dict[int, str] | None:
