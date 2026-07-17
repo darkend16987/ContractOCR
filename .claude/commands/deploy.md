@@ -29,10 +29,9 @@ of the current `desktop/package.json` version.
 
 ## 1. Tests
 
-- Run the Python tests (expect the closing line of each, no traceback):
-  - `.venv\Scripts\python test_export.py` → `Test complete...`
-  - `.venv\Scripts\python test_compare_drawings.py` → `All drawing-compare tests passed.`
-  - `.venv\Scripts\python test_translate_layout.py` → `All translate-layout tests passed.`
+- Run the whole Python suite via the single runner (expect the closing summary,
+  no traceback): `.venv\Scripts\python run_tests.py` → `N/N test files passed.`
+  (Discovers every `test_*.py` at the repo root and runs each in a subprocess.)
 - Quick static check of the renderer (no test runner there):
   `node --check desktop/renderer/app.js`, `editor.js`, `text-edit.js`.
 - **Any failure → stop and report.** Do not continue.
