@@ -734,10 +734,7 @@ async def searchable(req: SearchableRequest):
     dpi = max(72, min(400, req.dpi))
     scale = 72.0 / dpi  # pixmap pixel -> PDF point
 
-    try:
-        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Không mở được PDF: {e}")
+    doc = _open_pdf_stream(pdf_bytes)
 
     if doc.page_count > 100:
         doc.close()
@@ -889,10 +886,7 @@ async def compress(req: CompressRequest):
     except Exception:
         raise HTTPException(status_code=400, detail="pdf_b64 không hợp lệ")
 
-    try:
-        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Không mở được PDF: {e}")
+    doc = _open_pdf_stream(pdf_bytes)
 
     if doc.page_count > 500:
         doc.close()
@@ -973,10 +967,7 @@ async def decrypt(req: DecryptRequest):
     except Exception:
         raise HTTPException(status_code=400, detail="pdf_b64 không hợp lệ")
 
-    try:
-        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Không mở được PDF: {e}")
+    doc = _open_pdf_stream(pdf_bytes)
 
     try:
         if doc.needs_pass and not doc.authenticate(req.password or ""):
@@ -1023,6 +1014,20 @@ def _require_fitz():
         raise HTTPException(status_code=503, detail="PyMuPDF (fitz) chưa cài — không xử lý được PDF.")
 
 
+def _open_pdf_stream(pdf_bytes: bytes):
+    """Open decoded PDF bytes with PyMuPDF, raising the shared 400 on a bad file.
+
+    Centralises the identical open+try/except that every PDF endpoint repeated;
+    the caller keeps its own `fitz` binding for the constants/classes it uses next.
+    """
+    import fitz  # PyMuPDF (cached; the caller already ensured it imports)
+
+    try:
+        return fitz.open(stream=pdf_bytes, filetype="pdf")
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Không mở được PDF: {e}")
+
+
 # ---- P7: lock a PDF (set open/owner password) -----------------------------
 
 
@@ -1067,10 +1072,7 @@ async def encrypt(req: EncryptRequest):
         raise HTTPException(status_code=400, detail="Cần ít nhất một mật khẩu để khoá file.")
 
     pdf_bytes = _decode_pdf_b64(req.pdf_b64)
-    try:
-        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Không mở được PDF: {e}")
+    doc = _open_pdf_stream(pdf_bytes)
 
     try:
         if doc.needs_pass:
@@ -1135,10 +1137,7 @@ async def extract_images(req: ExtractImagesRequest):
     """
     fitz = _require_fitz()
     pdf_bytes = _decode_pdf_b64(req.pdf_b64)
-    try:
-        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Không mở được PDF: {e}")
+    doc = _open_pdf_stream(pdf_bytes)
 
     buf = io.BytesIO()
     count = 0
@@ -1324,10 +1323,7 @@ async def add_page_numbers(req: PageNumberRequest):
         raise HTTPException(status_code=400, detail="fmt không hợp lệ")
 
     pdf_bytes = _decode_pdf_b64(req.pdf_b64)
-    try:
-        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Không mở được PDF: {e}")
+    doc = _open_pdf_stream(pdf_bytes)
 
     try:
         fs = max(6.0, min(72.0, float(req.font_size)))
@@ -1403,10 +1399,7 @@ async def pdf_to_images(req: PdfToImagesRequest):
     dpi = max(72, min(400, req.dpi))
 
     pdf_bytes = _decode_pdf_b64(req.pdf_b64)
-    try:
-        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Không mở được PDF: {e}")
+    doc = _open_pdf_stream(pdf_bytes)
 
     if doc.page_count > 500:
         doc.close()
@@ -1490,10 +1483,7 @@ async def split_pdf(req: SplitRequest):
     """
     fitz = _require_fitz()
     pdf_bytes = _decode_pdf_b64(req.pdf_b64)
-    try:
-        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Không mở được PDF: {e}")
+    doc = _open_pdf_stream(pdf_bytes)
 
     n = doc.page_count
     if n == 0:
@@ -1588,10 +1578,6 @@ def _norm_color(c) -> tuple[float, float, float]:
 # Neither is fixable by picking a font — the extracted STRING is already wrong. We
 # (a) flag such spans so the UI can recover them, (b) try a fast TCVN3 transcode,
 # and (c) fall back to OCR-ing the span's pixels (the only universal recovery).
-
-# Font-name prefixes that indicate legacy TCVN3/VNI encodings.
-_LEGACY_FONT_MARKERS = (".vn", "vn", "vni", "tcvn")
-
 
 def _is_legacy_font(font: str) -> bool:
     f = _clean_font_name(font or "").lower().lstrip(".")
@@ -1732,10 +1718,7 @@ async def text_spans(req: TextSpansRequest):
     except Exception:
         raise HTTPException(status_code=400, detail="pdf_b64 không hợp lệ")
 
-    try:
-        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Không mở được PDF: {e}")
+    doc = _open_pdf_stream(pdf_bytes)
 
     try:
         if req.page < 0 or req.page >= doc.page_count:
@@ -1838,10 +1821,7 @@ async def ocr_span(req: OcrSpanRequest):
     if len(req.bbox) != 4:
         raise HTTPException(status_code=400, detail="bbox phải có 4 số")
 
-    try:
-        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Không mở được PDF: {e}")
+    doc = _open_pdf_stream(pdf_bytes)
     try:
         if req.page < 0 or req.page >= doc.page_count:
             raise HTTPException(status_code=400, detail="Số trang không hợp lệ")
@@ -1926,10 +1906,7 @@ async def edit_text(req: EditTextRequest):
 
     font_path = _vietnamese_font()  # Unicode fallback for diacritics
 
-    try:
-        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Không mở được PDF: {e}")
+    doc = _open_pdf_stream(pdf_bytes)
 
     # Group edits per page so redactions are applied once per page.
     by_page: dict[int, list[TextEdit]] = {}
@@ -2562,10 +2539,7 @@ async def translate_pdf(req: TranslateRequest):
     source_name = _LANG_NAMES.get((req.source_lang or "auto").lower(), req.source_lang)
     font_path = _vietnamese_font()
 
-    try:
-        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Không mở được PDF: {e}")
+    doc = _open_pdf_stream(pdf_bytes)
 
     # Resolve the page scope.
     if isinstance(req.scope, list):
