@@ -22,7 +22,30 @@
 
 (function () {
   const PDFLib = window.PDFLib;
-  const { PDFDocument, rgb, PDFName, PDFHexString, degrees } = PDFLib;
+  const { PDFDocument, rgb, PDFName, PDFHexString, PDFRawStream, PDFDict, degrees } = PDFLib;
+
+  // ---- managed annotations (Option B round-trip) ---------------------------
+  //
+  // Text boxes and comment notes are written to the PDF as REAL annotations
+  // (visible in Foxit/Acrobat) that also carry a private `/NabuData` payload, so
+  // re-opening the file lets us reconstruct the editable overlay object and the
+  // user can move / retype / keep commenting. Everything else still flattens.
+  //
+  //  - text  → /Stamp annot whose appearance (/AP /N) is the same PNG we already
+  //            render for the flattened path (Vietnamese-safe, no font embedding).
+  //  - note  → /Text annot carrying the thread in /Contents (as before) plus the
+  //            structured thread in /NabuData; its coloured marker is drawn by the
+  //            viewer's note layer, not baked into page content, so it's removable.
+  //
+  // Rotated pages: a text Stamp appearance would need a matrix; that's deferred,
+  // so text on a rotated page still flattens (today's behaviour). Notes are points
+  // and round-trip on any rotation.
+  const MANAGED_KINDS = new Set(["text", "note"]);
+  const NABU_KIND = PDFName.of("NabuKind");
+  const NABU_DATA = PDFName.of("NabuData");
+  const P_ANNOTS = PDFName.of("Annots");
+
+  function isManagedKind(k) { return MANAGED_KINDS.has(k); }
 
   const ed = {
     active: false,
@@ -38,6 +61,7 @@
     fillColor: "#ffffff", // interior fill for box / ellipse / cloud / cloudpen
     fillOn: false, // false → transparent interior (the default for revision clouds)
     fillOpacity: 1, // 0..1 interior-fill opacity (0 = fully transparent, 1 = solid)
+    cloudBump: 12, // scallop size for new revision clouds (denser than the old fixed 16)
     annots: {}, // pageIndex -> [annot]
     watermark: null, // { text, size, angle, opacity, color }
     seq: 1,
@@ -53,6 +77,9 @@
     measureUnit: "m", // unit label appended to auto dim text
     measureDecimals: 2, // decimal places for the measured value
     _dimPending: null, // drag awaiting the calibration modal: { id, page, layer, pdfDist }
+    _dirty: false, // true once the user actually changed something this session
+    _exiting: false, // guards bakePending's re-import while we're leaving edit mode
+    _managedPages: new Set(), // pages that hold (or held) round-trip text/notes → always repaint on bake
   };
 
   // ---- model helpers -------------------------------------------------------
@@ -89,6 +116,7 @@
   // Record an undo step *before* a mutation. `coalesceKey` merges rapid repeats
   // (a colour-picker drag / font-size spinner fires per tick) into one step.
   function pushEdUndo(coalesceKey) {
+    ed._dirty = true; // any mutation routes through here → session has unsaved edits
     const now = Date.now();
     if (coalesceKey && edHist.lastKey === coalesceKey && now - edHist.lastT < 800) {
       edHist.lastT = now;
@@ -279,7 +307,13 @@
   // "khoanh mây". Coordinates are shifted by `pad` so the bulges stay ≥ 0, letting
   // the same string drive both the overlay <svg> (0-origin viewBox) and pdf-lib's
   // drawSvgPath at bake time. Returns { d, pad, W, H }.
-  const CLOUD_BUMP = 16; // target scallop diameter in scale-1 PDF points
+  const CLOUD_BUMP = 16; // default scallop diameter in scale-1 PDF points
+  const CLOUD_BUMP_MIN = 6; // tightest/densest cloud the size control allows
+  const CLOUD_BUMP_MAX = 28; // puffiest cloud the size control allows
+  // Per-annotation scallop size. Users asked for smaller/denser clouds, so each
+  // cloud carries its own `bump`; clouds drawn before this was configurable have
+  // no `bump` and fall back to the historical default so they render unchanged.
+  const bumpOf = (a) => (a && a.bump) || CLOUD_BUMP;
   function cloudPath(w, h, bump) {
     bump = bump || CLOUD_BUMP;
     const pad = bump; // room for the outward bulges
@@ -589,7 +623,7 @@
     if (a.kind === "cloud") {
       // The element covers the padded box (scallops included) so it renders and
       // hit-tests over the whole cloud, like the freehand/arrow overlays.
-      const { d, pad, W, H } = cloudPath(a.w, a.h, CLOUD_BUMP);
+      const { d, pad, W, H } = cloudPath(a.w, a.h, bumpOf(a));
       el.style.left = (a.x - pad) * s + "px";
       el.style.top = (a.y - pad) * s + "px";
       el.style.width = W * s + "px";
@@ -620,7 +654,7 @@
 
     if (a.kind === "cloudpen") {
       if (a.closed) {
-        const cp = cloudPathPoly(a.pts, CLOUD_BUMP);
+        const cp = cloudPathPoly(a.pts, bumpOf(a));
         if (!cp) return el; // degenerate — render nothing (kept only until cleaned up)
         el.style.left = (cp.minX - cp.pad) * s + "px";
         el.style.top = (cp.minY - cp.pad) * s + "px";
@@ -791,6 +825,11 @@
       setFmtBtn("ed-underline", a.underline);
     }
     if (["draw", "box", "ellipse", "cloud", "cloudpen", "arrow"].includes(a.kind) && a.width) $("ed-penwidth").value = String(a.width);
+    if (a.kind === "cloud" || a.kind === "cloudpen") {
+      const b = bumpOf(a);
+      $("ed-cloudsize").value = String(b);
+      $("ed-cloudsize-val").textContent = String(b);
+    }
     if (["box", "ellipse", "cloud", "cloudpen"].includes(a.kind)) {
       const none = !a.fill || a.fill === "none";
       $("ed-fill-none").checked = none;
@@ -874,6 +913,7 @@
         a.fill = effFill();
         a.fillOpacity = ed.fillOpacity;
       }
+      if (ed.tool === "cloud") a.bump = ed.cloudBump;
       pushEdUndo(); // dropped again if the shape ends up tiny/cancelled
       annotsFor(i).push(a);
       ed.sel = a.id;
@@ -952,6 +992,7 @@
         width: ed.penWidth,
         fill: effFill(),
         fillOpacity: ed.fillOpacity,
+        bump: ed.cloudBump,
       };
       pushEdUndo();
       annotsFor(i).push(a);
@@ -1033,7 +1074,7 @@
       const hit = findAnnot(drag.id);
       if (hit) {
         if (drag.moved) {
-          if (cloudPathPoly(hit.a.pts, CLOUD_BUMP)) {
+          if (cloudPathPoly(hit.a.pts, bumpOf(hit.a))) {
             hit.a.closed = true;
           } else {
             ed.annots[drag.page] = ed.annots[drag.page].filter((x) => x.id !== drag.id);
@@ -1104,7 +1145,7 @@
     ed._poly = null;
     const hit = findAnnot(info.id);
     if (hit) {
-      if (hit.a.pts.length >= 3 && cloudPathPoly(hit.a.pts, CLOUD_BUMP)) {
+      if (hit.a.pts.length >= 3 && cloudPathPoly(hit.a.pts, bumpOf(hit.a))) {
         hit.a.closed = true;
       } else {
         ed.annots[info.page] = (ed.annots[info.page] || []).filter((x) => x.id !== info.id);
@@ -1248,6 +1289,7 @@
           italic: ed.italic,
           underline: ed.underline,
         });
+        ed._managedPages.add(i);
       }
       renderLayer(layer, i);
     };
@@ -1337,6 +1379,7 @@
           pushEdUndo();
           const a = { id: ed.seq++, kind: "note", x: p.x, y: p.y, w: 18, h: 18, text, color: ed.color, replies: [] };
           annotsFor(i).push(a);
+          ed._managedPages.add(i);
           ed.sel = a.id;
         }
       } else if (mode === "editOrig") {
@@ -1652,6 +1695,144 @@
     };
   }
 
+  // Editable payload stored in /NabuData so a re-opened file reconstructs the
+  // overlay object. Geometry travels here too (not just the /Rect) so retyping /
+  // restyling is lossless.
+  function serializeManaged(a) {
+    if (a.kind === "text") {
+      return { k: "text", x: a.x, y: a.y, w: a.w, h: a.h, text: a.text,
+               font: a.font, fontSize: a.fontSize, color: a.color,
+               bold: !!a.bold, italic: !!a.italic, underline: !!a.underline };
+    }
+    // note
+    return { k: "note", x: a.x, y: a.y, w: a.w, h: a.h, text: a.text || "",
+             color: a.color, replies: a.replies || [] };
+  }
+
+  function deserializeManaged(data) {
+    if (!data || !data.k) return null;
+    if (data.k === "text") {
+      if (!data.text) return null;
+      return { id: ed.seq++, kind: "text", x: +data.x || 0, y: +data.y || 0,
+               w: +data.w || 1, h: +data.h || 1, text: String(data.text),
+               font: data.font || "sans", fontSize: +data.fontSize || 16,
+               color: data.color || "#000000", bold: !!data.bold,
+               italic: !!data.italic, underline: !!data.underline, _managed: true };
+    }
+    if (data.k === "note") {
+      return { id: ed.seq++, kind: "note", x: +data.x || 0, y: +data.y || 0,
+               w: +data.w || 18, h: +data.h || 18, text: String(data.text || ""),
+               color: data.color || "#ffd54a",
+               replies: Array.isArray(data.replies) ? data.replies : [], _managed: true };
+    }
+    return null;
+  }
+
+  // Attach `ref` to the page's /Annots array, creating it if absent.
+  function pushPageAnnot(doc, page, ref) {
+    let arr = page.node.Annots();
+    if (!arr) { arr = doc.context.obj([]); page.node.set(P_ANNOTS, arr); }
+    arr.push(ref);
+  }
+
+  // Write one managed annotation (text Stamp with image /AP, or note Text annot)
+  // into `page`, tagged with /NabuData. Returns true if it was written as a real
+  // annotation; false means the caller should fall back to flattening (only text
+  // on a rotated page).
+  async function addManagedAnnot(doc, page, a, map) {
+    const ctx = doc.context;
+    const dataHex = PDFHexString.fromText(JSON.stringify(serializeManaged(a)));
+    if (a.kind === "text") {
+      if (page.getRotation().angle % 360 !== 0) return false; // deferred: rotated text keeps flattening
+      const { bytes, wPt, hPt } = renderTextPng(a.text, a.fontSize, a.color, {
+        font: a.font, bold: a.bold, italic: a.italic, underline: a.underline,
+      });
+      const img = await doc.embedPng(bytes);
+      const padPt = a.fontSize * 0.15;
+      const [bx, by] = map(a.x - padPt, a.y - padPt + hPt); // lower-left, matches flattened path
+      const apDict = ctx.obj({
+        Type: "XObject", Subtype: "Form", FormType: 1,
+        BBox: [0, 0, wPt, hPt],
+        Resources: { XObject: { NabuImg: img.ref } },
+      });
+      const apStream = PDFRawStream.of(apDict, strToBytes(`q ${f(wPt)} 0 0 ${f(hPt)} 0 0 cm /NabuImg Do Q`));
+      const apRef = ctx.register(apStream);
+      const annot = ctx.obj({
+        Type: "Annot", Subtype: "Stamp", F: 4,
+        Rect: [bx, by, bx + wPt, by + hPt],
+        AP: { N: apRef },
+      });
+      annot.set(NABU_KIND, PDFName.of("text"));
+      annot.set(NABU_DATA, dataHex);
+      pushPageAnnot(doc, page, ctx.register(annot));
+      return true;
+    }
+    // note — real Text annotation carrying the thread; marker drawn by the viewer.
+    const c = hexRgb(a.color);
+    const [rx1, ry1] = map(a.x, a.y + a.h);
+    const [rx2, ry2] = map(a.x + a.w, a.y);
+    const annot = ctx.obj({
+      Type: "Annot", Subtype: "Text", Name: "Comment", Open: false, F: 4,
+      Rect: [Math.min(rx1, rx2), Math.min(ry1, ry2), Math.max(rx1, rx2), Math.max(ry1, ry2)],
+      Contents: PDFHexString.fromText(noteThreadText(a)),
+      C: [c.red, c.green, c.blue],
+    });
+    annot.set(NABU_KIND, PDFName.of("note"));
+    annot.set(NABU_DATA, dataHex);
+    pushPageAnnot(doc, page, ctx.register(annot));
+    return true;
+  }
+
+  const f = (n) => (+n).toFixed(2);
+  function strToBytes(s) {
+    const out = new Uint8Array(s.length);
+    for (let i = 0; i < s.length; i++) out[i] = s.charCodeAt(i) & 0xff;
+    return out;
+  }
+
+  // Remove every previously-written managed annotation from a pdf-lib doc, so a
+  // re-bake replaces rather than duplicates them. Returns the count removed.
+  function stripManagedFromPage(doc, page) {
+    const arr = page.node.Annots();
+    if (!arr) return 0;
+    let removed = 0;
+    for (let i = arr.size() - 1; i >= 0; i--) {
+      const dict = doc.context.lookup(arr.get(i));
+      if (dict instanceof PDFDict && dict.get(NABU_KIND)) { arr.remove(i); removed++; }
+    }
+    return removed;
+  }
+  function stripManagedAnnots(doc) {
+    let removed = 0;
+    for (const page of doc.getPages()) removed += stripManagedFromPage(doc, page);
+    return removed;
+  }
+
+  // Parse managed annotations out of the current document into live overlay
+  // objects (per page) so they can be edited again. Read-only w.r.t. the PDF.
+  async function importManaged() {
+    if (!state.bytes) return 0;
+    let doc;
+    try { doc = await PDFDocument.load(state.bytes); } catch (_) { return 0; }
+    const pages = doc.getPages();
+    let count = 0;
+    for (let i = 0; i < pages.length; i++) {
+      const arr = pages[i].node.Annots();
+      if (!arr) continue;
+      for (let j = 0; j < arr.size(); j++) {
+        const dict = doc.context.lookup(arr.get(j));
+        if (!(dict instanceof PDFDict) || !dict.get(NABU_KIND)) continue;
+        const dataObj = dict.get(NABU_DATA);
+        if (!dataObj || typeof dataObj.decodeText !== "function") continue;
+        let parsed;
+        try { parsed = JSON.parse(dataObj.decodeText()); } catch (_) { continue; }
+        const a = deserializeManaged(parsed);
+        if (a) { annotsFor(i).push(a); ed._managedPages.add(i); count++; }
+      }
+    }
+    return count;
+  }
+
   // Pages with a /Rotate entry (common in scans) display rotated, but pdf-lib
   // draws images in *unrotated* user space. Without compensating, baked PNGs
   // (text comment, image, watermark) come out rotated 90/180/270°. We pin the
@@ -1666,6 +1847,12 @@
     let failed = 0;
     for (const a of anns) {
       try {
+        // Text boxes and notes go in as real, re-editable annotations; only the
+        // rotated-text fallback (addManagedAnnot → false) drops through to flatten.
+        if (isManagedKind(a.kind)) {
+          const done = await addManagedAnnot(doc, page, a, map);
+          if (done) continue;
+        }
         await drawOneAnnot(doc, page, a, map);
       } catch (err) {
         // Isolate failures: one bad annotation (e.g. a corrupt image) must not
@@ -1745,7 +1932,7 @@
         // Scallop outline mapped like the freehand path: (0,0) of the SVG sits at
         // the padded top-left; drawSvgPath draws downward from there (it flips y),
         // so at rotation 0 the bake matches the overlay pixel-for-pixel.
-        const { d, pad } = cloudPath(a.w, a.h, CLOUD_BUMP);
+        const { d, pad } = cloudPath(a.w, a.h, bumpOf(a));
         const [bx, by] = map(a.x - pad, a.y - pad);
         const opts = { x: bx, y: by, borderColor: hexRgb(a.color), borderWidth: a.width || 2 };
         if (a.fill && a.fill !== "none") {
@@ -1754,7 +1941,7 @@
         }
         page.drawSvgPath(d, opts);
       } else if (a.kind === "cloudpen") {
-        const cp = cloudPathPoly(a.pts, CLOUD_BUMP);
+        const cp = cloudPathPoly(a.pts, bumpOf(a));
         if (cp) {
           const [bx, by] = map(cp.minX - cp.pad, cp.minY - cp.pad);
           const opts = { x: bx, y: by, borderColor: hexRgb(a.color), borderWidth: a.width || 2 };
@@ -1882,6 +2069,7 @@
 
   async function bakeInPlace() {
     const doc = await PDFDocument.load(state.bytes);
+    stripManagedAnnots(doc); // drop the previous round-trip copies; re-added from ed.annots below
     const pages = doc.getPages();
     for (let i = 0; i < pages.length; i++) {
       const anns = annotsFor(i);
@@ -1915,6 +2103,7 @@
         out.addPage(cp);
         page = cp;
         mode = "orig";
+        stripManagedFromPage(out, page); // copied page carried the old round-trip copies
       }
       if (others.length) await drawAnnots(out, page, others, vp1, mode);
       if (ed.watermark) await drawWatermark(out, page, vp1, mode);
@@ -1936,14 +2125,25 @@
       if (!ed.watermark) {
         changed = new Set();
         for (const k of Object.keys(ed.annots)) if (ed.annots[k].length) changed.add(+k);
+        // Pages whose managed appearance changed (incl. a text/note just deleted,
+        // so it's no longer in ed.annots) must repaint too.
+        for (const k of ed._managedPages) changed.add(k);
       }
       if (window.History) window.History.pushUndo(); // one doc-level undo step per bake
       state.bytes = bytes;
       ed.annots = {};
       ed.watermark = null;
       ed.sel = null;
+      ed._dirty = false;
       clearEdHistory(); // baked annotations can't be un-done at annotation level anymore
       await rerenderChanged(changed);
+      // Mid-session save (still editing): pull the managed annots back in so text
+      // boxes / notes stay editable and their baked copies stay hidden.
+      if (ed.active && !ed._exiting) {
+        await importManaged();
+        if (window.repaintRenderedPages) await window.repaintRenderedPages();
+        syncOverlays();
+      }
       toast("Đã áp dụng chỉnh sửa.", "good");
       return true;
     } catch (err) {
@@ -2159,8 +2359,8 @@
     draw: ["color", "penwidth"],
     box: ["color", "penwidth", "fill"],
     ellipse: ["color", "penwidth", "fill"],
-    cloud: ["color", "penwidth", "fill"],
-    cloudpen: ["color", "penwidth", "fill"],
+    cloud: ["color", "penwidth", "fill", "cloudsize"],
+    cloudpen: ["color", "penwidth", "fill", "cloudsize"],
     arrow: ["color", "penwidth"],
     note: ["color"],
     image: [],
@@ -2176,8 +2376,8 @@
     draw: ["color", "penwidth"],
     box: ["color", "penwidth", "fill"],
     ellipse: ["color", "penwidth", "fill"],
-    cloud: ["color", "penwidth", "fill"],
-    cloudpen: ["color", "penwidth", "fill"],
+    cloud: ["color", "penwidth", "fill", "cloudsize"],
+    cloudpen: ["color", "penwidth", "fill", "cloudsize"],
     arrow: ["color", "penwidth"],
     note: ["color"],
     image: ["imgpages"],
@@ -2259,16 +2459,22 @@
     }
   }
 
-  function enter() {
+  async function enter() {
     if (!state.bytes) return;
     ed.active = true;
     ed.measureCal = null; // a different drawing has a different scale — recalibrate
     ed._dimPending = null;
+    ed._dirty = false;
     clearEdHistory(); // fresh annotation-undo timeline per session
     $("edit-bar").hidden = false;
     $("btn-edit").classList.add("active");
     setTool("select");
     updateToolbar();
+    // Pull previously-applied text boxes / notes back in as editable objects, then
+    // repaint so their baked appearance (rendered by pdf.js) is hidden while the
+    // live overlay owns them. No managed annots → nothing to hide, common fast path.
+    const n = await importManaged();
+    if (n && window.repaintRenderedPages) await window.repaintRenderedPages();
     syncOverlays();
     syncUndoBtns();
     loadSystemFonts();
@@ -2282,20 +2488,33 @@
     if (typeof updateUndoRedo === "function") updateUndoRedo(); // hand Ctrl+Z back to doc history
     syncOverlays();
   }
-  // "Xong": bake every pending edit into the PDF, then leave edit mode.
+  // "Xong": bake every pending edit into the PDF, then leave edit mode. Managed
+  // annots that were merely re-imported (no user change) don't force a re-bake.
   async function exit() {
     if (ed._poly) closePoly(); // finalize (or drop) a cloud still being drawn
-    if (hasAny()) await bakePending();
-    clearEdHistory();
-    leaveMode();
+    ed._exiting = true; // bakePending must not re-import while we're leaving
+    try {
+      if (ed._dirty && hasAny()) await bakePending();
+      reset();
+      clearEdHistory();
+      leaveMode();
+      // Back to view mode: repaint so the baked text/note appearances show again
+      // (they were hidden by DISABLE while editing).
+      if (window.repaintRenderedPages) await window.repaintRenderedPages();
+    } finally {
+      ed._exiting = false;
+    }
   }
-  // "Hủy bỏ": leave edit mode discarding everything not yet baked.
-  function discardExit() {
-    const n = countAnnots();
+  // "Hủy bỏ": leave edit mode discarding everything not yet baked. Re-imported
+  // managed annots aren't "unsaved" — only prompt when the user actually changed
+  // something; on discard the untouched baked appearances simply reappear.
+  async function discardExit() {
+    const n = ed._dirty ? countAnnots() : 0;
     if (n && !window.confirm(`Bỏ ${n} chỉnh sửa chưa ghi và thoát?`)) return;
     reset();
     clearEdHistory();
     leaveMode();
+    if (window.repaintRenderedPages) await window.repaintRenderedPages();
     if (n) toast("Đã bỏ các chỉnh sửa chưa ghi.", "");
   }
 
@@ -2305,6 +2524,8 @@
     ed.sel = null;
     ed.pendingImage = null;
     ed._poly = null;
+    ed._dirty = false;
+    ed._managedPages = new Set();
     clearEdHistory();
   }
 
@@ -2430,6 +2651,20 @@
       if (hit && ["draw", "box", "ellipse", "cloud", "cloudpen", "arrow"].includes(hit.a.kind)) {
         pushEdUndo("pwidth:" + ed.sel);
         hit.a.width = ed.penWidth;
+        syncOverlays();
+      }
+    }
+  };
+  // Cloud scallop size (smaller = denser, hugs the marked area more tightly).
+  $("ed-cloudsize").oninput = (e) => {
+    const v = Math.min(CLOUD_BUMP_MAX, Math.max(CLOUD_BUMP_MIN, +e.target.value || CLOUD_BUMP));
+    ed.cloudBump = v;
+    $("ed-cloudsize-val").textContent = String(v);
+    if (ed.sel != null) {
+      const hit = findAnnot(ed.sel);
+      if (hit && (hit.a.kind === "cloud" || hit.a.kind === "cloudpen")) {
+        pushEdUndo("cloudsize:" + ed.sel);
+        hit.a.bump = v;
         syncOverlays();
       }
     }

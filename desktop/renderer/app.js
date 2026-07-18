@@ -512,14 +512,19 @@ async function renderPageCanvas(i) {
   const { page, vp, cw, ch, canvas, dpr } = m;
   canvas.width = Math.floor(cw * dpr);
   canvas.height = Math.floor(ch * dpr);
+  // While the editor is open, the round-trip text boxes / notes are lifted into
+  // the live overlay, so hide their baked PDF appearance here (and let the overlay
+  // own the note markers) to avoid drawing them twice.
+  const editing = !!(window.Editor && window.Editor.active);
   try {
     await page.render({
       canvasContext: canvas.getContext("2d"),
       viewport: vp,
       transform: dpr !== 1 ? [dpr, 0, 0, dpr, 0, 0] : undefined,
+      annotationMode: editing ? pdfjsLib.AnnotationMode.DISABLE : pdfjsLib.AnnotationMode.ENABLE,
     }).promise;
     await addTextLayer(i, m);  // selectable/​highlightable text for text-based pages
-    await addNoteMarkers(i, m); // surface baked sticky-note comments (readable in-app)
+    if (!editing) await addNoteMarkers(i, m); // surface baked sticky-note comments (readable in-app)
     if (search.matches.length) drawSearchLayer(i); // repaint find highlights on (re)render
   } catch (_) {
     m.wrap.dataset.rendered = "0"; // let it retry on the next intersection
@@ -624,6 +629,12 @@ async function addNoteMarkers(i, m) {
     el.style.top = y + "px";
     el.style.width = Math.max(16, Math.abs(r[2] - r[0])) + "px";
     el.style.height = Math.max(16, Math.abs(r[3] - r[1])) + "px";
+    // Round-trip notes no longer bake a coloured square into page content, so the
+    // marker itself carries the note's colour (from the annotation's /C).
+    const col = an.color;
+    el.style.background = (col && col.length >= 3)
+      ? `rgb(${col[0]|0}, ${col[1]|0}, ${col[2]|0})`
+      : "var(--accent)";
     el.title = text;
     el.onclick = (e) => {
       e.stopPropagation();
@@ -855,6 +866,22 @@ async function rerenderChanged(changed) {
     hideOverlay();
   }
 }
+
+// Repaint every on-screen page in place — used by the editor when entering/leaving
+// edit mode, where the same bytes must be re-rasterised with annotations toggled
+// (managed text/notes are hidden while editing, shown in view mode). Off-screen
+// pages repaint lazily when scrolled to, so this stays bounded.
+async function repaintRenderedPages() {
+  if (!state.pageMetas) return;
+  for (let i = 0; i < state.numPages; i++) {
+    const m = state.pageMetas[i];
+    if (m && m.wrap && m.wrap.dataset.rendered === "1") {
+      m.wrap.dataset.rendered = "0";
+      await renderPageCanvas(i);
+    }
+  }
+}
+window.repaintRenderedPages = repaintRenderedPages;
 
 // Repaint a single thumbnail in place (used by the targeted re-render above).
 async function refreshThumb(i) {
