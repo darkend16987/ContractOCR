@@ -248,7 +248,24 @@
       "Bash(.venv/Scripts/python -c \"import ast; ast.parse\\(open\\('D:/GitHub/ContractOCR/api.py',encoding='utf-8'\\).read\\(\\)\\); ast.parse\\(open\\('D:/GitHub/ContractOCR/src/pdf/fonts.py',encoding='utf-8'\\).read\\(\\)\\); print\\('both parse OK'\\)\")",
       "Bash(.venv/Scripts/python -c \"import api; print\\('import api OK'\\); print\\('font fn present:', callable\\(api._vietnamese_font\\), callable\\(api._clean_font_name\\)\\)\")",
       "Bash(awk -F: '{print $2}')",
-      "Bash(.venv/Scripts/python test_translate_layout.py)"
+      "Bash(.venv/Scripts/python test_translate_layout.py)",
+      "PowerShell(\\(Get-Content desktop\\\\renderer\\\\editor.js | Measure-Object -Line\\).Lines)",
+      "PowerShell(node --check desktop\\\\renderer\\\\editor.js)",
+      "PowerShell(node \"C:\\\\Users\\\\hoang\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\D--GitHub-ContractOCR\\\\f058da9c-f94c-48e4-ae8f-17357487ad22\\\\scratchpad\\\\serve-renderer.js\")",
+      "PowerShell(if \\($?\\) { \"editor OK\" })",
+      "PowerShell(node --check desktop\\\\renderer\\\\app.js)",
+      "PowerShell(if \\($?\\) { \"app.js OK\" })",
+      "Bash(pnpm start *)",
+      "PowerShell(gh auth status)",
+      "PowerShell(gh release list)",
+      "PowerShell($env:GH_TOKEN = \\(gh auth token\\); .venv\\\\Scripts\\\\python run_tests.py)",
+      "PowerShell(\"---uncommitted---\")",
+      "PowerShell($repo = gh repo view --json nameWithOwner -q .nameWithOwner; \"REPO: $repo\"; \"--- workflows ---\"; gh api \"repos/$repo/actions/workflows\" -q '.workflows[] | \"\\\\\\(.name\\) [\\\\\\(.state\\)] \\\\\\(.path\\)\"')",
+      "Read(//d/GitHub/S2RTool-reborn/**)",
+      "Bash(rtk git commit -m ' *)",
+      "PowerShell(cd D:\\\\GitHub\\\\ContractOCR\\\\desktop; node scripts/check-sidecar-fresh.js; \"exit=$LASTEXITCODE\")",
+      "PowerShell(cd D:\\\\GitHub\\\\ContractOCR\\\\desktop; npm run build:sidecar 2>&1 | Tee-Object -FilePath \"$env:TEMP\\\\nabu-sidecar-build.log\")",
+      "PowerShell(cd D:\\\\GitHub\\\\ContractOCR; node desktop/scripts/check-sidecar-fresh.js; \"freshness exit=$LASTEXITCODE\")"
     ]
   }
 }
