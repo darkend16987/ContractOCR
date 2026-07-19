@@ -41,6 +41,11 @@
   // so text on a rotated page still flattens (today's behaviour). Notes are points
   // and round-trip on any rotation.
   const MANAGED_KINDS = new Set(["text", "note"]);
+  // Single-key tool shortcuts (edit mode only). Letters mirror the tool tooltips.
+  const TOOL_KEYS = {
+    v: "select", t: "text", h: "highlight", d: "draw", r: "box", o: "ellipse",
+    c: "cloud", f: "cloudpen", a: "arrow", n: "note", i: "image", x: "redact", m: "measure",
+  };
   const NABU_KIND = PDFName.of("NabuKind");
   const NABU_DATA = PDFName.of("NabuData");
   const P_ANNOTS = PDFName.of("Annots");
@@ -78,6 +83,7 @@
     measureDecimals: 2, // decimal places for the measured value
     _dimPending: null, // drag awaiting the calibration modal: { id, page, layer, pdfDist }
     _dirty: false, // true once the user actually changed something this session
+    _taCommit: null, // commit/close fn of the open inline editor (text/note/label), or null
     _exiting: false, // guards bakePending's re-import while we're leaving edit mode
     _managedPages: new Set(), // pages that hold (or held) round-trip text/notes → always repaint on bake
   };
@@ -788,12 +794,25 @@
     syncOverlays();
     syncControls();
     if (ed.tool === "select") syncCtlVisibility("select");
+    // Discoverability: the editable kinds reopen their editor on double-click.
+    const hit = findAnnot(id);
+    const k = hit && hit.a.kind;
+    setSelHint(k === "text" || k === "note" || k === "arrow" ? "Bấm đúp để sửa nội dung." : null);
   }
   function deselect() {
     if (ed.sel == null) return;
     ed.sel = null;
     syncOverlays();
+    setSelHint(null);
     if (ed.tool === "select") syncCtlVisibility("select");
+  }
+  const SELECT_HINT = "Kéo để di chuyển; góc để đổi cỡ; Delete để xoá.";
+  // Update the edit-bar readout for the select tool. `null` restores the generic
+  // select hint; the per-tool hints in setTool own the same slot when other tools
+  // are active, so this only writes while the select tool is current.
+  function setSelHint(text) {
+    const el = $("ed-hint");
+    if (el && ed.tool === "select") el.textContent = text || SELECT_HINT;
   }
   function deleteSelected() {
     if (ed.sel == null) return;
@@ -803,7 +822,9 @@
     ed.annots[hit.page] = ed.annots[hit.page].filter((x) => x.id !== ed.sel);
     ed.sel = null;
     syncOverlays();
+    setSelHint(null);
     if (ed.tool === "select") syncCtlVisibility("select");
+    if (hit.a.kind === "note" && window.updateComments) window.updateComments();
   }
 
   // Reflect the selected annotation's style in the palette controls.
@@ -853,6 +874,14 @@
 
   function onDown(e) {
     if (!ed.active || e.button !== 0) return;
+    // Clicks inside an open inline editor (textarea / note panel) belong to it:
+    // caret placement and text selection must not fall through to the canvas,
+    // where deselect()/renderLayer() would destroy the editor mid-edit.
+    if (e.target.closest(".annot-text-edit, .annot-note-panel")) return;
+    // Clicking anywhere else commits the open editor first — the re-renders
+    // below remove it via innerHTML, which fires no blur, so without this the
+    // typed text would be silently lost.
+    if (ed._taCommit) ed._taCommit();
     const layer = e.target.closest(".annot-layer");
     if (!layer) return;
     const i = +layer.dataset.index;
@@ -861,8 +890,9 @@
     if (e.target.classList.contains("handle")) {
       const id = +e.target.closest(".an").dataset.id;
       const a = findAnnot(id).a;
-      pushEdUndo(); // one undo step per resize gesture
-      drag = { type: "resize", page: i, id, layer, sx: p.x, sy: p.y, orig: { w: a.w, h: a.h } };
+      // undo pushed lazily on the first real resize move (see onMove); a click
+      // that grabs the handle but never drags leaves the session untouched
+      drag = { type: "resize", page: i, id, layer, sx: p.x, sy: p.y, orig: { w: a.w, h: a.h }, pushed: false };
       e.preventDefault();
       return;
     }
@@ -872,16 +902,30 @@
     if (ed.tool === "select") {
       if (anEl && anEl.dataset.kind !== "watermark") {
         const id = +anEl.dataset.id;
-        select(id);
         const a = findAnnot(id).a;
+        // Double-click → open the matching editor. Handled on the second
+        // mousedown, not in a dblclick listener: select() re-renders the layer,
+        // which replaces the clicked element mid-gesture, so the browser
+        // retargets the real dblclick event at the layer and it never reaches
+        // the annot element.
+        if (e.detail >= 2 && (a.kind === "text" || a.kind === "note" || a.kind === "arrow")) {
+          e.preventDefault();
+          select(id);
+          if (a.kind === "text") openTextEditor(layer, i, { x: a.x, y: a.y }, a);
+          else if (a.kind === "note") openNoteEditor(layer, i, { x: a.x, y: a.y }, a);
+          else openArrowLabelEditor(layer, i, a, true);
+          return;
+        }
+        select(id);
         const orig =
           a.kind === "draw" || a.kind === "cloudpen"
             ? { pts: a.pts.map((q) => ({ ...q })) }
             : a.kind === "arrow" || a.kind === "dim"
             ? { x1: a.x1, y1: a.y1, x2: a.x2, y2: a.y2 }
             : { x: a.x, y: a.y };
-        pushEdUndo(); // one undo step per move gesture
-        drag = { type: "move", page: i, id, layer, sx: p.x, sy: p.y, orig };
+        // undo pushed lazily on the first real move (see onMove); a bare select
+        // click must not dirty the session or leave a no-op undo step
+        drag = { type: "move", page: i, id, layer, sx: p.x, sy: p.y, orig, pushed: false };
         e.preventDefault();
       } else {
         deselect();
@@ -893,7 +937,14 @@
       // Stop the mousedown's default focus shift, otherwise the freshly-focused
       // textarea blurs immediately → commits empty → vanishes before you can type.
       e.preventDefault();
-      openTextEditor(layer, i, p, null);
+      const txtEl = e.target.closest(".an-text");
+      if (txtEl) {
+        // Click on an existing text box edits it instead of stacking a new one.
+        const a = findAnnot(+txtEl.dataset.id).a;
+        openTextEditor(layer, i, { x: a.x, y: a.y }, a);
+      } else {
+        openTextEditor(layer, i, p, null);
+      }
       return;
     }
 
@@ -948,7 +999,15 @@
 
     if (ed.tool === "note") {
       e.preventDefault(); // keep focus on the note textarea (see text tool above)
-      openNoteEditor(layer, i, p, null);
+      const noteEl = e.target.closest(".an-note");
+      if (noteEl) {
+        // Click on an existing marker opens its thread (add a reply) instead of
+        // dropping a brand-new note on top of it.
+        const a = findAnnot(+noteEl.dataset.id).a;
+        openNoteEditor(layer, i, { x: a.x, y: a.y }, a);
+      } else {
+        openNoteEditor(layer, i, p, null);
+      }
       return;
     }
 
@@ -1024,6 +1083,14 @@
       return;
     }
     const a = hit.a;
+
+    // Lazy undo/dirty for move & resize: only the first gesture that genuinely
+    // shifts a point records a snapshot. A click that merely selects (or grabs a
+    // handle) without dragging leaves the session clean, so exiting won't re-bake.
+    if ((drag.type === "move" || drag.type === "resize") && !drag.pushed && (p.x !== drag.sx || p.y !== drag.sy)) {
+      drag.pushed = true;
+      pushEdUndo();
+    }
 
     if (drag.type === "move") {
       const dx = p.x - drag.sx;
@@ -1197,7 +1264,9 @@
         a.w = d.orig.w;
         a.h = d.orig.h;
       }
-      dropLastEdUndo();
+      // Creation gestures push on mousedown; move/resize push lazily. Only drop a
+      // snapshot this gesture actually recorded, else we'd pop a prior step.
+      if ((d.type !== "move" && d.type !== "resize") || d.pushed) dropLastEdUndo();
     }
     renderLayer(d.layer, d.page);
   }
@@ -1216,24 +1285,10 @@
       closePoly();
       return;
     }
-    const noteEl = e.target.closest(".an-note");
-    if (noteEl) {
-      e.preventDefault();
-      const a = findAnnot(+noteEl.dataset.id).a;
-      openNoteEditor(layer, i, { x: a.x, y: a.y }, a);
-      return;
-    }
-    const arrowEl = e.target.closest(".an-arrow");
-    if (arrowEl) {
-      e.preventDefault();
-      openArrowLabelEditor(layer, i, findAnnot(+arrowEl.dataset.id).a, true);
-      return;
-    }
-    const anEl = e.target.closest(".an-text");
-    if (!anEl) return;
-    e.preventDefault();
-    const a = findAnnot(+anEl.dataset.id).a;
-    openTextEditor(layer, i, { x: a.x, y: a.y }, a);
+    // Text / note / arrow editors open from the second mousedown (see onDown's
+    // select branch): by the time the dblclick event fires the clicked element
+    // has been re-rendered, so e.target is retargeted at the layer here and
+    // can't be matched against annot elements.
   }
 
   // ---- text editor (inline textarea; Electron has no window.prompt) --------
@@ -1261,6 +1316,7 @@
     const commit = () => {
       if (done) return;
       done = true;
+      ed._taCommit = null;
       const text = ta.value.replace(/\s+$/, "");
       ta.remove();
       if (existing) {
@@ -1293,11 +1349,13 @@
       }
       renderLayer(layer, i);
     };
+    ed._taCommit = commit; // outside clicks route here before any re-render
     ta.addEventListener("blur", commit);
     ta.addEventListener("keydown", (e) => {
       e.stopPropagation();
       if (e.key === "Escape") {
         done = true;
+        ed._taCommit = null;
         ta.remove();
       } else if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
         commit();
@@ -1369,8 +1427,10 @@
     const close = () => {
       if (done) return;
       done = true;
+      ed._taCommit = null;
       panel.remove();
       renderLayer(layer, i);
+      if (window.updateComments) window.updateComments(); // keep the Comments panel in sync
     };
     const save = () => {
       const text = ta.value.replace(/\s+$/, "");
@@ -1397,6 +1457,9 @@
       }
       close();
     };
+    // Outside click: keep what was typed (save) rather than silently dropping
+    // the panel; an empty box just closes.
+    ed._taCommit = () => (ta.value.trim() ? save() : close());
     btnAdd.addEventListener("click", save);
     btnClose.addEventListener("click", close);
     ta.addEventListener("keydown", (e) => {
@@ -1430,6 +1493,7 @@
     const commit = () => {
       if (done) return;
       done = true;
+      ed._taCommit = null;
       const text = ta.value.replace(/\s+$/, "");
       ta.remove();
       if (text !== (a.label || "")) {
@@ -1438,11 +1502,13 @@
       }
       renderLayer(layer, i);
     };
+    ed._taCommit = commit;
     ta.addEventListener("blur", commit);
     ta.addEventListener("keydown", (e) => {
       e.stopPropagation();
       if (e.key === "Escape") {
         done = true;
+        ed._taCommit = null;
         ta.remove();
         renderLayer(layer, i);
       } else if (e.key === "Enter" && !e.shiftKey) {
@@ -2114,6 +2180,7 @@
   // Bake all pending overlay edits into state.bytes and re-render. Returns
   // whether anything was applied. Called by Save and on exit.
   async function bakePending() {
+    if (ed._taCommit) ed._taCommit(); // an open editor's text must make the bake
     if (!hasAny()) return false;
     showOverlay("Đang áp dụng chỉnh sửa…");
     try {
@@ -2414,7 +2481,7 @@
     document.querySelectorAll("#ed-tools .tool").forEach((b) => b.classList.toggle("active", b.dataset.tool === tool));
     syncCtlVisibility(tool);
     const hints = {
-      select: "Kéo để di chuyển; góc để đổi cỡ; Delete để xoá.",
+      select: SELECT_HINT,
       text: "Bấm lên trang để thêm hộp văn bản (Ctrl+Enter để xong).",
       highlight: "Kéo để tô sáng vùng.",
       draw: "Giữ chuột và kéo để vẽ.",
@@ -2478,6 +2545,7 @@
     syncOverlays();
     syncUndoBtns();
     loadSystemFonts();
+    if (window.updateComments) window.updateComments(); // switch panel to live notes
   }
   function leaveMode() {
     ed.active = false;
@@ -2487,6 +2555,7 @@
     updateToolbar();
     if (typeof updateUndoRedo === "function") updateUndoRedo(); // hand Ctrl+Z back to doc history
     syncOverlays();
+    if (window.updateComments) window.updateComments(); // back to baked-annotation notes
   }
   // "Xong": bake every pending edit into the PDF, then leave edit mode. Managed
   // annots that were merely re-imported (no user change) don't force a re-bake.
@@ -2525,6 +2594,7 @@
     ed.pendingImage = null;
     ed._poly = null;
     ed._dirty = false;
+    ed._taCommit = null;
     ed._managedPages = new Set();
     clearEdHistory();
   }
@@ -2743,9 +2813,40 @@
         setTool("select");
       }
     }
+    // Single-key tool shortcuts (no modifiers, not while typing) — mirror the
+    // toolbar; each letter is shown in that tool's tooltip.
+    if (!typing && !e.ctrlKey && !e.metaKey && !e.altKey && !e.repeat && e.key.length === 1) {
+      const tool = TOOL_KEYS[e.key.toLowerCase()];
+      if (tool) {
+        e.preventDefault();
+        setTool(tool);
+        if (tool === "image") chooseImage();
+      }
+    }
   });
 
   // ---- public surface (consumed by app.js) ---------------------------------
+
+  // Live overlay notes (comments) for the Comments panel — reflects unsaved edits
+  // too. Sorted by page so the panel reads top-to-bottom.
+  function getComments() {
+    const out = [];
+    for (const k of Object.keys(ed.annots)) {
+      for (const a of ed.annots[k]) {
+        if (a.kind === "note") out.push({ id: a.id, page: +k, text: a.text || "", replies: a.replies || [], color: a.color });
+      }
+    }
+    return out.sort((p, q) => p.page - q.page);
+  }
+  // Panel click → select the note and scroll it into view (user double-clicks to
+  // edit). Returns false if the id isn't a live note on any page.
+  function focusNote(id) {
+    const hit = findAnnot(id);
+    if (!hit || hit.a.kind !== "note") return false;
+    if (typeof scrollToPage === "function") scrollToPage(hit.page);
+    select(id);
+    return true;
+  }
 
   window.Editor = {
     get active() {
@@ -2757,5 +2858,7 @@
     beginImagePaste, // paste an OS-clipboard image onto a page (Ctrl+V)
     undo: edUndo, // annotation-level (pre-bake) — routed from Ctrl+Z while active
     redo: edRedo,
+    getComments, // Comments panel data source while editing
+    focusNote, // Comments panel → jump to + select a note
   };
 })();

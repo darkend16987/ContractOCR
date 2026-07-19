@@ -79,6 +79,15 @@
 
         <div class="spacer"></div>
 
+        <div class="group pagenav" data-needs-doc>
+          <button id="btn-page-prev" class="icon-only" disabled title="Trang trước (PageUp)"><svg class="ic chev-left"><use href="#ic-chevron"/></svg></button>
+          <input id="page-input" class="page-input" type="text" value="1" disabled title="Nhập số trang rồi Enter" spellcheck="false" />
+          <span id="page-total" class="page-total">/ 0</span>
+          <button id="btn-page-next" class="icon-only" disabled title="Trang sau (PageDown)"><svg class="ic chev-right"><use href="#ic-chevron"/></svg></button>
+        </div>
+
+        <div class="sep"></div>
+
         <div class="group" data-needs-doc>
           <button id="btn-zoom-out" class="icon-only" disabled title="Thu nhỏ (Ctrl+lăn chuột xuống)"><svg class="ic"><use href="#ic-minus"/></svg></button>
           <input id="zoom-input" class="zoom-input" type="text" value="100%" disabled title="Gõ tỷ lệ zoom (40–300) rồi Enter" spellcheck="false" />
@@ -113,36 +122,48 @@
 
         <div class="sep"></div>
 
-        <div class="group" data-needs-doc>
-          <button id="btn-merge" disabled title="Ghép PDF khác vào — chọn vị trí (đầu/cuối/sau trang)"><svg class="ic"><use href="#ic-copy"/></svg>Ghép</button>
-          <button id="btn-insert" disabled title="Chèn trang từ PDF khác — chọn vị trí (đầu/cuối/sau trang)"><svg class="ic"><use href="#ic-file-plus"/></svg>Chèn</button>
-          <button id="btn-blank" disabled title="Thêm một trang trắng — chọn vị trí (đầu/cuối/sau trang)"><svg class="ic"><use href="#ic-file"/></svg>Trang trắng</button>
-          <button id="btn-extract" disabled title="Tách các trang đang chọn ra PDF mới"><svg class="ic"><use href="#ic-scissors"/></svg>Tách</button>
-        </div>
-
-        <div class="sep"></div>
-
-        <div class="group" data-needs-doc>
-          <button id="btn-rotate-l" class="icon-only" disabled title="Xoay trái 90°"><svg class="ic"><use href="#ic-rotate-l"/></svg></button>
-          <button id="btn-rotate-r" class="icon-only" disabled title="Xoay phải 90°"><svg class="ic"><use href="#ic-rotate-r"/></svg></button>
-          <button id="btn-delete" class="icon-only" disabled title="Xóa trang đang chọn"><svg class="ic"><use href="#ic-trash"/></svg></button>
-        </div>
-
-        <div class="sep"></div>
-
-        <button id="btn-edit" class="ghost" disabled title="Chỉnh sửa: chú thích, watermark, redact, điền form"><svg class="ic"><use href="#ic-edit"/></svg>Chỉnh sửa</button>
-        <button id="btn-text-edit" class="ghost" disabled title="Sửa trực tiếp chữ gốc của PDF (chỉ PDF có text thật, không phải scan)"><svg class="ic"><use href="#ic-type"/></svg>Sửa chữ</button>
-        <button id="btn-searchable" class="ghost" disabled title="Tạo PDF tìm-kiếm-được (OCR thêm lớp text vô hình)"><svg class="ic"><use href="#ic-file-search"/></svg>Searchable</button>
-        <button id="btn-translate" class="ghost" disabled title="Dịch PDF (AI) — giữ layout, xuất file mới. Chỉ PDF có text thật."><svg class="ic"><use href="#ic-translate"/></svg>Dịch</button>
-        <button id="btn-compress" class="ghost" disabled title="Nén PDF (giảm dung lượng ảnh)"><svg class="ic"><use href="#ic-compress"/></svg>Nén</button>
-        <button id="btn-diff" class="ghost" disabled title="So sánh 2 file PDF — chỉ ra trang & dòng khác nhau"><svg class="ic"><use href="#ic-diff"/></svg>So sánh</button>
-        <button id="btn-copy-img" class="ghost" disabled title="Copy ảnh trong trang — bấm vào ảnh để copy, hoặc kéo chọn một vùng. Dán (Ctrl+V) sang app khác hoặc ngược lại vào trang."><svg class="ic"><use href="#ic-photo"/></svg>Copy ảnh</button>
-        <div class="dropdown" id="convert-dd">
-          <button id="btn-convert" class="ghost" disabled title="Tách file, xuất/chuyển ảnh ↔ PDF, khoá file"><svg class="ic"><use href="#ic-convert"/></svg>Chuyển đổi<svg class="ic chev"><use href="#ic-chevron"/></svg></button>
-          <div class="dropdown-menu" id="convert-menu" hidden>
-            <div class="dd-head">Trang</div>
+        <!-- Trang ▾ : mọi thao tác quản lý trang gom về một chỗ -->
+        <div class="dropdown" id="pages-dd" data-needs-doc>
+          <button id="btn-pages" class="ghost" disabled title="Quản lý trang: ghép, chèn, tách, xoay, xoá, đánh số"><svg class="ic"><use href="#ic-layers"/></svg>Trang<svg class="ic chev"><use href="#ic-chevron"/></svg></button>
+          <div class="dropdown-menu" id="pages-menu" hidden>
+            <div class="dd-head">Thêm / ghép</div>
+            <button class="dd-item" id="btn-merge" title="Chọn vị trí (đầu/cuối/sau trang)"><svg class="ic"><use href="#ic-copy"/></svg>Ghép PDF khác vào…</button>
+            <button class="dd-item" id="btn-insert" title="Chọn vị trí (đầu/cuối/sau trang)"><svg class="ic"><use href="#ic-file-plus"/></svg>Chèn trang từ PDF khác…</button>
+            <button class="dd-item" id="btn-blank" title="Chọn vị trí (đầu/cuối/sau trang)"><svg class="ic"><use href="#ic-file"/></svg>Thêm trang trắng…</button>
+            <div class="dd-sep"></div>
+            <div class="dd-head">Tách</div>
+            <button class="dd-item" id="btn-extract"><svg class="ic"><use href="#ic-scissors"/></svg>Tách trang đang chọn ra file mới</button>
             <button class="dd-item" id="mi-split"><svg class="ic"><use href="#ic-scissors"/></svg>Tách thành nhiều file…</button>
+            <div class="dd-sep"></div>
+            <div class="dd-head">Biến đổi trang</div>
+            <button class="dd-item" id="btn-rotate-l"><svg class="ic"><use href="#ic-rotate-l"/></svg>Xoay trái 90°</button>
+            <button class="dd-item" id="btn-rotate-r"><svg class="ic"><use href="#ic-rotate-r"/></svg>Xoay phải 90°</button>
+            <button class="dd-item" id="btn-delete"><svg class="ic"><use href="#ic-trash"/></svg>Xoá trang đang chọn</button>
             <button class="dd-item" id="mi-page-numbers"><svg class="ic"><use href="#ic-type"/></svg>Đánh số trang…</button>
+          </div>
+        </div>
+
+        <div class="sep"></div>
+
+        <!-- Ba quy trình chính, luôn hiện ở top-level -->
+        <button id="btn-edit" class="ghost" disabled title="Chú thích & đánh dấu: tô sáng, ghi chú, khoanh mây, mũi tên, watermark, che thông tin (redact), điền form"><svg class="ic"><use href="#ic-message"/></svg>Chú thích</button>
+        <button id="btn-text-edit" class="ghost" disabled title="Sửa trực tiếp chữ gốc của PDF (chỉ PDF có text thật, không phải scan)"><svg class="ic"><use href="#ic-type"/></svg>Sửa nội dung</button>
+        <button id="btn-ocr" class="ghost" disabled title="OCR + bóc tách trường dữ liệu (số hợp đồng, ngày, giá trị…) bằng AI"><svg class="ic"><use href="#ic-wand"/></svg>Bóc tách</button>
+
+        <div class="sep"></div>
+
+        <!-- Công cụ ▾ : OCR/dịch/nén/so sánh/ảnh/bảo mật -->
+        <div class="dropdown" id="tools-dd">
+          <button id="btn-tools" class="ghost" disabled title="Công cụ tài liệu: OCR văn bản, dịch, nén, so sánh, ảnh, khoá file"><svg class="ic"><use href="#ic-settings"/></svg>Công cụ<svg class="ic chev"><use href="#ic-chevron"/></svg></button>
+          <div class="dropdown-menu" id="tools-menu" hidden>
+            <div class="dd-head">Văn bản</div>
+            <button class="dd-item" id="btn-searchable" title="OCR thêm lớp text vô hình để tìm/bôi đen được"><svg class="ic"><use href="#ic-file-search"/></svg>OCR văn bản (tạo lớp tìm kiếm)…</button>
+            <button class="dd-item" id="btn-translate" title="Giữ layout, xuất file mới. Chỉ PDF có text thật."><svg class="ic"><use href="#ic-translate"/></svg>Dịch tài liệu (AI)…</button>
+            <div class="dd-sep"></div>
+            <div class="dd-head">Tài liệu</div>
+            <button class="dd-item" id="btn-compress"><svg class="ic"><use href="#ic-compress"/></svg>Nén (giảm dung lượng)…</button>
+            <button class="dd-item" id="btn-diff"><svg class="ic"><use href="#ic-diff"/></svg>So sánh 2 file PDF…</button>
+            <button class="dd-item" id="btn-copy-img" title="Bấm vào ảnh để copy, hoặc kéo chọn một vùng. Dán (Ctrl+V) sang app khác."><svg class="ic"><use href="#ic-photo"/></svg>Copy ảnh trong trang</button>
             <div class="dd-sep"></div>
             <div class="dd-head">Ảnh</div>
             <button class="dd-item" id="mi-pdf-to-images"><svg class="ic"><use href="#ic-photo"/></svg>Trang PDF → ảnh…</button>
@@ -153,26 +174,29 @@
             <button class="dd-item" id="mi-encrypt"><svg class="ic"><use href="#ic-lock"/></svg>Khoá file (đặt mật khẩu)…</button>
           </div>
         </div>
-        <button id="btn-ocr" class="ghost" disabled title="OCR + bóc tách field bằng AI"><svg class="ic"><use href="#ic-wand"/></svg>Bóc tách</button>
+
+        <div class="spacer"></div>
+
+        <button id="btn-comments" class="ghost" disabled title="Danh sách ghi chú — xem mọi comment trong tài liệu, bấm để nhảy tới"><svg class="ic"><use href="#ic-message"/></svg>Ghi chú<span id="btn-comments-count" class="btn-badge" hidden></span></button>
       </div>
     </header>
 
     <!-- P4 overlay-editor toolbar (hidden until edit mode is on) -->
     <div class="edit-bar" id="edit-bar" hidden>
       <div class="group tools" id="ed-tools">
-        <button class="tool active" data-tool="select" title="Chọn / di chuyển / đổi kích thước"><svg class="ic"><use href="#ic-pointer"/></svg></button>
-        <button class="tool" data-tool="text" title="Hộp văn bản"><svg class="ic"><use href="#ic-type"/></svg></button>
-        <button class="tool" data-tool="highlight" title="Tô sáng"><svg class="ic"><use href="#ic-highlight"/></svg></button>
-        <button class="tool" data-tool="draw" title="Vẽ tay"><svg class="ic"><use href="#ic-edit"/></svg></button>
-        <button class="tool" data-tool="box" title="Khoanh vùng — khung chữ nhật"><svg class="ic"><use href="#ic-square"/></svg></button>
-        <button class="tool" data-tool="ellipse" title="Khoanh vùng — elip / tròn"><svg class="ic"><use href="#ic-circle"/></svg></button>
-        <button class="tool" data-tool="cloud" title="Khoanh mây (revision cloud) — chuẩn kỹ thuật / xây dựng"><svg class="ic"><use href="#ic-cloud"/></svg></button>
-        <button class="tool" data-tool="cloudpen" title="Khoanh mây tự do — vẽ bút (giữ chuột kéo) hoặc bấm từng điểm"><svg class="ic"><use href="#ic-cloud"/></svg><span class="tool-pen">✎</span></button>
-        <button class="tool" data-tool="arrow" title="Mũi tên chỉ dẫn"><svg class="ic"><use href="#ic-arrow"/></svg></button>
-        <button class="tool" data-tool="note" title="Ghi chú (comment) gắn vào một điểm"><svg class="ic"><use href="#ic-message"/></svg></button>
-        <button class="tool" data-tool="image" title="Chèn ảnh / chữ ký"><svg class="ic"><use href="#ic-photo"/></svg></button>
-        <button class="tool" data-tool="redact" title="Che thông tin (an toàn — xoá nội dung gốc)"><svg class="ic fill"><use href="#ic-redact"/></svg></button>
-        <button class="tool" data-tool="measure" title="Đo &amp; ghi kích thước (dim) — hiệu chuẩn 1 đoạn rồi tự ghi các đoạn khác"><svg class="ic"><use href="#ic-ruler"/></svg></button>
+        <button class="tool active" data-tool="select" title="Chọn / di chuyển / đổi kích thước (phím V)"><svg class="ic"><use href="#ic-pointer"/></svg></button>
+        <button class="tool" data-tool="text" title="Hộp văn bản (phím T)"><svg class="ic"><use href="#ic-type"/></svg></button>
+        <button class="tool" data-tool="highlight" title="Tô sáng (phím H)"><svg class="ic"><use href="#ic-highlight"/></svg></button>
+        <button class="tool" data-tool="draw" title="Vẽ tay (phím D)"><svg class="ic"><use href="#ic-edit"/></svg></button>
+        <button class="tool" data-tool="box" title="Khoanh vùng — khung chữ nhật (phím R)"><svg class="ic"><use href="#ic-square"/></svg></button>
+        <button class="tool" data-tool="ellipse" title="Khoanh vùng — elip / tròn (phím O)"><svg class="ic"><use href="#ic-circle"/></svg></button>
+        <button class="tool" data-tool="cloud" title="Khoanh mây (revision cloud) — chuẩn kỹ thuật / xây dựng (phím C)"><svg class="ic"><use href="#ic-cloud"/></svg></button>
+        <button class="tool" data-tool="cloudpen" title="Khoanh mây tự do — vẽ bút (giữ chuột kéo) hoặc bấm từng điểm (phím F)"><svg class="ic"><use href="#ic-cloud"/></svg><span class="tool-pen">✎</span></button>
+        <button class="tool" data-tool="arrow" title="Mũi tên chỉ dẫn (phím A)"><svg class="ic"><use href="#ic-arrow"/></svg></button>
+        <button class="tool" data-tool="note" title="Ghi chú (comment) gắn vào một điểm (phím N)"><svg class="ic"><use href="#ic-message"/></svg></button>
+        <button class="tool" data-tool="image" title="Chèn ảnh / chữ ký (phím I)"><svg class="ic"><use href="#ic-photo"/></svg></button>
+        <button class="tool" data-tool="redact" title="Che thông tin (an toàn — xoá nội dung gốc) (phím X)"><svg class="ic fill"><use href="#ic-redact"/></svg></button>
+        <button class="tool" data-tool="measure" title="Đo &amp; ghi kích thước (dim) — hiệu chuẩn 1 đoạn rồi tự ghi các đoạn khác (phím M)"><svg class="ic"><use href="#ic-ruler"/></svg></button>
       </div>
       <div class="sep"></div>
       <label class="ctl" data-ctl="color" title="Màu (tô sáng / chữ / nét vẽ)">Màu <input type="color" id="ed-color" value="#ffd54a" /></label>
@@ -203,8 +227,8 @@
       <button id="ed-delete" title="Xoá mục đang chọn (Delete)">Xoá mục</button>
       <span id="ed-hint" class="readout"></span>
       <div class="spacer"></div>
+      <button id="ed-exit" class="ed-discard" title="Bỏ mọi thay đổi chưa ghi và thoát (Ctrl+Z để hoàn tác từng bước)">Hủy bỏ</button>
       <button id="ed-apply" class="primary" title="Ghi mọi thay đổi vào tài liệu và thoát">Xong</button>
-      <button id="ed-exit" title="Bỏ mọi thay đổi chưa ghi và thoát (Ctrl+Z để hoàn tác từng bước)">Hủy bỏ</button>
     </div>
     <input type="file" id="ed-file" accept="image/png,image/jpeg" hidden />
 
@@ -244,10 +268,14 @@
       <aside class="sidebar" id="sidebar">
         <div class="sidebar-head">
           <span id="page-count">Chưa có tài liệu</span>
-          <button id="btn-select-all" class="link" disabled>Chọn tất cả</button>
+          <div class="sidebar-head-actions">
+            <button id="btn-select-all" class="link" disabled>Chọn tất cả</button>
+            <button id="btn-sidebar" class="link sidebar-toggle" title="Ẩn danh sách trang (F4)"><svg class="ic chev-left"><use href="#ic-chevron"/></svg></button>
+          </div>
         </div>
         <div class="thumbs" id="thumbs"></div>
       </aside>
+      <button id="sidebar-expand" class="sidebar-expand" title="Hiện danh sách trang (F4)" hidden><svg class="ic chev-right"><use href="#ic-chevron"/></svg></button>
 
       <section class="viewer" id="viewer">
         <div class="empty" id="empty-state">
@@ -255,7 +283,7 @@
           <h2>Mở một file PDF để bắt đầu</h2>
           <p>Kéo–thả file vào đây, hoặc bấm <b>Mở</b>.</p>
           <p class="empty-actions"><button id="empty-combine" class="ghost"><svg class="ic"><use href="#ic-layers"/></svg>Gộp nhiều PDF thành một file…</button></p>
-          <p class="hint">Xem · gộp nhiều file · ghép · tách · chèn · xoay · xóa · sắp xếp · chú thích · khoanh vùng · ghi chú · watermark · redact · sửa chữ · OCR — chạy hoàn toàn trên máy.</p>
+          <p class="hint">Xem &amp; sắp xếp trang · Chú thích và đánh dấu · OCR &amp; bóc tách dữ liệu — chạy hoàn toàn trên máy, không gửi file lên mạng.</p>
         </div>
       </section>
 
@@ -297,7 +325,26 @@
         <pre id="ext-raw-out"></pre>
       </details>
     </div>
+
+      <!-- Comments/notes list panel (toggled by the toolbar "Ghi chú" button). -->
+      <aside class="comments-panel" id="comments-panel" hidden>
+        <div class="comments-head">
+          <b>Ghi chú <span id="comments-count" class="comments-count"></span></b>
+          <button id="comments-close" class="link">Đóng</button>
+        </div>
+        <div class="comments-list" id="comments-list"></div>
+        <div class="comments-empty" id="comments-empty" hidden>Tài liệu chưa có ghi chú nào.<br />Vào <b>Chú thích</b> → công cụ <b>Ghi chú</b> để thêm.</div>
+      </aside>
     </main>
+
+    <!-- Status bar: current page · page size · zoom -->
+    <footer class="statusbar" id="statusbar" hidden>
+      <span id="sb-page"></span>
+      <span class="sb-sep"></span>
+      <span id="sb-size"></span>
+      <span class="sb-spacer"></span>
+      <span id="sb-zoom"></span>
+    </footer>
 
     <!-- Watermark dialog -->
     <div class="modal" id="wm-modal" hidden>

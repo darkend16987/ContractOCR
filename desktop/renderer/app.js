@@ -238,6 +238,8 @@ async function loadBytes(bytes, name, fullPath) {
       return; // renderAll already toasted the failure
     }
   }
+  updateComments(); // refresh the comments badge/panel for the new document
+  updateStatusBar();
   toast("Đã mở: " + state.name, "good");
 }
 
@@ -663,6 +665,112 @@ function showNotePopup(text, cx, cy) {
   pop.hidden = false;
   pop.style.left = Math.min(cx + 8, window.innerWidth - 280) + "px";
   pop.style.top = Math.min(cy + 8, window.innerHeight - 140) + "px";
+}
+
+// ---- comments / notes panel ----------------------------------------------
+
+// Every note in the document. While the overlay editor is active, its live notes
+// are the source (unsaved comments included); otherwise the baked PDF Text
+// annotations are read per page (their /Contents already folds in replies).
+async function collectComments() {
+  if (window.Editor && window.Editor.active && window.Editor.getComments) {
+    return window.Editor.getComments();
+  }
+  const out = [];
+  if (!state.pdf) return out;
+  for (let i = 0; i < state.numPages; i++) {
+    let anns;
+    try {
+      anns = await (await state.pdf.getPage(i + 1)).getAnnotations();
+    } catch (_) {
+      continue;
+    }
+    for (const a of anns || []) {
+      if (a.subtype !== "Text") continue;
+      const text = (a.contentsObj && a.contentsObj.str) || a.contents || "";
+      if (!text) continue;
+      const col = a.color;
+      out.push({
+        id: a.id,
+        page: i,
+        text,
+        color: col && col.length >= 3 ? `rgb(${col[0] | 0},${col[1] | 0},${col[2] | 0})` : null,
+      });
+    }
+  }
+  return out;
+}
+
+function renderCommentsList(items) {
+  const list = $("comments-list");
+  const emptyEl = $("comments-empty");
+  const countEl = $("comments-count");
+  if (!list) return;
+  list.innerHTML = "";
+  if (countEl) countEl.textContent = items.length ? `(${items.length})` : "";
+  if (emptyEl) emptyEl.hidden = items.length > 0;
+  for (const it of items) {
+    const el = document.createElement("button");
+    el.className = "comment-item";
+    el.type = "button";
+    const meta = document.createElement("div");
+    meta.className = "cmt-meta";
+    if (it.color) {
+      const d = document.createElement("span");
+      d.className = "cmt-dot";
+      d.style.background = it.color;
+      meta.appendChild(d);
+    }
+    const pg = document.createElement("span");
+    pg.className = "cmt-page";
+    pg.textContent = "Trang " + (it.page + 1);
+    meta.appendChild(pg);
+    const rc = (it.replies || []).length;
+    if (rc) {
+      const r = document.createElement("span");
+      r.className = "cmt-replies";
+      r.textContent = rc + " trả lời";
+      meta.appendChild(r);
+    }
+    el.appendChild(meta);
+    const txt = document.createElement("div");
+    txt.className = "cmt-text";
+    txt.textContent = it.text || "(ghi chú trống)";
+    el.appendChild(txt);
+    el.onclick = () => {
+      if (window.Editor && window.Editor.active && window.Editor.focusNote) window.Editor.focusNote(it.id);
+      else scrollToPage(it.page);
+    };
+    list.appendChild(el);
+  }
+}
+
+// Refresh the toolbar count badge and, if the panel is open, its list. Cheap to
+// call after any note change / doc load (pdf.js caches getAnnotations per page).
+async function updateComments() {
+  const items = await collectComments();
+  const bb = $("btn-comments-count");
+  if (bb) {
+    bb.hidden = !items.length;
+    bb.textContent = String(items.length);
+  }
+  const panel = $("comments-panel");
+  if (panel && !panel.hidden) renderCommentsList(items);
+}
+// editor.js calls this (via window) after a note is added/edited/baked.
+window.updateComments = updateComments;
+
+function toggleComments(force) {
+  const panel = $("comments-panel");
+  const btn = $("btn-comments");
+  if (!panel) return;
+  const show = force !== undefined ? force : panel.hidden;
+  panel.hidden = !show;
+  if (btn) btn.classList.toggle("active", show);
+  if (show) {
+    if (!$("ext-panel").hidden) $("ext-panel").hidden = true; // don't stack the two right panels
+    updateComments();
+  }
 }
 
 // ---- find in document (Ctrl+F) -------------------------------------------
@@ -1414,6 +1522,60 @@ let zooming = false;
 function syncZoomInput() {
   const z = $("zoom-input");
   if (z && document.activeElement !== z) z.value = Math.round(state.scale * 100) + "%";
+  updateStatusBar();
+}
+
+// Reflect the current page (topmost in the viewport) in the page-nav box, and the
+// total in the "/ N" readout. Skipped while the input is focused (user is typing).
+function syncPageInput() {
+  const pi = $("page-input");
+  const pt = $("page-total");
+  const total = state.numPages || 0;
+  if (pt) pt.textContent = "/ " + total;
+  if (pi && document.activeElement !== pi) pi.value = total ? String(currentPageIndex() + 1) : "1";
+  updateStatusBar();
+}
+
+// Jump to a 1-based page number, clamped to the document.
+function gotoPageNumber(n) {
+  const total = state.numPages || 0;
+  if (!total) return;
+  const i = Math.max(0, Math.min(total - 1, (n | 0) - 1));
+  scrollToPage(i);
+}
+
+// Bottom status bar: current page · page size (mm) · zoom. Cheap; called from
+// the same scroll/zoom paths that refresh the page & zoom inputs.
+function updateStatusBar() {
+  const sb = $("statusbar");
+  if (!sb) return;
+  const has = !!state.bytes && state.numPages > 0;
+  sb.hidden = !has;
+  if (!has) return;
+  const i = currentPageIndex();
+  const p = $("sb-page");
+  if (p) p.textContent = `Trang ${i + 1} / ${state.numPages}`;
+  const z = $("sb-zoom");
+  if (z) z.textContent = Math.round(state.scale * 100) + "%";
+  const m = state.pageMetas && state.pageMetas[i];
+  const sz = $("sb-size");
+  if (sz && m && m.vp) {
+    const wmm = Math.round((m.vp.width * 25.4) / 72);
+    const hmm = Math.round((m.vp.height * 25.4) / 72);
+    sz.textContent = `${wmm} × ${hmm} mm`;
+  } else if (sz) {
+    sz.textContent = "";
+  }
+}
+
+// Collapse / expand the thumbnail sidebar (toggle, or force a state).
+function toggleSidebar(collapse) {
+  const ws = document.querySelector(".workspace");
+  if (!ws) return;
+  const c = collapse !== undefined ? collapse : !ws.classList.contains("sidebar-collapsed");
+  ws.classList.toggle("sidebar-collapsed", c);
+  const exp = $("sidebar-expand");
+  if (exp) exp.hidden = !c;
 }
 
 // Zoom to an absolute scale. `anchor` = client {x,y} to keep visually fixed
@@ -2345,11 +2507,21 @@ async function runPageNumbers() {
   }
 }
 
-// Dropdown open/close: toggle the menu; closed on outside-click/Escape (wired below).
-function toggleConvertMenu(force) {
-  const menu = $("convert-menu");
-  const show = force !== undefined ? force : menu.hidden;
-  menu.hidden = !show;
+// Toolbar dropdowns (Trang ▾ / Công cụ ▾): only one open at a time; closed on
+// outside-click/Escape (wired below). A trigger button toggles the sibling menu.
+function closeAllMenus() {
+  document.querySelectorAll(".dropdown-menu").forEach((m) => (m.hidden = true));
+}
+function wireDropdown(triggerId) {
+  const btn = $(triggerId);
+  if (!btn) return;
+  const menu = btn.parentElement.querySelector(".dropdown-menu");
+  btn.onclick = (e) => {
+    e.stopPropagation();
+    const show = menu.hidden;
+    closeAllMenus();
+    menu.hidden = !show;
+  };
 }
 
 // ---- settings (API key) --------------------------------------------------
@@ -2456,7 +2628,7 @@ const GATED_BTNS = [
   "btn-searchable",
   "btn-translate",
   "btn-compress",
-  "btn-convert",
+  "btn-tools",
   "btn-edit",
   "btn-text-edit",
   "btn-merge",
@@ -2647,20 +2819,27 @@ function updateToolbar() {
   const bci = $("btn-copy-img");
   if (bci) bci.disabled = !has || editing;
   if ((!has || editing) && window.Capture && window.Capture.active) window.Capture.exit();
-  // Convert dropdown: enabled whenever the engine is ready (Ảnh→PDF works with no
-  // doc open); per-item guards enforce the "open a PDF first" rule where needed.
-  const bcv = $("btn-convert");
-  if (bcv) bcv.disabled = !ready || editing;
-  if (editing) toggleConvertMenu(false);
+  // Comments panel works in both view and edit mode (live notes while editing).
+  const bcm = $("btn-comments");
+  if (bcm) bcm.disabled = !has;
+  // "Công cụ ▾" opens when a doc is open OR the engine is ready (Compare/Ảnh→PDF
+  // need only the engine; Copy ảnh needs only a doc). Per-item disables below and
+  // per-handler guards enforce the finer "open a PDF first / engine ready" rules.
+  const bcv = $("btn-tools");
+  if (bcv) bcv.disabled = (!has && !ready) || editing;
+  if (editing) closeAllMenus();
   // Overlay edit must not run while text-editing, and vice versa.
   const be = $("btn-edit");
   if (be) be.disabled = !has || textEditing;
   const bt = $("btn-text-edit");
   if (bt) bt.disabled = !(ready && has) || overlayEditing;
-  // Zoom input is an <input>, so the [data-needs-doc] button sweep misses it.
+  // Zoom & page inputs are <input>s, so the [data-needs-doc] button sweep misses them.
   const zi = $("zoom-input");
   if (zi) zi.disabled = !has;
+  const pi = $("page-input");
+  if (pi) pi.disabled = !has;
   syncZoomInput();
+  syncPageInput();
   // Visual cue for the license gate: a lock class on gated buttons. The actual
   // block happens in the capture guard; this is just a hover hint + CSS hook.
   const blocked = licBlocked();
@@ -2721,6 +2900,37 @@ $("viewer").addEventListener(
   },
   { passive: false }
 );
+// Page navigation (‹ [N] / total ›). The box tracks the topmost visible page as
+// the user scrolls; typing a number + Enter (or the arrows) jumps there.
+let pageScrollTimer;
+$("viewer").addEventListener("scroll", () => {
+  clearTimeout(pageScrollTimer);
+  pageScrollTimer = setTimeout(syncPageInput, 80);
+});
+$("btn-page-prev").onclick = () => gotoPageNumber(currentPageIndex());       // 1-based (idx)+1-1
+$("btn-page-next").onclick = () => gotoPageNumber(currentPageIndex() + 2);   // (idx)+1+1
+$("page-input").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") {
+    e.preventDefault();
+    const n = parseInt($("page-input").value, 10);
+    if (!isNaN(n)) gotoPageNumber(n);
+    $("page-input").blur();
+  } else if (e.key === "Escape") {
+    e.preventDefault();
+    syncPageInput();
+    $("page-input").blur();
+  }
+});
+$("page-input").addEventListener("blur", syncPageInput);
+
+// Comments/notes list panel.
+$("btn-comments").onclick = () => toggleComments();
+$("comments-close").onclick = () => toggleComments(false);
+
+// Thumbnail sidebar collapse/expand (button + F4).
+$("btn-sidebar").onclick = () => toggleSidebar(true);
+$("sidebar-expand").onclick = () => toggleSidebar(false);
+
 $("btn-ocr").onclick = openExtractPanel;
 $("btn-searchable").onclick = makeSearchable;
 $("btn-translate").onclick = openTranslate;
@@ -2750,14 +2960,12 @@ $("cmp-ok").onclick = runCompress;
 $("tr-cancel").onclick = () => ($("tr-modal").hidden = true);
 $("tr-ok").onclick = runTranslate;
 
-// Convert dropdown — trigger toggles the menu; each item runs its tool and
-// closes the menu. Outside-click / Escape close it (handlers further below).
-$("btn-convert").onclick = (e) => {
-  e.stopPropagation();
-  toggleConvertMenu();
-};
+// Toolbar dropdowns (Trang ▾ / Công cụ ▾) — triggers toggle their menu; each item
+// runs its tool and the menu closes. Outside-click / Escape close any open menu.
+wireDropdown("btn-pages");
+wireDropdown("btn-tools");
 const ddRun = (fn) => () => {
-  toggleConvertMenu(false);
+  closeAllMenus();
   fn();
 };
 $("mi-encrypt").onclick = ddRun(openEncrypt);
@@ -2768,11 +2976,18 @@ $("pgnum-ok").onclick = runPageNumbers;
 $("mi-extract-images").onclick = ddRun(extractImages);
 $("mi-pdf-to-images").onclick = ddRun(openPdfToImages);
 $("mi-images-to-pdf").onclick = ddRun(openImagesToPdf);
+// Page-management items keep their existing onclick (wired below); close the menu
+// after any item click so a chosen action doesn't leave the menu hanging open.
+document.querySelectorAll(".dropdown-menu").forEach((menu) => {
+  menu.addEventListener("click", (e) => {
+    if (e.target.closest(".dd-item")) closeAllMenus();
+  });
+});
 document.addEventListener("click", (e) => {
-  if (!$("convert-dd").contains(e.target)) toggleConvertMenu(false);
+  if (!e.target.closest(".dropdown")) closeAllMenus();
 });
 document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape") toggleConvertMenu(false);
+  if (e.key === "Escape") closeAllMenus();
 });
 // Convert modals.
 $("print-ok").onclick = runPrint;
@@ -2954,13 +3169,21 @@ window.addEventListener("keydown", (e) => {
     }
     return;
   }
-  // ↑/↓ jump to the previous/next page (instead of the browser's tiny scroll),
-  // but only in the plain page view — never while typing, in an editor overlay,
-  // or with a modal open (those own the arrow keys for their own navigation).
+  // F4 toggles the thumbnail sidebar (Foxit-style), unless typing.
+  if (e.key === "F4" && !isTyping()) {
+    e.preventDefault();
+    toggleSidebar();
+    return;
+  }
+  // ↑/↓ and PageUp/PageDown jump to the previous/next page (instead of the
+  // browser's tiny scroll), but only in the plain page view — never while typing,
+  // in an editor overlay, or with a modal open (those own these keys themselves).
   const cmpView = $("compare-view");
   const ovView = $("overlay-view");
+  const isPrev = e.key === "ArrowUp" || e.key === "PageUp";
+  const isNext = e.key === "ArrowDown" || e.key === "PageDown";
   if (
-    (e.key === "ArrowDown" || e.key === "ArrowUp") &&
+    (isPrev || isNext) &&
     state.numPages &&
     !isTyping() &&
     $("overlay").hidden &&
@@ -2971,10 +3194,7 @@ window.addEventListener("keydown", (e) => {
   ) {
     e.preventDefault();
     const cur = currentPageIndex();
-    const next =
-      e.key === "ArrowDown"
-        ? Math.min(state.numPages - 1, cur + 1)
-        : Math.max(0, cur - 1);
+    const next = isNext ? Math.min(state.numPages - 1, cur + 1) : Math.max(0, cur - 1);
     if (next !== cur) scrollToPage(next);
     return;
   }
