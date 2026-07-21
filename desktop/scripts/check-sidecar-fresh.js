@@ -35,7 +35,13 @@ function fail(msg) {
 // declared in package.json but absent from a stale node_modules once, so the
 // packaged app's require("electron-updater") threw and auto-update reported
 // "unsupported". Catch that here instead of in a user's hands.
-const REQUIRED_DEPS = ["electron-updater"];
+const REQUIRED_DEPS = [
+  "electron-updater",
+  "pdf-lib",
+  "@signpdf/signpdf",
+  "@signpdf/placeholder-pdf-lib",
+  "@signpdf/utils",
+];
 for (const dep of REQUIRED_DEPS) {
   if (!fs.existsSync(path.join(desktop, "node_modules", dep))) {
     console.error("\n[deps-check] Missing runtime dependency: " + dep);
@@ -77,3 +83,7 @@ if (dirty) {
 }
 
 console.log(`[sidecar-check] OK — sidecar built from ${builtCommit.slice(0, 8)} matches current source.`);
+
+// NOTE: the .NET signing-helper freshness guard is intentionally NOT wired yet —
+// F3 (ký số) ships dormant (menu hidden, helper not bundled) until the build
+// machine has the .NET 8 SDK. Re-add the guard when the helper is packaged.

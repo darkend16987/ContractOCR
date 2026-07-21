@@ -1,0 +1,36 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Nabu PDF signing helper.
+
+    A tiny, self-contained Windows console tool that Nabu PDF's main process
+    spawns to talk to the Windows Certificate Store (where VNPT-CA / Viettel-CA /
+    FPT-CA / BKAV… USB tokens register their certificates). The private key never
+    leaves the token: we build the PKCS#7/CMS here and the CSP/KSP shows its own
+    PIN dialog during ComputeSignature.
+
+    Published self-contained + single-file (win-x64), so the END USER never needs
+    to install any .NET runtime. Only the BUILD machine needs the .NET 8 SDK.
+      Build:  cd desktop && npm run build:helper
+  -->
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <SelfContained>true</SelfContained>
+    <PublishSingleFile>true</PublishSingleFile>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+    <AssemblyName>nabu-sign</AssemblyName>
+    <RootNamespace>NabuSign</RootNamespace>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <!-- Keep the bundle small + predictable; we format only invariant strings. -->
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+    <!-- Trimming/AOT off on purpose: the Pkcs / Rfc3161 stack uses reflection. -->
+    <PublishTrimmed>false</PublishTrimmed>
+  </PropertyGroup>
+
+</Project>

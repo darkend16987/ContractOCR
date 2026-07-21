@@ -15,6 +15,7 @@ const I = {
   translate: '<path d="m5 8 6 6"/><path d="m4 14 6-6 2-3"/><path d="M2 5h12"/><path d="M7 2h1"/><path d="m22 22-5-10-5 10"/><path d="M14 18h6"/>',
   print: '<path d="M6 9V2h12v7"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect width="12" height="8" x="6" y="14"/>',
   ruler: '<path d="M21.3 15.3a2.4 2.4 0 0 1 0 3.4l-2.6 2.6a2.4 2.4 0 0 1-3.4 0L2.7 8.7a2.41 2.41 0 0 1 0-3.4l2.6-2.6a2.41 2.41 0 0 1 3.4 0Z"/><path d="m14.5 12.5 2-2"/><path d="m11.5 9.5 2-2"/><path d="m8.5 6.5 2-2"/><path d="m17.5 15.5 2-2"/>',
+  history: '<path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l3.5 2"/>',
 };
 
 const FEATURES = [
@@ -24,7 +25,8 @@ const FEATURES = [
   { i: "type", t: "Sửa nội dung gốc của PDF", d: "Chỉnh trực tiếp văn bản thật trong PDF, dùng cả font hệ thống của máy — không phải vẽ đè. Tự OCR lấy lại chữ tiếng Việt bị lỗi font (font .Vn cổ, bản vẽ CAD/Revit mã hóa hỏng)." },
   { i: "pages", t: "Ghép · Tách · Chèn · Số trang", d: "Quản lý trang linh hoạt: kéo-thả sắp xếp, ghép/chèn từ file khác, tách trang chọn hoặc tách thành nhiều file (theo N trang / khoảng trang), thêm trang trắng, đánh số trang." },
   { i: "compare", t: "So sánh & chồng lớp bản vẽ", d: "So sánh 2 file PDF theo từng dòng/từ; so sánh bản vẽ CAD/Revit bằng diff hình ảnh (chỉ ra vùng thêm/xóa/sửa, tick chọn từng vùng để khoanh mây rồi xuất bản đánh dấu); và chồng lớp (overlay) 2 bản vẽ lên nhau — tự căn chỉnh + tô màu khác biệt để soi thay đổi giữa 2 phiên bản." },
-  { i: "pen", t: "Chú thích & đánh dấu", d: "Hộp văn bản (font, cỡ, đậm/nghiêng/gạch chân) và ghi chú sửa & di chuyển lại được cả sau khi đã áp dụng; mũi tên kèm nhãn, tô sáng, khoanh mây revision (chữ nhật hoặc vẽ tự do, cỡ vòng tùy chỉnh), che thông tin (redact an toàn, chọn màu), watermark, điền form, đóng dấu ảnh/chữ ký lên nhiều trang, ghi chú dạng chuỗi bình luận kèm bảng danh sách ghi chú toàn tài liệu (bấm để nhảy tới)." },
+  { i: "pen", t: "Chú thích & đánh dấu", d: "Hộp văn bản (font, cỡ, đậm/nghiêng/gạch chân), ghi chú và mũi tên đều sửa & di chuyển lại được cả sau khi đã áp dụng; mũi tên chọn đặt nhãn ở đầu (mũi nhọn) hoặc ở cuối (gốc), tô sáng, khoanh mây revision (chữ nhật hoặc vẽ tự do, cỡ vòng tùy chỉnh), che thông tin (redact an toàn, chọn màu), watermark, điền form, đóng dấu ảnh/chữ ký lên nhiều trang, ghi chú dạng chuỗi bình luận kèm bảng danh sách ghi chú toàn tài liệu (bấm để nhảy tới)." },
+  { i: "history", t: "Tự lưu & khôi phục khi sự cố", d: "Tự động lưu nền trong lúc bạn làm việc; nếu máy tắt đột ngột, app đóng bất ngờ hay lỡ quên lưu, mở lại sẽ mời khôi phục bản mới nhất — không mất công sức đang dở. Đóng cửa sổ khi còn thay đổi chưa lưu sẽ hỏi Lưu / Không lưu / Huỷ." },
   { i: "ruler", t: "Đo & ghi kích thước", d: "Công cụ đo cho bản vẽ CAD/Revit: hiệu chuẩn theo một đoạn đã biết kích thước, các đoạn còn lại kéo ra là tự ghi số theo đúng tỷ lệ." },
   { i: "print", t: "In tài liệu", d: "In trực tiếp từ app (Ctrl+P): chọn khổ giấy, in một mặt hoặc hai mặt (lật cạnh dài/ngắn), kèm cả in trang trắng." },
   { i: "search", t: "Tạo PDF tìm-kiếm-được", d: "OCR thêm lớp text vô hình để PDF scan có thể tìm kiếm và bôi chọn chữ." },

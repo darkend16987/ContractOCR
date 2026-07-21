@@ -1,6 +1,6 @@
 {
   "name": "nabu-pdf-desktop",
-  "version": "0.2.36",
+  "version": "0.2.37",
   "private": true,
   "description": "Nabu PDF — desktop PDF suite (Electron + Python sidecar)",
   "author": "darkend16987 <hoangnam.mng@gmail.com>",
@@ -11,6 +11,7 @@
     "vendor": "node scripts/vendor-libs.js",
     "postinstall": "node scripts/vendor-libs.js",
     "build:sidecar": "cd .. && .venv\\Scripts\\python -m PyInstaller sidecar.spec --noconfirm && node desktop/scripts/write-sidecar-marker.js",
+    "build:helper": "node scripts/build-helper.js",
     "prebuild": "node scripts/check-sidecar-fresh.js",
     "build": "electron-builder --config electron-builder.yml",
     "checksums": "node scripts/checksums.js",
@@ -20,12 +21,15 @@
     "release": "electron-builder --config electron-builder.yml --publish always"
   },
   "dependencies": {
-    "electron-updater": "^6.8.9"
+    "@signpdf/placeholder-pdf-lib": "^3.3.0",
+    "@signpdf/signpdf": "^3.3.0",
+    "@signpdf/utils": "^3.3.0",
+    "electron-updater": "^6.8.9",
+    "pdf-lib": "^1.17.1"
   },
   "devDependencies": {
     "electron": "^33.0.0",
     "electron-builder": "^25.0.0",
-    "pdf-lib": "^1.17.1",
     "pdfjs-dist": "3.11.174"
   }
 }

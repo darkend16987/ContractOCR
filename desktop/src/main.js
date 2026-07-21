@@ -7,12 +7,16 @@ const { app, BrowserWindow, Menu, ipcMain, dialog, shell, session, clipboard, na
 const { startSidecar, stopSidecar } = require("./sidecar");
 const { initAutoUpdate } = require("./updater");
 const { initLicense } = require("./license");
+const { initSigning } = require("./signing");
 
 // All open document windows. Each BrowserWindow runs its own renderer with its
 // own single-doc state, but every window shares the ONE Python sidecar (same
 // port + token) so OCR models are loaded once regardless of window count.
 const windows = new Set();
 let sidecar = null;
+// Set once an app-wide quit is under way, so the per-window unsaved-changes guard
+// stands down (see the window "close" handler).
+let appQuitting = false;
 
 // The primary window = first still-alive window. Used as a default parent for
 // app-level dialogs (updater) and as a fallback when no window has focus.
@@ -91,6 +95,17 @@ function createWindow(openPath) {
   });
 
   attachContextMenu(win);
+
+  // Unsaved-changes guard: intercept the first close and let the renderer decide
+  // (Save / Don't save / Cancel via window:confirm-close). window:force-close then
+  // re-closes with the flag set. Skipped during an app quit (appQuitting) so quit
+  // never hangs on an async round-trip or leaves the sidecar torn down after a
+  // cancel — the autosave recovery snapshot is the safety net for that path.
+  win.on("close", (e) => {
+    if (win._forceClose || appQuitting) return;
+    e.preventDefault();
+    if (!win.isDestroyed()) win.webContents.send("window:before-close");
+  });
 
   win.on("closed", () => {
     windows.delete(win);
@@ -434,6 +449,7 @@ if (!app.requestSingleInstanceLock()) {
     bootSidecar();
     initAutoUpdate(primaryWindow);
     initLicense();
+    initSigning();
 
     app.on("activate", () => {
       if (BrowserWindow.getAllWindows().length === 0) createWindow();
@@ -670,6 +686,124 @@ ipcMain.handle("window:new", () => {
   return true;
 });
 
+// ---- IPC: unsaved-changes close guard ------------------------------------
+
+// Native Save / Don't save / Cancel dialog for a window closing with unsaved
+// changes. Labels follow the in-app language. Returns 0=save, 1=don't save,
+// 2=cancel (also the value on any failure, so an error never force-closes).
+ipcMain.handle("window:confirm-close", async (e) => {
+  const win = senderWindow(e);
+  const dl =
+    menuLang === "en"
+      ? { buttons: ["Save", "Don't Save", "Cancel"], message: "You have unsaved changes.", detail: "Do you want to save them before closing?" }
+      : { buttons: ["Lưu", "Không lưu", "Huỷ"], message: "Tài liệu có thay đổi chưa lưu.", detail: "Bạn có muốn lưu trước khi đóng không?" };
+  try {
+    const res = await dialog.showMessageBox(win, {
+      type: "warning",
+      buttons: dl.buttons,
+      defaultId: 0,
+      cancelId: 2,
+      noLink: true,
+      title: "Nabu PDF",
+      message: dl.message,
+      detail: dl.detail,
+    });
+    return res.response;
+  } catch (_) {
+    return 2; // treat any failure as Cancel — never lose data by force-closing
+  }
+});
+
+// Renderer has decided the window may close — do it, bypassing the guard once.
+ipcMain.handle("window:force-close", (e) => {
+  const win = senderWindow(e);
+  if (win && !win.isDestroyed()) {
+    win._forceClose = true;
+    win.close();
+  }
+  return true;
+});
+
+// ---- IPC: crash recovery (AutoRecover-style snapshots) -------------------
+//
+// Snapshots live under userData/recovery/<docId>/{autosave.pdf, manifest.json}.
+// A clean session (save or confirmed close) clears its slot, so whatever survives
+// to the next launch is a crash/power-loss remnant that recovery:scan surfaces.
+
+const recoveryDir = () => path.join(app.getPath("userData"), "recovery");
+// docId is a renderer-generated UUID; hard-sanitise anyway so it can only ever
+// name a direct child of the recovery folder (no traversal).
+const sanitizeId = (id) => String(id || "").replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 128);
+const RECOVERY_MAX_AGE_MS = 14 * 24 * 60 * 60 * 1000; // prune snapshots older than 2 weeks
+let recoveryScanDone = false; // only the first window per launch consumes orphans
+
+ipcMain.handle("recovery:save", async (_e, { docId, bytes, name, srcPath } = {}) => {
+  try {
+    const id = sanitizeId(docId);
+    if (!id || !bytes) return { saved: false };
+    const dir = path.join(recoveryDir(), id);
+    await fs.promises.mkdir(dir, { recursive: true });
+    await fs.promises.writeFile(path.join(dir, "autosave.pdf"), Buffer.from(bytes));
+    const manifest = { docId: id, name: name || "document.pdf", srcPath: srcPath || null, savedAt: Date.now(), version: app.getVersion() };
+    await fs.promises.writeFile(path.join(dir, "manifest.json"), JSON.stringify(manifest));
+    return { saved: true };
+  } catch (err) {
+    return { saved: false, error: String((err && err.message) || err) };
+  }
+});
+
+ipcMain.handle("recovery:clear", async (_e, docId) => {
+  try {
+    const id = sanitizeId(docId);
+    if (!id) return false;
+    await fs.promises.rm(path.join(recoveryDir(), id), { recursive: true, force: true });
+    return true;
+  } catch (_) {
+    return false;
+  }
+});
+
+ipcMain.handle("recovery:scan", async () => {
+  try {
+    if (recoveryScanDone) return []; // one prompt per launch, from the first asker
+    recoveryScanDone = true;
+    const base = recoveryDir();
+    if (!fs.existsSync(base)) return [];
+    const out = [];
+    for (const id of await fs.promises.readdir(base)) {
+      const dir = path.join(base, id);
+      try {
+        if (!fs.existsSync(path.join(dir, "autosave.pdf"))) continue;
+        const mf = JSON.parse(await fs.promises.readFile(path.join(dir, "manifest.json"), "utf8"));
+        // Prune stale remnants so the folder can't grow without bound.
+        if (mf.savedAt && Date.now() - mf.savedAt > RECOVERY_MAX_AGE_MS) {
+          await fs.promises.rm(dir, { recursive: true, force: true });
+          continue;
+        }
+        out.push({ docId: id, name: mf.name || "document.pdf", srcPath: mf.srcPath || null, savedAt: mf.savedAt || 0 });
+      } catch (_) {
+        /* skip a broken/half-written entry */
+      }
+    }
+    out.sort((a, b) => (b.savedAt || 0) - (a.savedAt || 0));
+    return out;
+  } catch (_) {
+    return [];
+  }
+});
+
+ipcMain.handle("recovery:read", async (_e, docId) => {
+  try {
+    const id = sanitizeId(docId);
+    const dir = path.join(recoveryDir(), id);
+    const bytes = await fs.promises.readFile(path.join(dir, "autosave.pdf"));
+    const mf = JSON.parse(await fs.promises.readFile(path.join(dir, "manifest.json"), "utf8"));
+    return { ok: true, bytes, name: mf.name || "document.pdf", srcPath: mf.srcPath || null };
+  } catch (_) {
+    return { ok: false };
+  }
+});
+
 // ---- shutdown ------------------------------------------------------------
 
 app.on("window-all-closed", () => {
@@ -677,4 +811,7 @@ app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit();
 });
 
-app.on("before-quit", () => stopSidecar(sidecar));
+app.on("before-quit", () => {
+  appQuitting = true; // let windows close without the per-window guard blocking quit
+  stopSidecar(sidecar);
+});

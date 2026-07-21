@@ -27,6 +27,8 @@ const state = {
   selected: new Set(), // selected page indices (0-based, current order)
   lastClicked: null,
   dragSrc: null,
+  dirty: false, // true when the canonical bytes have changed since the last real save
+  docId: null, // per-open-document id keying its crash-recovery snapshot slot
 };
 
 // Find-in-document state. `docItems` caches each page's text runs (str + folded
@@ -109,6 +111,10 @@ function pushUndo() {
   if (history.undo.length > HISTORY_LIMIT) history.undo.shift();
   history.redo.length = 0;
   updateUndoRedo();
+  // Every canonical-bytes mutation routes through here → the document now has
+  // changes not yet written to its real file; flag it and schedule a background
+  // recovery snapshot (see autosave below).
+  markDirty();
 }
 async function restoreSnapshot(s) {
   state.bytes = s.bytes;
@@ -144,6 +150,119 @@ function updateUndoRedo() {
 // Expose pushUndo so the editor / text-edit modules (separate scripts that also
 // reassign state.bytes) record a history step before their own mutations.
 window.History = { pushUndo };
+
+// ---- unsaved-changes tracking + crash recovery ---------------------------
+//
+// Three problems, one safety net (Word-style AutoRecover):
+//   1. power loss / OS reset   2. app crash   3. forgot to save + closed
+// (1)+(2): a background snapshot of the canonical bytes is written to a private
+// recovery folder; a session that ends cleanly (save or a confirmed close) clears
+// it, so anything left behind on the next launch is a crash remnant we can offer
+// to restore. (3): closing a window with unsaved changes prompts Save/Don't/Cancel,
+// and opening another file over an unsaved one asks first.
+//
+// v1 snapshots only the CANONICAL bytes (everything already "Áp dụng"/structural).
+// Overlay annotations not yet applied are transient (like an open textarea) and are
+// not captured — same contract as the text/label inline editors.
+
+const AUTOSAVE_INTERVAL_MS = 120000; // periodic snapshot cadence while dirty
+const AUTOSAVE_DEBOUNCE_MS = 15000; // quick snapshot this long after the last edit
+let autosaveDebounceTimer = null;
+let lastAutosaveLen = -1; // byte length of the last snapshot (cheap "changed?" guard)
+
+// True when there is work that would be lost on close: canonical bytes changed
+// since the last real save, OR the overlay editor holds un-applied annotations.
+function docHasUnsavedChanges() {
+  return (
+    !!state.dirty ||
+    !!(window.Editor && window.Editor.active && window.Editor.hasUnsaved && window.Editor.hasUnsaved())
+  );
+}
+
+function updateDirtyIndicator() {
+  // A leading dot on the window title is the unobtrusive "unsaved" cue; the app
+  // name stays visible after the filename.
+  const dot = state.dirty ? "● " : "";
+  document.title = state.bytes ? `${dot}${state.name || "document.pdf"} — Nabu PDF` : "Nabu PDF";
+}
+
+function markDirty() {
+  state.dirty = true;
+  updateDirtyIndicator();
+  scheduleAutosave();
+}
+
+// Called after a successful real save (Ctrl+S / Save As): the on-disk file now
+// matches, so drop the recovery snapshot and the dirty flag.
+function markClean() {
+  state.dirty = false;
+  lastAutosaveLen = -1; // a later edit re-triggers a fresh snapshot
+  updateDirtyIndicator();
+  clearTimeout(autosaveDebounceTimer);
+  if (state.docId && window.desktop.recovery) window.desktop.recovery.clear(state.docId);
+}
+
+function scheduleAutosave() {
+  clearTimeout(autosaveDebounceTimer);
+  autosaveDebounceTimer = setTimeout(autosaveTick, AUTOSAVE_DEBOUNCE_MS);
+}
+
+// Write a recovery snapshot if the doc is dirty and its bytes changed since the
+// last one. Cheap: reads state.bytes (atomic reference), copies, hands to main.
+async function autosaveTick() {
+  try {
+    if (!state.bytes || !state.dirty || !state.docId || !window.desktop.recovery) return;
+    if (state.bytes.length === lastAutosaveLen) return; // nothing new since last snapshot
+    const bytes = state.bytes.slice();
+    const r = await window.desktop.recovery.save({
+      docId: state.docId,
+      bytes,
+      name: state.name,
+      srcPath: state.path,
+    });
+    if (r && r.saved) lastAutosaveLen = bytes.length;
+  } catch (_) {
+    /* recovery is best-effort — never let it disrupt the session */
+  }
+}
+if (window.desktop.recovery) setInterval(autosaveTick, AUTOSAVE_INTERVAL_MS);
+
+// On startup, offer to restore anything a previous session left behind (crash /
+// power loss). Runs only in a still-empty window and only once per app launch
+// (main returns the orphan list to the first asker), so it never fights a window
+// that's opening a real file.
+async function checkRecovery() {
+  if (!window.desktop.recovery || state.bytes) return;
+  let orphans = [];
+  try {
+    orphans = (await window.desktop.recovery.scan()) || [];
+  } catch (_) {
+    return;
+  }
+  if (!orphans.length || state.bytes) return; // a file may have loaded meanwhile
+  const top = orphans[0]; // most recent
+  const when = top.savedAt ? new Date(top.savedAt).toLocaleString() : "";
+  const extra = orphans.length > 1 ? `\n(và ${orphans.length - 1} tài liệu khác — sẽ hỏi lại lần sau)` : "";
+  const ok = window.confirm(
+    `Tìm thấy tài liệu chưa lưu từ phiên trước:\n"${top.name}"${when ? " — " + when : ""}\n\nKhôi phục?${extra}`
+  );
+  if (!ok) return; // leave the snapshots for a later launch
+  try {
+    const rec = await window.desktop.recovery.read(top.docId);
+    if (!rec || !rec.ok) {
+      toast("Không đọc được bản khôi phục.", "bad");
+      return;
+    }
+    // Restore into this window. Keep the original path so Ctrl+S writes back, but
+    // stay dirty: the recovered content differs from whatever is on disk.
+    await loadBytes(toU8(rec.bytes), rec.name, rec.srcPath || null);
+    await window.desktop.recovery.clear(top.docId); // consumed
+    markDirty();
+    toast("Đã khôi phục tài liệu chưa lưu — hãy Lưu để ghi vào file.", "good");
+  } catch (e) {
+    toast("Lỗi khôi phục: " + (e && e.message ? e.message : e), "bad");
+  }
+}
 
 // ---- breadcrumb (open file path) -----------------------------------------
 
@@ -217,11 +336,22 @@ function fileCrumb(name, fullPath) {
 // ---- loading + rendering -------------------------------------------------
 
 async function loadBytes(bytes, name, fullPath) {
+  // Replacing an unsaved document would silently drop its changes — ask first.
+  // (First load / recovery restore are clean, so this never fires there.)
+  if (docHasUnsavedChanges() && !window.confirm("Tài liệu hiện tại có thay đổi chưa lưu. Bỏ các thay đổi đó và mở tài liệu khác?")) {
+    return;
+  }
   state.bytes = toU8(bytes);
   if (name) state.name = name;
   state.path = fullPath || null;
   state.selected.clear();
   state.lastClicked = null;
+  // A freshly loaded document is clean and gets its own recovery slot.
+  state.dirty = false;
+  state.docId = (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : String(Date.now()) + Math.random().toString(16).slice(2);
+  lastAutosaveLen = -1;
+  clearTimeout(autosaveDebounceTimer);
+  updateDirtyIndicator();
   resetHistory(); // a new document starts a fresh undo timeline
   renderBreadcrumb();
   if (window.Editor) window.Editor.reset(); // drop annotations from any previous doc
@@ -1350,6 +1480,7 @@ async function saveDoc() {
   if (state.path) {
     const res = await window.desktop.writePdf(state.path, state.bytes);
     if (res.saved) {
+      markClean();
       toast("Đã lưu: " + res.path, "good");
       return;
     }
@@ -1366,6 +1497,7 @@ async function saveAsDoc() {
   if (res.saved) {
     state.path = res.path;
     state.name = res.path.split(/[\\/]/).pop() || state.name;
+    markClean();
     renderBreadcrumb();
     toast("Đã lưu: " + res.path, "good");
   }
@@ -3278,6 +3410,42 @@ if (window.desktop.onOpenFile) {
     if (file && file.data) loadBytes(toU8(file.data), file.name, file.path || null);
   });
 }
+
+// Window close with unsaved changes: main intercepts the close, we decide here.
+// A clean doc closes immediately; a dirty one prompts Save / Don't save / Cancel.
+function finishClose() {
+  if (state.docId && window.desktop.recovery) window.desktop.recovery.clear(state.docId);
+  if (window.desktop.forceCloseWindow) window.desktop.forceCloseWindow();
+}
+if (window.desktop.onCloseRequest) {
+  let deciding = false;
+  window.desktop.onCloseRequest(async () => {
+    if (deciding) return;
+    if (!docHasUnsavedChanges()) {
+      finishClose();
+      return;
+    }
+    deciding = true;
+    let choice;
+    try {
+      choice = await window.desktop.confirmClose();
+    } finally {
+      deciding = false;
+    }
+    if (choice === 2 || choice == null) return; // Huỷ — keep the window open
+    if (choice === 0) {
+      // Lưu: saveDoc bakes pending edits + writes (may prompt Save As). If it's
+      // still dirty afterwards (user cancelled Save As), abort the close.
+      await saveDoc();
+      if (docHasUnsavedChanges()) return;
+    }
+    finishClose(); // saved (0) or discarded (1)
+  });
+}
+
+// After giving "Open with" a moment to deliver a file, offer to restore anything a
+// previous session left behind. No-op if a document is already loaded here.
+setTimeout(checkRecovery, 1200);
 
 // sidecar status: get current + subscribe to updates
 window.desktop.onSidecarStatus(applySidecar);

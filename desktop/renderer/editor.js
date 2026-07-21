@@ -37,10 +37,14 @@
   //            structured thread in /NabuData; its coloured marker is drawn by the
   //            viewer's note layer, not baked into page content, so it's removable.
   //
-  // Rotated pages: a text Stamp appearance would need a matrix; that's deferred,
-  // so text on a rotated page still flattens (today's behaviour). Notes are points
-  // and round-trip on any rotation.
-  const MANAGED_KINDS = new Set(["text", "note"]);
+  // Rotated pages: a text/arrow Stamp appearance would need a matrix; that's
+  // deferred, so text/arrow on a rotated page still flatten (today's behaviour).
+  // Notes are points and round-trip on any rotation.
+  //  - arrow → /Stamp whose /AP is a PNG of the whole arrow (line + head + label),
+  //            rendered the same Vietnamese-safe way as text; geometry + label in
+  //            /NabuData so a re-opened file is fully re-editable (move / re-angle /
+  //            retype the head-or-tail label).
+  const MANAGED_KINDS = new Set(["text", "note", "arrow"]);
   // Single-key tool shortcuts (edit mode only). Letters mirror the tool tooltips.
   const TOOL_KEYS = {
     v: "select", t: "text", h: "highlight", d: "draw", r: "box", o: "ellipse",
@@ -63,6 +67,7 @@
     italic: false,
     underline: false,
     penWidth: 2,
+    arrowLabelEnd: "head", // where a new arrow's label sits: "head" (tip) or "tail" (base)
     fillColor: "#ffffff", // interior fill for box / ellipse / cloud / cloudpen
     fillOn: false, // false → transparent interior (the default for revision clouds)
     fillOpacity: 1, // 0..1 interior-fill opacity (0 = fully transparent, 1 = solid)
@@ -105,6 +110,19 @@
   }
   function countAnnots() {
     return Object.values(ed.annots).reduce((s, a) => s + a.length, 0) + (ed.watermark ? 1 : 0);
+  }
+
+  // Centre point (in whatever coord space the endpoints are given) where an arrow's
+  // label sits. `sx,sy`=tail (x1,y1), `ex,ey`=head/tip (x2,y2), `ang`=head direction
+  // (atan2(ey-sy, ex-sx)), `hl`=head length, `fs`=label font size. labelEnd "tail"
+  // puts it just beyond the base pointing away from the tip; anything else = head
+  // (the historical default, so arrows without a labelEnd render unchanged).
+  function arrowLabelPos(a, sx, sy, ex, ey, ang, hl, fs) {
+    const gap = hl + fs * 0.6;
+    if (a.labelEnd === "tail") {
+      return { x: sx - Math.cos(ang) * gap, y: sy - Math.sin(ang) * gap };
+    }
+    return { x: ex + Math.cos(ang) * gap, y: ey + Math.sin(ang) * gap };
   }
 
   // ---- annotation-level undo/redo (Ctrl+Z/Y while the editor is open) ------
@@ -549,14 +567,15 @@
       head.setAttribute("fill", a.color);
       svg.appendChild(line);
       svg.appendChild(head);
-      // Optional head label: sits just beyond the tip along the arrow direction.
-      // SVG overflow is visible (app.css) so it paints outside the padded box.
+      // Optional label: sits just beyond the head (tip) or tail (base) along the
+      // arrow direction, per a.labelEnd. SVG overflow is visible (app.css) so it
+      // paints outside the padded box.
       if (a.label) {
         const fs = a.labelSize || 14;
-        const gap = hl + fs * 0.6;
+        const lp = arrowLabelPos(a, sx, sy, ex, ey, ang, hl, fs);
         const t = document.createElementNS("http://www.w3.org/2000/svg", "text");
-        t.setAttribute("x", String(ex + Math.cos(ang) * gap));
-        t.setAttribute("y", String(ey + Math.sin(ang) * gap));
+        t.setAttribute("x", String(lp.x));
+        t.setAttribute("y", String(lp.y));
         t.setAttribute("fill", a.color);
         t.setAttribute("font-size", String(fs));
         t.setAttribute("font-family", "system-ui, Arial, sans-serif");
@@ -846,6 +865,7 @@
       setFmtBtn("ed-underline", a.underline);
     }
     if (["draw", "box", "ellipse", "cloud", "cloudpen", "arrow"].includes(a.kind) && a.width) $("ed-penwidth").value = String(a.width);
+    if (a.kind === "arrow") $("ed-arrowlabel").value = a.labelEnd === "tail" ? "tail" : "head";
     if (a.kind === "cloud" || a.kind === "cloudpen") {
       const b = bumpOf(a);
       $("ed-cloudsize").value = String(b);
@@ -974,7 +994,7 @@
     }
 
     if (ed.tool === "arrow") {
-      const a = { id: ed.seq++, kind: "arrow", x1: p.x, y1: p.y, x2: p.x, y2: p.y, color: ed.color, width: ed.penWidth };
+      const a = { id: ed.seq++, kind: "arrow", x1: p.x, y1: p.y, x2: p.x, y2: p.y, color: ed.color, width: ed.penWidth, labelEnd: ed.arrowLabelEnd };
       pushEdUndo();
       annotsFor(i).push(a);
       ed.sel = a.id;
@@ -1481,8 +1501,11 @@
     const ta = document.createElement("textarea");
     ta.className = "annot-text-edit annot-note-edit";
     ta.placeholder = "Nhãn mũi tên… (Enter xong, Esc bỏ qua)";
-    ta.style.left = (a.x2 + 8) * state.scale + "px";
-    ta.style.top = (a.y2 - 12) * state.scale + "px";
+    // Anchor the input at the end the label belongs to (tail = base, else tip).
+    const anchorX = a.labelEnd === "tail" ? a.x1 : a.x2;
+    const anchorY = a.labelEnd === "tail" ? a.y1 : a.y2;
+    ta.style.left = (anchorX + 8) * state.scale + "px";
+    ta.style.top = (anchorY - 12) * state.scale + "px";
     ta.style.color = a.color;
     ta.value = a.label || "";
     layer.appendChild(ta);
@@ -1708,6 +1731,80 @@
     return { bytes: dataUrlToBytes(c.toDataURL("image/png")), wPt: cw / RS, hPt: chh / RS };
   }
 
+  // Rasterise a whole arrow (line + filled head + optional label) to a PNG, for a
+  // managed /Stamp appearance. Mirrors the on-screen SVG geometry so the appearance
+  // matches the overlay. Returns the PNG bytes, its size in points, and the
+  // overlay-space (y-down, scale-1) coordinate of its top-left corner (`ox,oy`) so
+  // the caller can map it to the page exactly like the text Stamp does.
+  function renderArrowPng(a) {
+    const RS = 3; // supersample for crisp lines/text
+    const w = a.width || 2;
+    const hl = Math.max(8, w * 4); // head length
+    const ha = Math.PI / 7; // head half-angle
+    const fs = a.labelSize || 14;
+    const ang = Math.atan2(a.y2 - a.y1, a.x2 - a.x1);
+    // Filled-head tips (overlay points), same as the on-screen SVG.
+    const p1 = { x: a.x2 - hl * Math.cos(ang - ha), y: a.y2 - hl * Math.sin(ang - ha) };
+    const p2 = { x: a.x2 - hl * Math.cos(ang + ha), y: a.y2 - hl * Math.sin(ang + ha) };
+    const pts = [{ x: a.x1, y: a.y1 }, { x: a.x2, y: a.y2 }, p1, p2];
+
+    // Label block (measured with the same default font renderTextPng/measureText use).
+    const lines = a.label ? String(a.label).split("\n") : [];
+    let lblW = 0, lp = null;
+    if (lines.length) {
+      const mctx = measureCtx();
+      mctx.font = textFont(fs);
+      for (const ln of lines) lblW = Math.max(lblW, mctx.measureText(ln || " ").width);
+      const lblH = fs * 1.3 * lines.length;
+      lp = arrowLabelPos(a, a.x1, a.y1, a.x2, a.y2, ang, hl, fs);
+      pts.push({ x: lp.x - lblW / 2, y: lp.y - lblH / 2 });
+      pts.push({ x: lp.x + lblW / 2, y: lp.y + lblH / 2 });
+    }
+
+    const pad = w + 2;
+    const minX = Math.min(...pts.map((q) => q.x)) - pad;
+    const minY = Math.min(...pts.map((q) => q.y)) - pad;
+    const maxX = Math.max(...pts.map((q) => q.x)) + pad;
+    const maxY = Math.max(...pts.map((q) => q.y)) + pad;
+    const wPt = Math.max(1, maxX - minX);
+    const hPt = Math.max(1, maxY - minY);
+
+    const c = document.createElement("canvas");
+    c.width = Math.ceil(wPt * RS);
+    c.height = Math.ceil(hPt * RS);
+    const cx = c.getContext("2d");
+    const X = (x) => (x - minX) * RS;
+    const Y = (y) => (y - minY) * RS;
+    // Shaft.
+    cx.strokeStyle = a.color;
+    cx.lineWidth = w * RS;
+    cx.lineCap = "round";
+    cx.lineJoin = "round";
+    cx.beginPath();
+    cx.moveTo(X(a.x1), Y(a.y1));
+    cx.lineTo(X(a.x2), Y(a.y2));
+    cx.stroke();
+    // Filled arrowhead.
+    cx.fillStyle = a.color;
+    cx.beginPath();
+    cx.moveTo(X(a.x2), Y(a.y2));
+    cx.lineTo(X(p1.x), Y(p1.y));
+    cx.lineTo(X(p2.x), Y(p2.y));
+    cx.closePath();
+    cx.fill();
+    // Label text, centred on lp (matches the SVG's middle/central anchoring).
+    if (lines.length) {
+      cx.font = textFont(fs * RS);
+      cx.fillStyle = a.color;
+      cx.textAlign = "center";
+      cx.textBaseline = "middle";
+      const lhpx = fs * 1.3 * RS;
+      const top = Y(lp.y) - (lhpx * lines.length) / 2 + lhpx / 2;
+      lines.forEach((ln, k) => cx.fillText(ln, X(lp.x), top + k * lhpx));
+    }
+    return { bytes: dataUrlToBytes(c.toDataURL("image/png")), wPt, hPt, ox: minX, oy: minY };
+  }
+
   function renderWatermarkPng(wm) {
     const RS = 2;
     const ctx = measureCtx();
@@ -1770,6 +1867,12 @@
                font: a.font, fontSize: a.fontSize, color: a.color,
                bold: !!a.bold, italic: !!a.italic, underline: !!a.underline };
     }
+    if (a.kind === "arrow") {
+      return { k: "arrow", x1: a.x1, y1: a.y1, x2: a.x2, y2: a.y2,
+               color: a.color, width: a.width || 2,
+               label: a.label || "", labelEnd: a.labelEnd === "tail" ? "tail" : "head",
+               labelSize: a.labelSize || 14 };
+    }
     // note
     return { k: "note", x: a.x, y: a.y, w: a.w, h: a.h, text: a.text || "",
              color: a.color, replies: a.replies || [] };
@@ -1784,6 +1887,14 @@
                font: data.font || "sans", fontSize: +data.fontSize || 16,
                color: data.color || "#000000", bold: !!data.bold,
                italic: !!data.italic, underline: !!data.underline, _managed: true };
+    }
+    if (data.k === "arrow") {
+      return { id: ed.seq++, kind: "arrow",
+               x1: +data.x1 || 0, y1: +data.y1 || 0, x2: +data.x2 || 0, y2: +data.y2 || 0,
+               color: data.color || "#ffd54a", width: +data.width || 2,
+               label: data.label ? String(data.label) : undefined,
+               labelEnd: data.labelEnd === "tail" ? "tail" : "head",
+               labelSize: +data.labelSize || 14, _managed: true };
     }
     if (data.k === "note") {
       return { id: ed.seq++, kind: "note", x: +data.x || 0, y: +data.y || 0,
@@ -1829,6 +1940,28 @@
         AP: { N: apRef },
       });
       annot.set(NABU_KIND, PDFName.of("text"));
+      annot.set(NABU_DATA, dataHex);
+      pushPageAnnot(doc, page, ctx.register(annot));
+      return true;
+    }
+    if (a.kind === "arrow") {
+      if (page.getRotation().angle % 360 !== 0) return false; // deferred: rotated arrow keeps flattening
+      const { bytes, wPt, hPt, ox, oy } = renderArrowPng(a);
+      const img = await doc.embedPng(bytes);
+      const [bx, by] = map(ox, oy + hPt); // overlay top-left → PDF lower-left, like text
+      const apDict = ctx.obj({
+        Type: "XObject", Subtype: "Form", FormType: 1,
+        BBox: [0, 0, wPt, hPt],
+        Resources: { XObject: { NabuImg: img.ref } },
+      });
+      const apStream = PDFRawStream.of(apDict, strToBytes(`q ${f(wPt)} 0 0 ${f(hPt)} 0 0 cm /NabuImg Do Q`));
+      const apRef = ctx.register(apStream);
+      const annot = ctx.obj({
+        Type: "Annot", Subtype: "Stamp", F: 4,
+        Rect: [bx, by, bx + wPt, by + hPt],
+        AP: { N: apRef },
+      });
+      annot.set(NABU_KIND, PDFName.of("arrow"));
       annot.set(NABU_DATA, dataHex);
       pushPageAnnot(doc, page, ctx.register(annot));
       return true;
@@ -2039,18 +2172,17 @@
           thickness: w,
           color: c,
         });
-        // Head label — rendered to PNG (same path as text annots, so Vietnamese
-        // diacritics embed reliably), centred on the point just beyond the tip.
+        // Label — rendered to PNG (same path as text annots, so Vietnamese
+        // diacritics embed reliably), centred just beyond the head or tail per
+        // a.labelEnd.
         if (a.label) {
           const fs = a.labelSize || 14;
           const { bytes, wPt, hPt } = renderTextPng(a.label, fs, a.color, {});
           // Anchor in overlay coords (y-down), matching the on-screen placement.
           const angO = Math.atan2(a.y2 - a.y1, a.x2 - a.x1);
-          const gap = hl + fs * 0.6;
-          const cxO = a.x2 + Math.cos(angO) * gap;
-          const cyO = a.y2 + Math.sin(angO) * gap;
+          const lp = arrowLabelPos(a, a.x1, a.y1, a.x2, a.y2, angO, hl, fs);
           const img = await doc.embedPng(bytes);
-          const [bx, by] = map(cxO - wPt / 2, cyO + hPt / 2);
+          const [bx, by] = map(lp.x - wPt / 2, lp.y + hPt / 2);
           page.drawImage(img, { x: bx, y: by, width: wPt, height: hPt, rotate: pageRotate(page) });
         }
       } else if (a.kind === "dim") {
@@ -2428,7 +2560,7 @@
     ellipse: ["color", "penwidth", "fill"],
     cloud: ["color", "penwidth", "fill", "cloudsize"],
     cloudpen: ["color", "penwidth", "fill", "cloudsize"],
-    arrow: ["color", "penwidth"],
+    arrow: ["color", "penwidth", "arrowlabel"],
     note: ["color"],
     image: [],
     redact: ["redact"],
@@ -2445,7 +2577,7 @@
     ellipse: ["color", "penwidth", "fill"],
     cloud: ["color", "penwidth", "fill", "cloudsize"],
     cloudpen: ["color", "penwidth", "fill", "cloudsize"],
-    arrow: ["color", "penwidth"],
+    arrow: ["color", "penwidth", "arrowlabel"],
     note: ["color"],
     image: ["imgpages"],
     redact: ["redact"],
@@ -2725,6 +2857,20 @@
       }
     }
   };
+  // Arrow label position (head/tail). Sets the default for new arrows and, if an
+  // arrow is selected, moves its existing label live.
+  $("ed-arrowlabel").onchange = (e) => {
+    const v = e.target.value === "tail" ? "tail" : "head";
+    ed.arrowLabelEnd = v;
+    if (ed.sel != null) {
+      const hit = findAnnot(ed.sel);
+      if (hit && hit.a.kind === "arrow") {
+        pushEdUndo("arrowlabel:" + ed.sel);
+        hit.a.labelEnd = v;
+        syncOverlays();
+      }
+    }
+  };
   // Cloud scallop size (smaller = denser, hugs the marked area more tightly).
   $("ed-cloudsize").oninput = (e) => {
     const v = Math.min(CLOUD_BUMP_MAX, Math.max(CLOUD_BUMP_MIN, +e.target.value || CLOUD_BUMP));
@@ -2852,6 +2998,8 @@
     get active() {
       return ed.active;
     },
+    // Pending, un-applied annotation edits this edit session (for the close guard).
+    hasUnsaved: () => ed._dirty && hasAny(),
     syncOverlays,
     bakePending,
     reset,

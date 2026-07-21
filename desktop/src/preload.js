@@ -34,6 +34,43 @@ contextBridge.exposeInMainWorld("desktop", {
     hwid: () => ipcRenderer.invoke("license:hwid"),
   },
 
+  // --- unsaved-changes close guard ---
+  // Main intercepts the window's close and fires this so the renderer can decide.
+  onCloseRequest: (cb) => {
+    const handler = () => cb();
+    ipcRenderer.on("window:before-close", handler);
+    return () => ipcRenderer.removeListener("window:before-close", handler);
+  },
+  // Show the native Save / Don't save / Cancel dialog. Resolves to 0 / 1 / 2.
+  confirmClose: () => ipcRenderer.invoke("window:confirm-close"),
+  // Proceed to actually close this window (bypasses the guard once).
+  forceCloseWindow: () => ipcRenderer.invoke("window:force-close"),
+
+  // --- crash recovery (AutoRecover-style snapshots) ---
+  recovery: {
+    // Write/refresh this document's recovery snapshot. payload:
+    // { docId, bytes: Uint8Array, name, srcPath }. Returns { saved }.
+    save: (payload) => ipcRenderer.invoke("recovery:save", payload),
+    // Drop a document's snapshot (clean close / successful save).
+    clear: (docId) => ipcRenderer.invoke("recovery:clear", docId),
+    // Orphaned snapshots left by a previous (crashed) session, newest first.
+    // Returns them to the FIRST caller per app launch only. [{docId,name,srcPath,savedAt}].
+    scan: () => ipcRenderer.invoke("recovery:scan"),
+    // Read one snapshot back: { ok, bytes: Uint8Array, name, srcPath }.
+    read: (docId) => ipcRenderer.invoke("recovery:read", docId),
+  },
+
+  // --- digital signing (PKI; USB token via Windows Certificate Store) ---
+  signing: {
+    // Enumerate signing certificates (VNPT/Viettel/FPT… tokens). Returns
+    // { ok, certs: [{thumbprint, subject, cn, org, notAfter, expired, ...}] } or
+    // { ok:false, reason, error }.
+    listCerts: () => ipcRenderer.invoke("sign:list-certs"),
+    // Sign a PDF. payload: { bytes, thumbprint, tsaUrl?, meta, appearance? }.
+    // Returns { ok, bytes: Uint8Array } or { ok:false, reason, error }.
+    apply: (payload) => ipcRenderer.invoke("sign:apply", payload),
+  },
+
   // --- multi-window ---
   // Open a new empty document window.
   newWindow: () => ipcRenderer.invoke("window:new"),

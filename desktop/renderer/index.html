@@ -59,6 +59,7 @@
         <symbol id="ic-undo" viewBox="0 0 24 24"><path d="M9 14L4 9l5-5"/><path d="M4 9h11a5 5 0 1 1 0 10H8"/></symbol>
         <symbol id="ic-redo" viewBox="0 0 24 24"><path d="M15 14l5-5-5-5"/><path d="M20 9H9a5 5 0 1 0 0 10h8"/></symbol>
         <symbol id="ic-lock" viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="9" rx="1"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></symbol>
+        <symbol id="ic-signature" viewBox="0 0 24 24"><path d="M3 17c2.5 0 3-9 4.5-9S9 15 10.5 15 12 9 13.5 9 15 13 17 13"/><path d="M3 21h18"/><path d="M17 13c1.5 0 2-2 3-2"/></symbol>
         <symbol id="ic-convert" viewBox="0 0 24 24"><path d="M4 8h11l-3-3M20 16H9l3 3"/></symbol>
         <symbol id="ic-chevron" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></symbol>
         <symbol id="ic-fit" viewBox="0 0 24 24"><path d="M3 8V5a2 2 0 0 1 2-2h3"/><path d="M16 3h3a2 2 0 0 1 2 2v3"/><path d="M21 16v3a2 2 0 0 1-2 2h-3"/><path d="M8 21H5a2 2 0 0 1-2-2v-3"/><path d="M8 12h8"/><path d="m10 9-3 3 3 3"/><path d="m14 9 3 3-3 3"/></symbol>
@@ -171,6 +172,8 @@
             <button class="dd-item" id="mi-extract-images"><svg class="ic"><use href="#ic-photo"/></svg>Xuất ảnh trong PDF…</button>
             <div class="dd-sep"></div>
             <div class="dd-head">Bảo mật</div>
+            <!-- F3 ký số: mã đã sẵn sàng nhưng ẨN ở bản này (chờ build helper .NET + test token). Bỏ `hidden` để bật lại. -->
+            <button class="dd-item" id="mi-sign" hidden title="Ký số bằng USB token (VNPT-CA / Viettel-CA / FPT-CA / BKAV…) — chữ ký nhìn thấy + dấu thời gian"><svg class="ic"><use href="#ic-signature"/></svg>Ký số (USB token)…</button>
             <button class="dd-item" id="mi-encrypt"><svg class="ic"><use href="#ic-lock"/></svg>Khoá file (đặt mật khẩu)…</button>
           </div>
         </div>
@@ -214,6 +217,12 @@
       <button id="ed-italic" class="icon-only te-fmt" data-ctl="biu" title="In nghiêng" style="font-style:italic">I</button>
       <button id="ed-underline" class="icon-only te-fmt" data-ctl="biu" title="Gạch chân" style="text-decoration:underline">U</button>
       <label class="ctl" data-ctl="penwidth" title="Độ dày nét vẽ / nét viền">Nét <input type="number" id="ed-penwidth" min="1" max="24" value="2" /></label>
+      <label class="ctl" data-ctl="arrowlabel" title="Vị trí nhãn chữ của mũi tên">Nhãn
+        <select id="ed-arrowlabel">
+          <option value="head">Ở đầu (mũi nhọn)</option>
+          <option value="tail">Ở cuối (gốc)</option>
+        </select>
+      </label>
       <label class="ctl" data-ctl="cloudsize" title="Cỡ vòng mây: kéo nhỏ để mây ken đặc, sát viền hơn">Cỡ mây <input type="range" id="ed-cloudsize" min="6" max="28" step="1" value="12" /><span id="ed-cloudsize-val" class="readout">12</span></label>
       <label class="ctl" data-ctl="fill" title="Màu nền bên trong (khi khoanh vùng)">Nền <input type="color" id="ed-fill" value="#ffffff" /></label>
       <label class="ctl" data-ctl="fill" title="Không tô nền — để trong suốt"><input type="checkbox" id="ed-fill-none" checked /> Trong suốt</label>
@@ -535,6 +544,38 @@
         <div class="modal-actions">
           <button id="enc-cancel">Hủy</button>
           <button id="enc-ok" class="primary">Khoá &amp; lưu</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Digital signing (PKI — USB token via Windows Certificate Store) -->
+    <div class="modal" id="sign-modal" hidden>
+      <div class="modal-card">
+        <h3>Ký số (USB token)</h3>
+        <p class="cmp-note">Ký bằng chứng thư số trên token (VNPT-CA, Viettel-CA, FPT-CA, BKAV…). Cắm token trước khi ký — khoá bí mật không rời token, hệ thống sẽ hỏi mã PIN của token khi ký.</p>
+        <label>Chứng thư số
+          <span class="key-row">
+            <select id="sign-cert"><option value="">Đang tìm chứng thư…</option></select>
+            <button id="sign-refresh" type="button" class="ghost" title="Quét lại sau khi cắm token">Làm mới</button>
+          </span>
+        </label>
+        <label class="chk"><input type="checkbox" id="sign-visible" checked /> Hiển thị chữ ký trên trang (kéo khung sau khi bấm Tiếp)</label>
+        <div class="modal-row">
+          <label>Lý do ký <input id="sign-reason" type="text" placeholder="VD: Tôi đồng ý nội dung" autocomplete="off" /></label>
+          <label>Nơi ký <input id="sign-location" type="text" placeholder="VD: Hà Nội" autocomplete="off" /></label>
+        </div>
+        <div class="cmp2-pick">
+          <button id="sign-image-pick" type="button" class="ghost"><svg class="ic"><use href="#ic-photo"/></svg>Ảnh chữ ký / con dấu (tuỳ chọn)…</button>
+          <span id="sign-image-name" class="cmp2-name">Chưa chọn</span>
+          <button id="sign-image-clear" type="button" class="ghost" hidden>Bỏ ảnh</button>
+        </div>
+        <label>Dấu thời gian (TSA) — tuỳ chọn
+          <input id="sign-tsa" type="text" placeholder="Dán URL dịch vụ TSA của CA (để trống nếu không dùng)" autocomplete="off" spellcheck="false" />
+        </label>
+        <p class="cmp-note">Dấu thời gian tăng giá trị pháp lý (chứng minh thời điểm ký). Lấy URL TSA từ nhà cung cấp chữ ký số của bạn; để trống nếu chưa có. Chữ ký là bước cuối — sau khi ký, đừng sửa rồi lưu đè.</p>
+        <div class="modal-actions">
+          <button id="sign-cancel">Hủy</button>
+          <button id="sign-ok" class="primary">Tiếp: kéo khung trên trang</button>
         </div>
       </div>
     </div>
@@ -937,5 +978,6 @@
     <script src="text-edit.js"></script>
     <script src="compare.js"></script>
     <script src="capture.js"></script>
+    <script src="sign.js"></script>
   </body>
 </html>

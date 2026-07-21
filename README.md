@@ -3,11 +3,12 @@
 Bộ công cụ **PDF desktop** (Electron) cho tiếng Việt: xem · ghép · tách trang ·
 **tách thành nhiều file** · chèn · thêm trang trắng · xoay · **đánh số trang** · chú thích ·
 khoanh vùng (chữ nhật / elip / **khoanh mây revision** — chữ nhật hoặc **vẽ mây tự do** bằng bút/điểm, chọn nét viền + màu nền + **độ mờ nền 0–100%** + **cỡ vòng mây tuỳ chỉnh**) ·
-**mũi tên (kèm nhãn text ở đầu)** · **đo & ghi kích thước (dim — hiệu chuẩn 1 đoạn, các đoạn khác tự ghi theo tỷ lệ)** · hộp văn bản (font/đậm/nghiêng/gạch chân — **sửa/di chuyển lại được sau khi áp dụng**) · **ghi chú dạng chuỗi bình luận (note-of-note) — comment tiếp được sau khi áp dụng, đọc được ở Foxit/Acrobat, kèm bảng danh sách ghi chú toàn tài liệu (bấm để nhảy tới)** · **chèn ảnh / chữ ký** (đóng dấu 1 lần cho **nhiều trang**, nhận PNG/JPG/BMP) ·
+**mũi tên (nhãn text ở đầu hoặc cuối — sửa/di chuyển lại được sau khi áp dụng)** · **đo & ghi kích thước (dim — hiệu chuẩn 1 đoạn, các đoạn khác tự ghi theo tỷ lệ)** · hộp văn bản (font/đậm/nghiêng/gạch chân — **sửa/di chuyển lại được sau khi áp dụng**) · **ghi chú dạng chuỗi bình luận (note-of-note) — comment tiếp được sau khi áp dụng, đọc được ở Foxit/Acrobat, kèm bảng danh sách ghi chú toàn tài liệu (bấm để nhảy tới)** · **chèn ảnh / chữ ký** (đóng dấu 1 lần cho **nhiều trang**, nhận PNG/JPG/BMP) ·
 watermark · redact (che thông tin chọn màu) · **sửa chữ (tự OCR lấy lại chữ Việt lỗi font `.Vn`/mã hoá hỏng trên bản vẽ CAD/Revit)** · nén · **in (kết nối máy in)** · so sánh 2 file
 (văn bản & **bản vẽ CAD/Revit** — khoanh mây revision vùng thay đổi (**tick chọn từng vùng để khoanh**, mặc định chọn tất), **chồng lớp overlay 2 bản vẽ** căn tự động + tô màu khác biệt, phóng to/vừa bề ngang & **vừa chiều dọc**) ·
 tạo PDF tìm-kiếm-được · **dịch PDF (AI) giữ layout** (PDF có text thật, **giữ đúng cột/căn lề trong bảng**, xuất file mới) ·
 **mở nhiều cửa sổ** · **"Open with Nabu PDF"** (mở PDF trực tiếp từ Windows) · **copy/paste ảnh trong trang** ·
+**tự lưu & khôi phục khi sự cố** (máy tắt đột ngột / quên lưu → mở lại mời khôi phục) ·
 kèm **OCR + bóc tách hợp đồng** bằng AI. Giao diện **song ngữ Việt / Anh**.
 Chạy hoàn toàn trên máy (local-first).
 

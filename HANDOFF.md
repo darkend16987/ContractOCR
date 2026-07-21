@@ -4,7 +4,13 @@
 > [DESIGN.md](DESIGN.md) (kiến trúc), [ROADMAP.md](ROADMAP.md) (tiến độ chi tiết),
 > [SETUP.md](SETUP.md) (dựng môi trường).
 
-_Cập nhật: 2026-07-19 · v0.2.36_
+_Cập nhật: 2026-07-22 · v0.2.37_
+
+> v0.2.37 — **Mũi tên linh hoạt hơn + Tự lưu/khôi phục khi sự cố** (renderer + main; sidecar KHÔNG đổi):
+> - **F1 — Mũi tên** ([`editor.js`](desktop/renderer/editor.js), [`index.html`](desktop/renderer/index.html)): nhãn chữ chọn đặt ở **đầu (mũi nhọn) hoặc cuối (gốc)** (`a.labelEnd`, mặc định `head` → mũi tên cũ không đổi; helper `arrowLabelPos` dùng chung render/bake/ô nhập). Mũi tên vào **`MANAGED_KINDS`** → **sửa & di chuyển lại được sau khi Áp dụng** y như hộp văn bản (round-trip `/Stamp`+`/AP` raster qua `renderArrowPng` + `/NabuData`). Trang xoay → fallback flatten. Verify Node: geometry/màu/nhãn VN/labelEnd 11/11.
+> - **F2 — Tự lưu & khôi phục** ([`app.js`](desktop/renderer/app.js), [`preload.js`](desktop/src/preload.js), [`main.js`](desktop/src/main.js)): cờ dirty ở nút thắt `pushUndo`, chỉ báo `●` trên tiêu đề; **autosave nền** (interval 120s + debounce 15s) snapshot `state.bytes` vào `userData/recovery/<docId>`; mở lại sau crash → **mời khôi phục** bản mới nhất (guard chống double-prompt đa cửa sổ); GC bản >14 ngày. Đóng cửa sổ khi còn thay đổi → hộp thoại native **Lưu / Không lưu / Huỷ** (guard skip khi `appQuitting` để menu Thoát không treo).
+> - **F3 — Ký số PKI (token USB): mã đã có nhưng ẨN ở bản này.** Helper .NET 8 ([`signing-helper/`](desktop/signing-helper)) + [`src/signing.js`](desktop/src/signing.js) + [`renderer/sign.js`](desktop/renderer/sign.js) code xong nhưng menu "Ký số" để `hidden`, helper CHƯA build (máy build thiếu .NET 8 SDK) và chưa test token. Build-integration (extraResources + helper freshness-check) tạm gỡ; bật lại khi có SDK + test token thật. Xem [memory] digital-signature-pki.
+> - **Verify**: test Python 7/7 · node --check renderer OK · pipeline @signpdf+pdf-lib 12/12 (data). **CHƯA smoke-test GUI F1/F2** (user chấp nhận phát hành, verify mức dữ liệu + test tự động xanh).
 
 > v0.2.36 — **Tổng rà UX/UI toolbar + sửa lỗi sửa/di chuyển chú thích** (chủ yếu renderer; **binary rebuild** vì gói lại các refactor `api.py`/`src/pdf/*` tích luỹ từ trước — bản thân sidecar không đổi hành vi):
 > - **Sửa được text/comment sau khi tạo** ([`editor.js`](desktop/renderer/editor.js)): bấm đúp hộp văn bản/ghi chú/nhãn mũi tên để mở lại editor giờ chạy từ **mousedown thứ 2 (`e.detail>=2`)** thay vì sự kiện `dblclick` — `select()` re-render layer giữa 2 click làm trình duyệt retarget dblclick về layer nên editor không bao giờ mở; click vào textarea đang mở cũng bị `onDown` huỷ. Đăng ký `ed._taCommit` để click ra ngoài **commit** (không mất chữ vì innerHTML-wipe không bắn blur). Tool text/note bấm vào annot cùng loại → sửa/mở thread thay vì tạo đè.
