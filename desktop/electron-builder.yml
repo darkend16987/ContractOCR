@@ -28,6 +28,10 @@ files:
 extraResources:
   - from: ../dist/sidecar
     to: sidecar
+  # .NET signing helper (self-contained single-file exe) → resources/signing-helper.
+  # Run `npm run build:helper` first so this folder exists.
+  - from: dist-helper
+    to: signing-helper
   # License notices shipped alongside the binary (AGPL/Apache/MIT/BSD require it).
   - from: ../LICENSE
     to: LICENSE.txt

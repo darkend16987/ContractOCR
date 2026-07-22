@@ -9,6 +9,7 @@ watermark · redact (che thông tin chọn màu) · **sửa chữ (tự OCR lấ
 tạo PDF tìm-kiếm-được · **dịch PDF (AI) giữ layout** (PDF có text thật, **giữ đúng cột/căn lề trong bảng**, xuất file mới) ·
 **mở nhiều cửa sổ** · **"Open with Nabu PDF"** (mở PDF trực tiếp từ Windows) · **copy/paste ảnh trong trang** ·
 **tự lưu & khôi phục khi sự cố** (máy tắt đột ngột / quên lưu → mở lại mời khôi phục) ·
+**ký số bằng USB token** (VNPT-CA / Viettel-CA / FPT-CA / BKAV… qua kho chứng thư Windows — chữ ký nhìn thấy + dấu thời gian TSA) ·
 kèm **OCR + bóc tách hợp đồng** bằng AI. Giao diện **song ngữ Việt / Anh**.
 Chạy hoàn toàn trên máy (local-first).
 

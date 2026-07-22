@@ -33,4 +33,10 @@
     <PublishTrimmed>false</PublishTrimmed>
   </PropertyGroup>
 
+  <ItemGroup>
+    <!-- SignedCms / CmsSigner / Rfc3161TimestampRequest live here. In-box on .NET 8
+         but the compile-time reference must be added explicitly (else CS1069). -->
+    <PackageReference Include="System.Security.Cryptography.Pkcs" Version="8.0.1" />
+  </ItemGroup>
+
 </Project>

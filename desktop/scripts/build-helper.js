@@ -18,19 +18,38 @@ const proj = path.join(root, "signing-helper", "NabuSign.csproj");
 const outDir = path.join(root, "dist-helper");
 const exePath = path.join(outDir, "nabu-sign.exe");
 
-// Fail early with a clear message if the SDK is missing.
-try {
-  execFileSync("dotnet", ["--version"], { stdio: "ignore" });
-} catch {
-  console.error("\n[build-helper] .NET SDK not found on PATH.");
-  console.error("  Install the .NET 8 SDK, then re-run:  npm run build:helper");
+// Resolve a `dotnet` that actually has an SDK. On Windows an old x86 install
+// (C:\Program Files (x86)\dotnet, runtime-only) often shadows the real x64 SDK
+// on PATH, so `dotnet --list-sdks` there returns empty. Prefer the standard x64
+// location, then fall back to PATH — picking the first that reports ≥1 SDK.
+function resolveDotnet() {
+  const candidates = [];
+  if (process.platform === "win32") {
+    const pf = process.env.ProgramW6432 || process.env.ProgramFiles || "C:\\Program Files";
+    candidates.push(path.join(pf, "dotnet", "dotnet.exe"));
+  }
+  candidates.push("dotnet"); // PATH fallback
+  for (const c of candidates) {
+    try {
+      const out = execFileSync(c, ["--list-sdks"], { encoding: "utf8" });
+      if (out && out.trim()) return c;
+    } catch { /* try next candidate */ }
+  }
+  return null;
+}
+
+const DOTNET = resolveDotnet();
+if (!DOTNET) {
+  console.error("\n[build-helper] No .NET SDK found (checked C:\\Program Files\\dotnet and PATH).");
+  console.error("  Install the .NET 8 SDK (x64), then re-run:  npm run build:helper");
   console.error("  https://dotnet.microsoft.com/download/dotnet/8.0\n");
   process.exit(1);
 }
+console.log("[build-helper] using dotnet: " + DOTNET);
 
 console.log("[build-helper] dotnet publish (self-contained, single-file, win-x64)…");
 execFileSync(
-  "dotnet",
+  DOTNET,
   [
     "publish", proj,
     "-c", "Release",

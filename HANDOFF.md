@@ -4,7 +4,14 @@
 > [DESIGN.md](DESIGN.md) (kiến trúc), [ROADMAP.md](ROADMAP.md) (tiến độ chi tiết),
 > [SETUP.md](SETUP.md) (dựng môi trường).
 
-_Cập nhật: 2026-07-22 · v0.2.37_
+_Cập nhật: 2026-07-22 · v0.2.38_
+
+> v0.2.38 — **Ký số PKI bằng USB token (BẬT)** — kích hoạt F3 đã ship dormant ở v0.2.37:
+> - Máy build đã cài **.NET 8 SDK** (8.0.423). [`build-helper.js`](desktop/scripts/build-helper.js) tự chọn `dotnet` **x64** (bản x86 ở `Program Files (x86)` che PATH → `--list-sdks` rỗng); [`NabuSign.csproj`](desktop/signing-helper/NabuSign.csproj) thêm `PackageReference System.Security.Cryptography.Pkcs 8.0.1` (sửa CS1069).
+> - Helper build OK → `dist-helper/nabu-sign.exe` (~33.6MB self-contained). `list-certs` chạy thật đọc đúng cert từ Windows store (JSON UTF-8, exit 0).
+> - Bật lại: bỏ `hidden` menu `mi-sign`; thêm lại extraResources `dist-helper→signing-helper` + helper freshness-check.
+> - Landing (/site): thêm card "Ký số bằng USB token".
+> - **CHƯA test ký với token thật** (máy build không có token) — user chấp nhận phát hành, test sau. Đường ký/PIN/TSA chỉ verify được với token.
 
 > v0.2.37 — **Mũi tên linh hoạt hơn + Tự lưu/khôi phục khi sự cố** (renderer + main; sidecar KHÔNG đổi):
 > - **F1 — Mũi tên** ([`editor.js`](desktop/renderer/editor.js), [`index.html`](desktop/renderer/index.html)): nhãn chữ chọn đặt ở **đầu (mũi nhọn) hoặc cuối (gốc)** (`a.labelEnd`, mặc định `head` → mũi tên cũ không đổi; helper `arrowLabelPos` dùng chung render/bake/ô nhập). Mũi tên vào **`MANAGED_KINDS`** → **sửa & di chuyển lại được sau khi Áp dụng** y như hộp văn bản (round-trip `/Stamp`+`/AP` raster qua `renderArrowPng` + `/NabuData`). Trang xoay → fallback flatten. Verify Node: geometry/màu/nhãn VN/labelEnd 11/11.

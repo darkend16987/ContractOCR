@@ -84,6 +84,44 @@ if (dirty) {
 
 console.log(`[sidecar-check] OK — sidecar built from ${builtCommit.slice(0, 8)} matches current source.`);
 
-// NOTE: the .NET signing-helper freshness guard is intentionally NOT wired yet —
-// F3 (ký số) ships dormant (menu hidden, helper not bundled) until the build
-// machine has the .NET 8 SDK. Re-add the guard when the helper is packaged.
+// --- signing helper (.NET) — same commit-based freshness guard ---------------
+// Override (e.g. a renderer-only rebuild on a machine without the .NET SDK):
+// SKIP_HELPER_CHECK=1.
+if (process.env.SKIP_HELPER_CHECK === "1") {
+  console.log("[helper-check] skipped (SKIP_HELPER_CHECK=1)");
+} else {
+  const helperExe = path.join(desktop, "dist-helper", "nabu-sign.exe");
+  const helperMarker = path.join(desktop, "dist-helper", "HELPER_BUILD.json");
+  const helperFail = (msg) => {
+    console.error("\n[helper-check] " + msg);
+    console.error("  Fix: cd desktop && npm run build:helper   (needs the .NET 8 SDK)");
+    console.error("  Or, if the C# source is unchanged: SKIP_HELPER_CHECK=1 npm run build\n");
+    process.exit(1);
+  };
+  if (!fs.existsSync(helperExe)) {
+    helperFail("No signing helper in dist-helper/nabu-sign.exe — build it before packaging.");
+  }
+  if (!fs.existsSync(helperMarker)) {
+    helperFail("dist-helper has no HELPER_BUILD.json marker — rebuild to be safe.");
+  }
+  const hBuilt = JSON.parse(fs.readFileSync(helperMarker, "utf8")).commit;
+  let hChanged, hDirty;
+  try {
+    hChanged = execSync(`git diff --name-only ${hBuilt} HEAD -- desktop/signing-helper`, { cwd: root })
+      .toString()
+      .trim();
+    hDirty = execSync("git status --porcelain -- desktop/signing-helper", { cwd: root }).toString().trim();
+  } catch (e) {
+    helperFail("git check failed (" + e.message + "). Cannot verify helper freshness.");
+  }
+  if (hChanged) {
+    helperFail(
+      `Helper C# source changed since it was built (${hBuilt.slice(0, 8)} → ${head.slice(0, 8)}):\n` +
+        hChanged.split("\n").map((f) => "    " + f).join("\n")
+    );
+  }
+  if (hDirty) {
+    helperFail("Uncommitted changes under desktop/signing-helper — the built helper omits them:\n" + hDirty);
+  }
+  console.log(`[helper-check] OK — signing helper built from ${hBuilt.slice(0, 8)} matches current source.`);
+}
