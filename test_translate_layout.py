@@ -431,6 +431,65 @@ def test_retranslating_an_output_does_not_draw_boxes():
         assert notdef(pdf) == 0, "re-translate drew boxes — a stale font resource was reused"
 
 
+def test_translate_falls_back_when_source_font_lacks_vietnamese():
+    """EN→VI: the source block carries the ORIGINAL PDF font, which is an English
+    font. Many Western fonts have no glyphs for the Vietnamese range (Latin Extended
+    Additional, U+1EA0–U+1EFF), so re-typesetting the translation in that same font
+    makes insert_textbox draw notdef boxes (□) SILENTLY. /translate-pdf must detect
+    that and drop to the bundled DejaVu — the coverage guard /edit-text already has.
+
+    Forced deterministically: _resolve_local_font is pinned to matplotlib's cmr10.ttf
+    (Computer Modern — it resolves cleanly but is missing Vietnamese diacritics),
+    standing in for such an English font. Without the guard the accented glyphs come
+    out as notdef; with it they render from DejaVu.
+    """
+    import os
+    import matplotlib
+
+    cmr10 = os.path.join(matplotlib.get_data_path(), "fonts", "ttf", "cmr10.ttf")
+    # If this fixture font ever gained Vietnamese coverage the test would prove
+    # nothing — assert the premise up front.
+    assert fitz.Font(fontfile=cmr10).has_glyph(ord("ế")) == 0
+
+    def notdef(pdf_bytes: bytes) -> int:
+        d = fitz.open(stream=pdf_bytes, filetype="pdf")
+        try:
+            return sum(l.count("\x00") for l in d[0].get_text().splitlines())
+        finally:
+            d.close()
+
+    doc = fitz.open()
+    page = doc.new_page(width=W, height=H)
+    for i, t in enumerate(("Quality control on site", "Reinforced steel bar")):
+        page.insert_text((60, 100 + i * 30), t, fontsize=12)
+    pdf = doc.tobytes(deflate=True, garbage=3)
+    doc.close()
+
+    book = {
+        "Quality control on site": "Nghiệm thu hiện trường đầy đủ",
+        "Reinforced steel bar": "Thanh thép gia cường chịu lực",
+    }
+
+    real = api._resolve_local_font
+    api._resolve_local_font = lambda name, bold, italic: cmr10  # pin the "English" font
+    try:
+        resp, out, _ = _translate(pdf, book)
+    finally:
+        api._resolve_local_font = real
+    out.close()
+    pdf_out = base64.b64decode(resp.data_b64)
+
+    assert resp.blocks_translated >= 2, "the two blocks were not re-typeset"
+    assert notdef(pdf_out) == 0, "translated Vietnamese drew notdef boxes — coverage guard missing"
+
+    d = fitz.open(stream=pdf_out, filetype="pdf")
+    try:
+        txt = d[0].get_text()
+    finally:
+        d.close()
+    assert "Nghiệm" in txt and "trường" in txt, "the Vietnamese diacritics did not survive"
+
+
 def test_fit_fontsize_never_overflows():
     """Whatever size `_fit_fontsize` returns, insert_textbox must accept it.
 
@@ -475,6 +534,7 @@ if __name__ == "__main__":
         test_long_translation_shrinks_but_survives,
         test_plain_page_keeps_the_old_geometry,
         test_retranslating_an_output_does_not_draw_boxes,
+        test_translate_falls_back_when_source_font_lacks_vietnamese,
         test_fit_fontsize_never_overflows,
     ):
         fn()

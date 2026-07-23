@@ -326,12 +326,15 @@
         meta: { name: cfg.name, reason: cfg.reason, location: cfg.location, contactInfo: cfg.email || "" },
         appearance,
       });
-      hideOverlay();
+      if (!res.ok) { hideOverlay(); toast(explainError(res), "bad"); return; }
 
-      if (!res.ok) { toast(explainError(res), "bad"); return; }
-
+      // Keep the busy overlay up through the write — signing offloads to a
+      // utilityProcess now, so the window stays responsive and the spinner
+      // actually animates (it used to be hidden here, leaving the save blank).
+      showOverlay("Đang lưu file đã ký…");
       const suggested = baseName(state.name || "tai-lieu") + "-daky.pdf";
       const save = await window.desktop.savePdf(res.bytes, suggested);
+      hideOverlay();
       if (save.saved) {
         toast("Đã ký & lưu: " + save.path, "good");
         setTimeout(

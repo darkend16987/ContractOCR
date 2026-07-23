@@ -4,7 +4,15 @@
 > [DESIGN.md](DESIGN.md) (kiến trúc), [ROADMAP.md](ROADMAP.md) (tiến độ chi tiết),
 > [SETUP.md](SETUP.md) (dựng môi trường).
 
-_Cập nhật: 2026-07-22 · v0.2.38_
+_Cập nhật: 2026-07-23 · v0.2.39_
+
+> v0.2.39 — **Định dạng hộp văn bản + In khổ lớn + sửa 3 lỗi + xuất Office** (renderer + sidecar; **binary rebuild** vì đổi `api.py` và thêm `python-docx`):
+> - **Định dạng hộp văn bản** ([`editor.js`](desktop/renderer/editor.js), [`index.html`](desktop/renderer/index.html), [`app.css`](desktop/renderer/app.css)): bảng **Định dạng** bên phải khi chọn/tạo hộp văn bản — căn lề trái/giữa/phải/**đều**, thụt lề −/＋, **bullet/đánh số**, giãn dòng/đoạn/ký tự/từ, **co giãn ngang**, độ mờ, gạch ngang, và **Sắp xếp theo trang** (căn giữa ngang/dọc/cả hai + sát mép). Một "engine dàn chữ" dùng chung cho đo/xem-trước/ghi-PNG nên WYSIWYG khớp; mọi field lưu vào `/NabuData` (file cũ tự nhận mặc định an toàn). Verify: layout 20/20 + round-trip 21/21 (Node).
+> - **#3 In khổ A0/A1/A2** ([`index.html`](desktop/renderer/index.html), [`main.js`](desktop/src/main.js), [`app.js`](desktop/renderer/app.js)): thêm A0/A1/A2 (Electron 33 hỗ trợ sẵn) + **cap megapixel thích ứng** cho `buildPrintPages` (A5–A2 giữ 150 DPI; A1≈124, A0≈88 DPI) tránh OOM khi in bản vẽ khổ lớn nhiều trang; báo tiến trình theo trang.
+> - **#4a Ký số hết "Not Responding"** ([`signing.js`](desktop/src/signing.js), [`signing-worker.js`](desktop/src/signing-worker.js) MỚI, [`main.js`](desktop/src/main.js), [`sign.js`](desktop/renderer/sign.js)): chuyển pdf-lib/@signpdf sang **utilityProcess** riêng + ghi file async → main thread không treo khi ký+lưu. Logic ký giữ nguyên byte-for-byte. **Đã test token thật** (chữ ký hợp lệ, đúng thumbprint, integrity OK).
+> - **#4b Hộp văn bản chú thích hết "đơ" sau Hủy bỏ** ([`editor.js`](desktop/renderer/editor.js), [`text-edit.js`](desktop/renderer/text-edit.js), [`app.js`](desktop/renderer/app.js)): thay `window.confirm` (chặn renderer + blur mất con trỏ) bằng modal in-DOM `uiConfirm`.
+> - **#1 Dịch EN→VI hết ô vuông □** ([`api.py`](api.py)): `/translate-pdf` thêm guard phủ font Unicode (mirror `/edit-text`) — font nguồn không đủ tiếng Việt thì fallback. Regression test thêm.
+> - **#2 Xuất PDF → Office** ([`src/output/pdf_office.py`](src/output/pdf_office.py) MỚI, [`api.py`](api.py), `python-docx`): endpoint `/pdf-to-office` + menu "Xuất ra Office" → **xlsx/docx/csv** (thông minh theo định dạng: bảng có cấu trúc + văn bản). Test 6/6.
 
 > v0.2.38 — **Ký số PKI bằng USB token (BẬT)** — kích hoạt F3 đã ship dormant ở v0.2.37:
 > - Máy build đã cài **.NET 8 SDK** (8.0.423). [`build-helper.js`](desktop/scripts/build-helper.js) tự chọn `dotnet` **x64** (bản x86 ở `Program Files (x86)` che PATH → `--list-sdks` rỗng); [`NabuSign.csproj`](desktop/signing-helper/NabuSign.csproj) thêm `PackageReference System.Security.Cryptography.Pkcs 8.0.1` (sửa CS1069).

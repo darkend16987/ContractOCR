@@ -66,6 +66,17 @@
     bold: false,
     italic: false,
     underline: false,
+    // --- text-box paragraph / advanced formatting (defaults for NEW boxes) ---
+    strike: false, // strikethrough
+    align: "left", // left | center | right | justify
+    lineHeight: 1.3, // line-spacing multiplier
+    paraSpacing: 0, // extra pt at blank-line paragraph breaks
+    letterSpacing: 0, // pt between characters
+    wordSpacing: 0, // pt added on spaces
+    charScale: 1, // horizontal glyph scale (1 = 100%)
+    indent: 0, // left indent in pt
+    listType: "none", // none | bullet | number
+    textOpacity: 1, // 0..1 text opacity
     penWidth: 2,
     arrowLabelEnd: "head", // where a new arrow's label sits: "head" (tip) or "tail" (base)
     fillColor: "#ffffff", // interior fill for box / ellipse / cloud / cloudpen
@@ -236,18 +247,179 @@
     const weight = o.bold ? "700 " : "";
     return `${style}${weight}${fontSizePx}px ${fontFamily(o.font)}`;
   }
-  function measureText(text, fontSizePt, opts) {
-    const ctx = measureCtx();
-    ctx.font = textFont(fontSizePt, opts);
-    const lines = (text || "").split("\n");
-    let w = 1;
-    for (const ln of lines) w = Math.max(w, ctx.measureText(ln || " ").width);
-    const lh = fontSizePt * 1.3;
-    return { w: Math.ceil(w) + 4, h: Math.ceil(lh * lines.length) + 4 };
+  // Normalise a text annotation (or a partial style object) into the full set of
+  // style fields the layout engine understands, filling in safe defaults. Old
+  // files / older annots that lack the new fields keep their original look.
+  function normTextStyle(a) {
+    a = a || {};
+    const num = (v, d) => (v == null || isNaN(+v) ? d : +v);
+    const al = a.align;
+    return {
+      font: a.font || "sans",
+      bold: !!a.bold,
+      italic: !!a.italic,
+      underline: !!a.underline,
+      strike: !!a.strike,
+      align: al === "center" || al === "right" || al === "justify" ? al : "left",
+      lineHeight: Math.max(0.5, num(a.lineHeight, 1.3)), // multiplier of font size
+      paraSpacing: Math.max(0, num(a.paraSpacing, 0)), // extra pt at blank-line breaks
+      letterSpacing: num(a.letterSpacing, 0), // pt between characters
+      wordSpacing: num(a.wordSpacing, 0), // pt added on spaces
+      charScale: Math.max(0.2, num(a.charScale, 1)), // horizontal glyph scale (1 = 100%)
+      indent: Math.max(0, num(a.indent, 0)), // left indent in pt
+      listType: a.listType === "bullet" || a.listType === "number" ? a.listType : "none",
+      opacity: Math.min(1, Math.max(0, num(a.opacity, 1))),
+    };
   }
-  // The style bundle stored on / read from a text annotation.
+  // Back-compat alias: the style bundle read off a text annotation is now the full
+  // normalised set (superset of the old {font,bold,italic}).
   function textStyle(a) {
-    return { font: a.font, bold: a.bold, italic: a.italic };
+    return normTextStyle(a);
+  }
+
+  // Core text layout, shared by measureText (box sizing) and renderTextPng (baked
+  // PNG) so the on-screen box and the printed result always agree. Positions EVERY
+  // glyph so we can honour alignment, justify, letter/word spacing, horizontal
+  // char scale, indent and bullet/number lists — none of which plain fillText(str)
+  // can do. Works in an abstract unit: `fpx` is the font size in that unit and
+  // `upp` is units-per-point (so pt-based spacings scale correctly): raster passes
+  // fpx=sizePt*RS, upp=RS; measuring passes fpx=sizePt, upp=1.
+  //   ctx: a canvas-2d-like object (needs .font + measureText(str).width).
+  // Returns { width, height, ops:[{ch,x,y}], decos:[{x0,x1,y,kind}], style }.
+  function layoutTextBox(text, style, ctx, fpx, upp) {
+    const s = normTextStyle(style);
+    ctx.font = textFont(fpx, s);
+    const meas = (str) => ctx.measureText(str).width;
+    const sx = s.charScale;
+    const ls = s.letterSpacing * upp;
+    const ws = s.wordSpacing * upp;
+    const indent = s.indent * upp;
+    const para = s.paraSpacing * upp;
+    const lh = fpx * s.lineHeight;
+    const markerGap = fpx * 0.4;
+    const isList = s.listType === "bullet" || s.listType === "number";
+
+    const rawLines = String(text == null ? "" : text).split("\n");
+    // Width of a line's text run, including char scale + letter/word spacing but
+    // NOT the trailing letter-space (spacing sits *between* glyphs).
+    const lineTextWidth = (str) => {
+      let w = 0;
+      for (const ch of str) {
+        w += meas(ch) * sx + ls;
+        if (ch === " ") w += ws;
+      }
+      if (str.length) w -= ls;
+      return Math.max(0, w);
+    };
+
+    let num = 0;
+    const items = rawLines.map((str) => {
+      const blank = str.trim() === "";
+      let marker = "";
+      if (isList && !blank) {
+        num++;
+        marker = s.listType === "bullet" ? "•" : num + ".";
+      }
+      return { str, blank, marker };
+    });
+    const markerW = (m) => (m ? meas(m) * sx : 0);
+    const maxMarkerW = items.reduce((mx, it) => Math.max(mx, markerW(it.marker)), 0);
+    const textLeft = indent + (isList ? maxMarkerW + markerGap : 0);
+    const blockW = items.reduce((mx, it) => Math.max(mx, lineTextWidth(it.str)), 1);
+
+    const ops = [];
+    const decos = [];
+    let y = 0;
+    items.forEach((it, idx) => {
+      if (!it.blank) {
+        const lw = lineTextWidth(it.str);
+        const lastOfPara = idx === items.length - 1 || items[idx + 1].blank;
+        let offset = 0;
+        let justifyExtra = 0;
+        if (s.align === "center") offset = (blockW - lw) / 2;
+        else if (s.align === "right") offset = blockW - lw;
+        else if (s.align === "justify" && !lastOfPara) {
+          const spaces = (it.str.match(/ /g) || []).length;
+          if (spaces > 0) justifyExtra = (blockW - lw) / spaces;
+        }
+        // Marker (bullet / number) sits at the indent; text follows it.
+        if (it.marker) {
+          let mx = indent;
+          for (const ch of it.marker) {
+            ops.push({ ch, x: mx, y });
+            mx += meas(ch) * sx;
+          }
+        }
+        let cx = textLeft + offset;
+        const lineStartX = cx;
+        for (const ch of it.str) {
+          ops.push({ ch, x: cx, y });
+          cx += meas(ch) * sx + ls;
+          if (ch === " ") cx += ws + justifyExtra;
+        }
+        const lineEndX = it.str.length ? cx - ls : lineStartX;
+        if (s.underline) decos.push({ x0: lineStartX, x1: lineEndX, y: y + fpx * 1.02, kind: "under" });
+        if (s.strike) decos.push({ x0: lineStartX, x1: lineEndX, y: y + fpx * 0.62, kind: "strike" });
+      }
+      y += lh;
+      if (it.blank) y += para;
+    });
+
+    return { width: Math.max(1, textLeft + blockW), height: Math.max(lh, y), ops, decos, style: s };
+  }
+
+  function measureText(text, fontSizePt, opts) {
+    const lay = layoutTextBox(text, opts, measureCtx(), fontSizePt, 1);
+    const pad = fontSizePt * 0.15;
+    return { w: Math.ceil(lay.width + pad * 2), h: Math.ceil(lay.height + pad * 2) };
+  }
+
+  // The formatting bundle a NEW text box inherits from the current palette state.
+  // (ed.textOpacity → the annot's `opacity`, kept distinct from fill opacity.)
+  function edTextStyle() {
+    return {
+      font: ed.font, bold: ed.bold, italic: ed.italic, underline: ed.underline,
+      strike: ed.strike, align: ed.align, lineHeight: ed.lineHeight,
+      paraSpacing: ed.paraSpacing, letterSpacing: ed.letterSpacing,
+      wordSpacing: ed.wordSpacing, charScale: ed.charScale, indent: ed.indent,
+      listType: ed.listType, opacity: ed.textOpacity,
+    };
+  }
+
+  // Apply a text style to a DOM element (on-screen box or the inline <textarea>)
+  // as a live preview. `scalePx` = px per PDF point (state.scale). Char-scale and
+  // list markers are handled by the caller (they need DOM structure changes); the
+  // baked PNG via renderTextPng is always the exact source of truth.
+  function applyTextCss(el, style, scalePx) {
+    const s = normTextStyle(style);
+    el.style.textAlign = s.align;
+    el.style.lineHeight = String(s.lineHeight);
+    el.style.letterSpacing = s.letterSpacing * scalePx + "px";
+    el.style.wordSpacing = s.wordSpacing * scalePx + "px";
+    el.style.paddingLeft = s.indent * scalePx + "px";
+    el.style.opacity = String(s.opacity);
+    el.style.fontWeight = s.bold ? "700" : "400";
+    el.style.fontStyle = s.italic ? "italic" : "normal";
+    el.style.fontFamily = fontFamily(s.font);
+    el.style.textDecoration =
+      [s.underline && "underline", s.strike && "line-through"].filter(Boolean).join(" ") || "none";
+  }
+
+  // Text with bullet/number markers prefixed per non-empty line — DISPLAY ONLY
+  // (the stored `text` stays clean so editing never touches the markers).
+  function listDisplayText(text, style) {
+    const s = normTextStyle(style);
+    const str = text == null ? "" : String(text);
+    if (s.listType === "none") return str;
+    let n = 0;
+    return str
+      .split("\n")
+      .map((ln) => {
+        if (ln.trim() === "") return ln;
+        n++;
+        return (s.listType === "bullet" ? "• " : n + ". ") + ln;
+      })
+      .join("\n");
   }
 
   function hexRgb(hex) {
@@ -748,13 +920,17 @@
     el.style.height = a.h * s + "px";
 
     if (a.kind === "text") {
+      const st = normTextStyle(a);
       el.style.fontSize = a.fontSize * s + "px";
       el.style.color = a.color;
-      el.style.fontFamily = fontFamily(a.font);
-      el.style.fontWeight = a.bold ? "700" : "400";
-      el.style.fontStyle = a.italic ? "italic" : "normal";
-      el.style.textDecoration = a.underline ? "underline" : "none";
-      el.textContent = a.text;
+      applyTextCss(el, st, s); // font/weight/style/align/spacing/indent/opacity/decoration
+      el.textContent = listDisplayText(a.text, st); // markers are display-only
+      // Horizontal character scale — approximate preview (baked PNG is exact).
+      if (st.charScale !== 1) {
+        el.style.width = (a.w * s) / st.charScale + "px";
+        el.style.transformOrigin = "left top";
+        el.style.transform = `scaleX(${st.charScale})`;
+      }
     } else if (a.kind === "redact") {
       el.style.background = a.color || "#000";
     } else if (a.kind === "highlight") {
@@ -813,6 +989,7 @@
     syncOverlays();
     syncControls();
     if (ed.tool === "select") syncCtlVisibility("select");
+    updateFmtPanel(); // reflect a newly-selected text box (or hide otherwise)
     // Discoverability: the editable kinds reopen their editor on double-click.
     const hit = findAnnot(id);
     const k = hit && hit.a.kind;
@@ -824,6 +1001,7 @@
     syncOverlays();
     setSelHint(null);
     if (ed.tool === "select") syncCtlVisibility("select");
+    updateFmtPanel();
   }
   const SELECT_HINT = "Kéo để di chuyển; góc để đổi cỡ; Delete để xoá.";
   // Update the edit-bar readout for the select tool. `null` restores the generic
@@ -1317,17 +1495,12 @@
     const ta = document.createElement("textarea");
     ta.className = "annot-text-edit";
     const fs = existing ? existing.fontSize : ed.fontSize;
-    const st = existing
-      ? { font: existing.font, bold: existing.bold, italic: existing.italic, underline: existing.underline }
-      : { font: ed.font, bold: ed.bold, italic: ed.italic, underline: ed.underline };
+    const st = existing ? normTextStyle(existing) : edTextStyle();
     ta.style.left = p.x * state.scale + "px";
     ta.style.top = p.y * state.scale + "px";
     ta.style.fontSize = fs * state.scale + "px";
     ta.style.color = existing ? existing.color : ed.color;
-    ta.style.fontFamily = fontFamily(st.font);
-    ta.style.fontWeight = st.bold ? "700" : "400";
-    ta.style.fontStyle = st.italic ? "italic" : "normal";
-    ta.style.textDecoration = st.underline ? "underline" : "none";
+    applyTextCss(ta, st, state.scale); // live-preview the full paragraph style
     ta.value = existing ? existing.text : "";
     layer.appendChild(ta);
     ta.focus();
@@ -1349,7 +1522,8 @@
         }
       } else if (text) {
         pushEdUndo();
-        const m = measureText(text, ed.fontSize, { font: ed.font, bold: ed.bold, italic: ed.italic });
+        const stNew = edTextStyle();
+        const m = measureText(text, ed.fontSize, stNew);
         annotsFor(i).push({
           id: ed.seq++,
           kind: "text",
@@ -1360,10 +1534,7 @@
           text,
           fontSize: ed.fontSize,
           color: ed.color,
-          font: ed.font,
-          bold: ed.bold,
-          italic: ed.italic,
-          underline: ed.underline,
+          ...stNew, // font, bold, italic, underline, strike, align, spacing, list, opacity…
         });
         ed._managedPages.add(i);
       }
@@ -1697,36 +1868,41 @@
 
   function renderTextPng(text, fontSizePt, colorHex, opts) {
     const RS = 3; // supersample for crisp text
-    const lines = (text || "").split("\n");
-    const ctx = measureCtx();
+    const s = normTextStyle(opts);
     const fpx = fontSizePt * RS;
-    ctx.font = textFont(fpx, opts);
-    let maxW = 1;
-    for (const ln of lines) maxW = Math.max(maxW, ctx.measureText(ln || " ").width);
-    const lh = fpx * 1.3;
+    // Same layout the on-screen box was measured with (fpx=sizePt*RS, upp=RS).
+    const lay = layoutTextBox(text, s, measureCtx(), fpx, RS);
     const pad = Math.ceil(fpx * 0.15);
-    const cw = Math.ceil(maxW) + pad * 2;
-    const chh = Math.ceil(lh * lines.length) + pad * 2;
+    const cw = Math.ceil(lay.width) + pad * 2;
+    const chh = Math.ceil(lay.height) + pad * 2;
     const c = document.createElement("canvas");
     c.width = cw;
     c.height = chh;
     const cx = c.getContext("2d");
-    cx.font = textFont(fpx, opts);
+    cx.font = textFont(fpx, s);
     cx.fillStyle = colorHex;
+    cx.strokeStyle = colorHex;
     cx.textBaseline = "top";
-    lines.forEach((ln, k) => cx.fillText(ln, pad, pad + k * lh));
-    // Canvas has no underline — draw it manually under each line's glyphs.
-    if (opts && opts.underline) {
-      cx.strokeStyle = colorHex;
+    cx.globalAlpha = s.opacity;
+    // Draw every glyph at its laid-out position; horizontal char-scale is applied
+    // per glyph (translate → scaleX → fillText) so advances and drawing agree.
+    for (const op of lay.ops) {
+      cx.save();
+      cx.translate(pad + op.x, pad + op.y);
+      if (s.charScale !== 1) cx.scale(s.charScale, 1);
+      cx.fillText(op.ch, 0, 0);
+      cx.restore();
+    }
+    // Underline / strikethrough — canvas has neither; draw them from the engine's
+    // decoration spans (already in scaled units).
+    if (lay.decos.length) {
       cx.lineWidth = Math.max(1, fpx * 0.06);
-      lines.forEach((ln, k) => {
-        const w = ctx.measureText(ln || " ").width;
-        const y = pad + k * lh + fpx * 1.02;
+      for (const d of lay.decos) {
         cx.beginPath();
-        cx.moveTo(pad, y);
-        cx.lineTo(pad + w, y);
+        cx.moveTo(pad + d.x0, pad + d.y);
+        cx.lineTo(pad + d.x1, pad + d.y);
         cx.stroke();
-      });
+      }
     }
     return { bytes: dataUrlToBytes(c.toDataURL("image/png")), wPt: cw / RS, hPt: chh / RS };
   }
@@ -1863,9 +2039,14 @@
   // restyling is lossless.
   function serializeManaged(a) {
     if (a.kind === "text") {
+      const s = normTextStyle(a);
       return { k: "text", x: a.x, y: a.y, w: a.w, h: a.h, text: a.text,
                font: a.font, fontSize: a.fontSize, color: a.color,
-               bold: !!a.bold, italic: !!a.italic, underline: !!a.underline };
+               bold: !!a.bold, italic: !!a.italic, underline: !!a.underline,
+               strike: s.strike, align: s.align, lineHeight: s.lineHeight,
+               paraSpacing: s.paraSpacing, letterSpacing: s.letterSpacing,
+               wordSpacing: s.wordSpacing, charScale: s.charScale,
+               indent: s.indent, listType: s.listType, opacity: s.opacity };
     }
     if (a.kind === "arrow") {
       return { k: "arrow", x1: a.x1, y1: a.y1, x2: a.x2, y2: a.y2,
@@ -1882,11 +2063,18 @@
     if (!data || !data.k) return null;
     if (data.k === "text") {
       if (!data.text) return null;
+      // normTextStyle fills defaults for any field an older file didn't store.
+      const s = normTextStyle(data);
       return { id: ed.seq++, kind: "text", x: +data.x || 0, y: +data.y || 0,
                w: +data.w || 1, h: +data.h || 1, text: String(data.text),
                font: data.font || "sans", fontSize: +data.fontSize || 16,
                color: data.color || "#000000", bold: !!data.bold,
-               italic: !!data.italic, underline: !!data.underline, _managed: true };
+               italic: !!data.italic, underline: !!data.underline,
+               strike: s.strike, align: s.align, lineHeight: s.lineHeight,
+               paraSpacing: s.paraSpacing, letterSpacing: s.letterSpacing,
+               wordSpacing: s.wordSpacing, charScale: s.charScale,
+               indent: s.indent, listType: s.listType, opacity: s.opacity,
+               _managed: true };
     }
     if (data.k === "arrow") {
       return { id: ed.seq++, kind: "arrow",
@@ -1921,9 +2109,9 @@
     const dataHex = PDFHexString.fromText(JSON.stringify(serializeManaged(a)));
     if (a.kind === "text") {
       if (page.getRotation().angle % 360 !== 0) return false; // deferred: rotated text keeps flattening
-      const { bytes, wPt, hPt } = renderTextPng(a.text, a.fontSize, a.color, {
-        font: a.font, bold: a.bold, italic: a.italic, underline: a.underline,
-      });
+      // Pass the whole annot as the style so alignment / spacing / lists / scale /
+      // opacity all bake in (normTextStyle picks the fields it needs).
+      const { bytes, wPt, hPt } = renderTextPng(a.text, a.fontSize, a.color, a);
       const img = await doc.embedPng(bytes);
       const padPt = a.fontSize * 0.15;
       const [bx, by] = map(a.x - padPt, a.y - padPt + hPt); // lower-left, matches flattened path
@@ -2083,12 +2271,7 @@
           page.drawLine({ start: { x: sx, y: sy }, end: { x: ex, y: ey }, thickness: a.width, color: c });
         }
       } else if (a.kind === "text") {
-        const { bytes, wPt, hPt } = renderTextPng(a.text, a.fontSize, a.color, {
-          font: a.font,
-          bold: a.bold,
-          italic: a.italic,
-          underline: a.underline,
-        });
+        const { bytes, wPt, hPt } = renderTextPng(a.text, a.fontSize, a.color, a);
         const img = await doc.embedPng(bytes);
         // The PNG carries ~0.15em padding; offset so the glyphs line up with
         // where the overlay (zero-padding) showed them.
@@ -2597,6 +2780,7 @@
     document.querySelectorAll("#edit-bar [data-ctl]").forEach((el) => {
       el.hidden = !show.includes(el.dataset.ctl);
     });
+    updateFmtPanel();
   }
 
   function setTool(tool) {
@@ -2683,6 +2867,7 @@
     ed.active = false;
     ed.sel = null;
     $("edit-bar").hidden = true;
+    $("fmt-panel").hidden = true;
     $("btn-edit").classList.remove("active");
     updateToolbar();
     if (typeof updateUndoRedo === "function") updateUndoRedo(); // hand Ctrl+Z back to doc history
@@ -2711,7 +2896,7 @@
   // something; on discard the untouched baked appearances simply reappear.
   async function discardExit() {
     const n = ed._dirty ? countAnnots() : 0;
-    if (n && !window.confirm(`Bỏ ${n} chỉnh sửa chưa ghi và thoát?`)) return;
+    if (n && !(await window.uiConfirm(`Bỏ ${n} chỉnh sửa chưa ghi và thoát?`, { okText: "Bỏ & thoát", cancelText: "Ở lại" }))) return;
     reset();
     clearEdHistory();
     leaveMode();
@@ -2846,6 +3031,148 @@
       }
     });
   });
+  // ---- text-box Format panel (paragraph / spacing / list / arrange) --------
+  const INDENT_STEP = 18; // pt per indent click (~0.25")
+
+  // Apply a formatting field to the palette default (for new boxes) AND, when a
+  // text box is selected, to that box — re-measuring when the change alters size.
+  function applyTextFmt(annotKey, value, opts) {
+    const o = opts || {};
+    ed[o.edKey || annotKey] = value;
+    if (ed.sel != null) {
+      const hit = findAnnot(ed.sel);
+      if (hit && hit.a.kind === "text") {
+        pushEdUndo((o.undoKey || "fmt:" + annotKey) + ":" + ed.sel);
+        hit.a[annotKey] = value;
+        if (o.remeasure) {
+          const m = measureText(hit.a.text, hit.a.fontSize, textStyle(hit.a));
+          hit.a.w = m.w;
+          hit.a.h = m.h;
+        }
+        syncOverlays();
+      }
+    }
+    syncFmtPanel();
+  }
+
+  // Move the selected text box relative to its page (Arrange → centre / edges).
+  // a.w/a.h are in the same point space as a.x/a.y and the page size (dataset.w/h).
+  function arrangeSelected(kind) {
+    if (ed.sel == null) return;
+    const hit = findAnnot(ed.sel);
+    if (!hit || hit.a.kind !== "text") return;
+    const a = hit.a;
+    const layer = document.querySelector(`#viewer .page-wrap[data-index="${hit.page}"] .annot-layer`);
+    const pageW = layer ? +layer.dataset.w : 0;
+    const pageH = layer ? +layer.dataset.h : 0;
+    if (!pageW || !pageH) return;
+    pushEdUndo("arrange:" + kind + ":" + ed.sel);
+    if (kind === "center-h" || kind === "center-both") a.x = (pageW - a.w) / 2;
+    if (kind === "center-v" || kind === "center-both") a.y = (pageH - a.h) / 2;
+    if (kind === "left") a.x = 0;
+    if (kind === "right") a.x = pageW - a.w;
+    if (kind === "top") a.y = 0;
+    if (kind === "bottom") a.y = pageH - a.h;
+    syncOverlays();
+  }
+
+  // Populate the panel from the selected text box (or palette defaults when none),
+  // without clobbering the control the user is actively editing.
+  function syncFmtPanel() {
+    const panel = $("fmt-panel");
+    if (!panel || panel.hidden) return;
+    const hit = ed.sel != null ? findAnnot(ed.sel) : null;
+    const s = hit && hit.a.kind === "text" ? normTextStyle(hit.a) : normTextStyle(edTextStyle());
+    const active = document.activeElement;
+    const setVal = (id, v) => {
+      const el = $(id);
+      if (el && el !== active) el.value = v;
+    };
+    panel.querySelectorAll("#fmt-align .fmt-ic").forEach((b) =>
+      b.classList.toggle("active", b.dataset.align === s.align)
+    );
+    $("fmt-bullet").classList.toggle("active", s.listType === "bullet");
+    $("fmt-number").classList.toggle("active", s.listType === "number");
+    if ($("fmt-strike") !== active) $("fmt-strike").checked = s.strike;
+    setVal("fmt-linehl", s.lineHeight);
+    setVal("fmt-para", s.paraSpacing);
+    setVal("fmt-letter", s.letterSpacing);
+    setVal("fmt-word", s.wordSpacing);
+    setVal("fmt-scale", Math.round(s.charScale * 100));
+    setVal("fmt-opacity", Math.round(s.opacity * 100));
+    $("fmt-opacity-val").textContent = Math.round(s.opacity * 100) + "%";
+  }
+
+  // Show the panel only in a text context (Text tool active, or a text box selected).
+  function updateFmtPanel() {
+    const panel = $("fmt-panel");
+    if (!panel) return;
+    const hit = ed.sel != null ? findAnnot(ed.sel) : null;
+    const selText = !!(hit && hit.a.kind === "text");
+    panel.hidden = !(ed.active && (ed.tool === "text" || selText));
+    if (!panel.hidden) syncFmtPanel();
+  }
+
+  // Alignment buttons (mousedown-preventDefault keeps any open editor focused).
+  document.querySelectorAll("#fmt-align .fmt-ic").forEach((b) => {
+    b.addEventListener("mousedown", (ev) => ev.preventDefault());
+    b.addEventListener("click", () => applyTextFmt("align", b.dataset.align, { undoKey: "align" }));
+  });
+  // Indent −/＋
+  const bumpIndent = (delta) => {
+    const hit = ed.sel != null ? findAnnot(ed.sel) : null;
+    const cur = hit && hit.a.kind === "text" ? hit.a.indent || 0 : ed.indent;
+    applyTextFmt("indent", Math.max(0, cur + delta), { remeasure: true, undoKey: "indent" });
+  };
+  [["fmt-indent-dec", -1], ["fmt-indent-inc", 1]].forEach(([id, dir]) => {
+    const b = $(id);
+    if (!b) return;
+    b.addEventListener("mousedown", (ev) => ev.preventDefault());
+    b.addEventListener("click", () => bumpIndent(dir * INDENT_STEP));
+  });
+  // Bullet / number (clicking the active type turns the list off)
+  const toggleList = (type) => {
+    const hit = ed.sel != null ? findAnnot(ed.sel) : null;
+    const cur = hit && hit.a.kind === "text" ? hit.a.listType : ed.listType;
+    applyTextFmt("listType", cur === type ? "none" : type, { remeasure: true, undoKey: "list" });
+  };
+  [["fmt-bullet", "bullet"], ["fmt-number", "number"]].forEach(([id, type]) => {
+    const b = $(id);
+    if (!b) return;
+    b.addEventListener("mousedown", (ev) => ev.preventDefault());
+    b.addEventListener("click", () => toggleList(type));
+  });
+  {
+    const c = $("fmt-strike");
+    if (c) c.addEventListener("change", () => applyTextFmt("strike", c.checked, { undoKey: "strike" }));
+  }
+  // Numeric spacing / scale / opacity (live via 'input', coalesced undo per field)
+  $("fmt-linehl").addEventListener("input", (e) =>
+    applyTextFmt("lineHeight", Math.max(0.5, +e.target.value || 1.3), { remeasure: true, undoKey: "lineh" }));
+  $("fmt-para").addEventListener("input", (e) =>
+    applyTextFmt("paraSpacing", Math.max(0, +e.target.value || 0), { remeasure: true, undoKey: "para" }));
+  $("fmt-letter").addEventListener("input", (e) =>
+    applyTextFmt("letterSpacing", +e.target.value || 0, { remeasure: true, undoKey: "letter" }));
+  $("fmt-word").addEventListener("input", (e) =>
+    applyTextFmt("wordSpacing", +e.target.value || 0, { remeasure: true, undoKey: "word" }));
+  $("fmt-scale").addEventListener("input", (e) =>
+    applyTextFmt("charScale", Math.max(0.2, (+e.target.value || 100) / 100), { remeasure: true, undoKey: "scale" }));
+  $("fmt-opacity").addEventListener("input", (e) => {
+    const v = Math.max(0.1, (+e.target.value || 100) / 100);
+    $("fmt-opacity-val").textContent = Math.round(v * 100) + "%";
+    applyTextFmt("opacity", v, { edKey: "textOpacity", undoKey: "opacity" });
+  });
+  // Arrange (page-relative)
+  [
+    ["fmt-center-h", "center-h"], ["fmt-center-v", "center-v"], ["fmt-center-both", "center-both"],
+    ["fmt-page-left", "left"], ["fmt-page-right", "right"], ["fmt-page-top", "top"], ["fmt-page-bottom", "bottom"],
+  ].forEach(([id, kind]) => {
+    const b = $(id);
+    if (!b) return;
+    b.addEventListener("mousedown", (ev) => ev.preventDefault());
+    b.addEventListener("click", () => arrangeSelected(kind));
+  });
+
   $("ed-penwidth").oninput = (e) => {
     ed.penWidth = Math.max(1, +e.target.value || 2);
     if (ed.sel != null) {

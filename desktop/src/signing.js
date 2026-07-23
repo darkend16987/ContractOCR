@@ -3,38 +3,33 @@
 /**
  * PDF digital signing (PKI) — like Foxit/Acrobat, for Vietnamese USB tokens.
  *
- * The private key never leaves the token. This module:
- *   1. Asks the bundled Windows helper (src → signing-helper, spawned like the
- *      sidecar) to enumerate signing certificates from the Windows Certificate
- *      Store — where VNPT-CA / Viettel-CA / FPT-CA / BKAV… tokens register.
- *   2. Inserts a signature placeholder (+ optional visible appearance) into the
- *      PDF via pdf-lib + @signpdf, computes the /ByteRange, hands the to-be-signed
+ * The private key never leaves the token. Flow:
+ *   1. Ask the bundled Windows helper (nabu-sign.exe) to enumerate signing
+ *      certificates from the Windows Certificate Store — where VNPT-CA /
+ *      Viettel-CA / FPT-CA / BKAV… tokens register.
+ *   2. Insert a signature placeholder (+ optional visible appearance) into the
+ *      PDF via pdf-lib + @signpdf, compute the /ByteRange, hand the to-be-signed
  *      bytes to the helper (which triggers the token's own PIN dialog and returns
- *      a detached PKCS#7/CMS, optionally RFC3161-timestamped), then splices the
+ *      a detached PKCS#7/CMS, optionally RFC3161-timestamped), then splice the
  *      signature into /Contents.
  *
  * Signing is a TERMINAL step: the result is saved to a NEW file. Re-editing and
  * re-saving through pdf-lib would rewrite the whole file and invalidate the
  * signature — same as every PDF tool. The renderer warns about this.
  *
- * All heavy lifting runs in the main process (fs / child_process / network for
- * the TSA). The renderer only drives the UI and ships the final bytes + options.
+ * IMPORTANT (perf): step 2 — pdf-lib load/save, @signpdf's whole-file hashing,
+ * and the temp-file I/O — is synchronous CPU + fs work. Running it on the main
+ * process froze the entire window ("Not Responding") for the whole sign+save,
+ * scaling with file size. It now runs in a utilityProcess (signing-worker.js),
+ * so the main process and the window stay responsive; the token PIN dialog is a
+ * native Windows dialog and shows regardless of which process spawned the helper.
+ * This module (main process) only enumerates certs (fast) and relays IPC.
  */
 
 const fs = require("fs");
-const os = require("os");
 const path = require("path");
 const { spawn } = require("child_process");
-const { app, ipcMain } = require("electron");
-
-const { PDFDocument, PDFName, PDFDict, PDFArray, PDFRawStream } = require("pdf-lib");
-const { pdflibAddPlaceholder } = require("@signpdf/placeholder-pdf-lib");
-const signpdf = require("@signpdf/signpdf").default;
-const { Signer, SUBFILTER_ADOBE_PKCS7_DETACHED } = require("@signpdf/utils");
-
-// Reserve room for the CMS: leaf + full chain + an RFC3161 timestamp token fits
-// comfortably in ~16 KB; 32 KB leaves generous headroom for long VN CA chains.
-const SIGNATURE_LENGTH = 32000;
+const { app, ipcMain, utilityProcess } = require("electron");
 
 // --- helper process ----------------------------------------------------------
 
@@ -46,6 +41,7 @@ function helperPath() {
 }
 
 // Spawn the helper, collect stdout/stderr, resolve { code, stdout, stderr }.
+// Only used here for the (fast) cert enumeration; the sign path runs in the worker.
 function runHelper(args) {
   return new Promise((resolve, reject) => {
     const exe = helperPath();
@@ -91,146 +87,43 @@ async function listCerts() {
   return { ok: true, certs: Array.isArray(certs) ? certs : [] };
 }
 
-// --- signing -----------------------------------------------------------------
+// --- signing (offloaded to a utilityProcess) ---------------------------------
 
-function strToBytes(s) {
-  const o = new Uint8Array(s.length);
-  for (let i = 0; i < s.length; i++) o[i] = s.charCodeAt(i) & 0xff;
-  return o;
-}
-const f = (n) => (+n).toFixed(2);
-
-// Build a Form XObject that paints the appearance PNG into a w×h box (points),
-// returning its registered reference. Mirrors editor.js addManagedAnnot.
-function buildImageAP(pdfDoc, imgRef, w, h) {
-  const ctx = pdfDoc.context;
-  const apDict = ctx.obj({
-    Type: "XObject",
-    Subtype: "Form",
-    FormType: 1,
-    BBox: [0, 0, w, h],
-    Resources: { XObject: { NabuSig: imgRef } },
-  });
-  const apStream = PDFRawStream.of(apDict, strToBytes(`q ${f(w)} 0 0 ${f(h)} 0 0 cm /NabuSig Do Q`));
-  return ctx.register(apStream);
-}
-
-// The widget @signpdf just created is the last field in the AcroForm.
-function lastSigWidget(pdfDoc) {
-  const acro = pdfDoc.catalog.lookupMaybe(PDFName.of("AcroForm"), PDFDict);
-  if (!acro) return null;
-  const fields = acro.lookupMaybe(PDFName.of("Fields"), PDFArray);
-  if (!fields || fields.size() === 0) return null;
-  const dict = pdfDoc.context.lookup(fields.get(fields.size() - 1));
-  return dict instanceof PDFDict ? dict : null;
-}
-
-// The helper-backed Signer @signpdf calls with the to-be-signed bytes.
-class HelperSigner extends Signer {
-  constructor(thumbprint, tsaUrl) {
-    super();
-    this.thumbprint = thumbprint;
-    this.tsaUrl = tsaUrl;
-  }
-  async sign(pdfBuffer) {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nabu-sign-"));
-    const inPath = path.join(dir, "tbs.bin");
-    const outPath = path.join(dir, "sig.der");
+// Fork signing-worker.js, hand it the payload + the resolved helper path (the
+// worker has no `app`/resourcesPath), and resolve with the worker's result —
+// the same shape applySignature always returned: { ok:true, bytes } |
+// { ok:false, reason, error }. The heavy work never touches the main thread.
+function signInWorker(payload) {
+  return new Promise((resolve) => {
+    let child;
     try {
-      fs.writeFileSync(inPath, pdfBuffer);
-      const args = ["sign", "--in", inPath, "--out", outPath, "--thumbprint", this.thumbprint];
-      if (this.tsaUrl) args.push("--tsa", this.tsaUrl);
-      const { code, stderr } = await runHelper(args);
-      if (code !== 0) {
-        const e = new Error(stderr || `sign exit ${code}`);
-        e.reason = reasonForCode(code);
-        throw e;
+      child = utilityProcess.fork(path.join(__dirname, "signing-worker.js"));
+    } catch (e) {
+      resolve({ ok: false, reason: "other", error: "Không khởi động được tiến trình ký: " + ((e && e.message) || e) });
+      return;
+    }
+    let settled = false;
+    const finish = (res) => {
+      if (settled) return;
+      settled = true;
+      try { child.kill(); } catch { /* already gone */ }
+      resolve(res);
+    };
+    child.on("message", (res) => finish(res));
+    child.on("exit", (code) => finish({
+      ok: false,
+      reason: "other",
+      error: "Tiến trình ký kết thúc bất thường (mã " + code + ").",
+    }));
+    // Post once the child is up, so its message listener is registered.
+    child.once("spawn", () => {
+      try {
+        child.postMessage({ payload, helperExe: helperPath() });
+      } catch (e) {
+        finish({ ok: false, reason: "other", error: "Không gửi được dữ liệu ký: " + ((e && e.message) || e) });
       }
-      return fs.readFileSync(outPath); // DER PKCS#7 (Buffer)
-    } finally {
-      try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* best effort */ }
-    }
-  }
-}
-
-/**
- * Sign `bytes` and return the signed PDF bytes.
- * payload = {
- *   bytes: Uint8Array,               // the final (already-baked) PDF
- *   thumbprint: string,              // chosen certificate
- *   tsaUrl?: string,                 // RFC3161 timestamp authority (optional)
- *   meta: { name, reason, location, contactInfo },
- *   appearance?: {                   // omit / null → invisible signature
- *     pageIndex: number,
- *     rect: [x1, y1, x2, y2],        // PDF points, lower-left origin
- *     imagePng: Uint8Array,          // rendered appearance (matches rect aspect)
- *   },
- * }
- */
-async function applySignature(payload) {
-  const { bytes, thumbprint, tsaUrl, meta = {}, appearance } = payload;
-  if (!bytes || !thumbprint) return { ok: false, reason: "other", error: "Thiếu dữ liệu ký." };
-
-  let pdfDoc;
-  try {
-    pdfDoc = await PDFDocument.load(bytes);
-  } catch (e) {
-    // Encrypted PDFs can't be signed cleanly here — ask the user to remove the
-    // password first (Tools → Khoá file).
-    return { ok: false, reason: "load", error: "Không mở được PDF để ký (file có mật khẩu?)." };
-  }
-
-  const pages = pdfDoc.getPages();
-  let widgetRect = [0, 0, 0, 0];
-  let apRef = null;
-
-  if (appearance && appearance.imagePng) {
-    const pageIndex = Math.max(0, Math.min(pages.length - 1, appearance.pageIndex | 0));
-    const page = pages[pageIndex];
-    if (page.getRotation().angle % 360 !== 0) {
-      return { ok: false, reason: "rotated", error: "Trang xoay chưa hỗ trợ chữ ký nhìn thấy. Dùng chữ ký vô hình." };
-    }
-    const r = appearance.rect;
-    widgetRect = [r[0], r[1], r[2], r[3]];
-    const w = Math.abs(r[2] - r[0]);
-    const h = Math.abs(r[3] - r[1]);
-    const img = await pdfDoc.embedPng(appearance.imagePng);
-    apRef = buildImageAP(pdfDoc, img.ref, w, h);
-  }
-
-  const targetPage = appearance && appearance.imagePng
-    ? pages[Math.max(0, Math.min(pages.length - 1, appearance.pageIndex | 0))]
-    : pages[0];
-
-  pdflibAddPlaceholder({
-    pdfDoc,
-    pdfPage: targetPage,
-    reason: meta.reason || "",
-    contactInfo: meta.contactInfo || "",
-    name: meta.name || "",
-    location: meta.location || "",
-    signatureLength: SIGNATURE_LENGTH,
-    subFilter: SUBFILTER_ADOBE_PKCS7_DETACHED,
-    widgetRect,
-    appName: "Nabu PDF",
+    });
   });
-
-  // Swap @signpdf's empty appearance for our rendered one.
-  if (apRef) {
-    const widget = lastSigWidget(pdfDoc);
-    if (widget) widget.set(PDFName.of("AP"), pdfDoc.context.obj({ N: apRef }));
-  }
-
-  // Signatures require a classic xref (no object streams) so the ByteRange is valid.
-  const withPlaceholder = await pdfDoc.save({ useObjectStreams: false });
-
-  try {
-    const signer = new HelperSigner(thumbprint, tsaUrl);
-    const signed = await signpdf.sign(Buffer.from(withPlaceholder), signer);
-    return { ok: true, bytes: signed };
-  } catch (e) {
-    return { ok: false, reason: e.reason || "other", error: e.message || String(e) };
-  }
 }
 
 // --- IPC ---------------------------------------------------------------------
@@ -245,7 +138,7 @@ function initSigning() {
   });
   ipcMain.handle("sign:apply", async (_e, payload) => {
     try {
-      return await applySignature(payload || {});
+      return await signInWorker(payload || {});
     } catch (e) {
       return { ok: false, reason: "other", error: e.message || String(e) };
     }

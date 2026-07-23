@@ -531,7 +531,7 @@ ipcMain.handle("dialog:save-pdf", async (e, { data, defaultName }) => {
     filters: [{ name: "PDF", extensions: ["pdf"] }],
   });
   if (res.canceled || !res.filePath) return { saved: false };
-  fs.writeFileSync(res.filePath, Buffer.from(data));
+  await fs.promises.writeFile(res.filePath, Buffer.from(data)); // async: never block main
   return { saved: true, path: res.filePath };
 });
 
@@ -541,7 +541,7 @@ ipcMain.handle("dialog:save-pdf", async (e, { data, defaultName }) => {
 ipcMain.handle("file:write-pdf", async (_e, { path: fp, data }) => {
   try {
     if (!fp) return { saved: false };
-    fs.writeFileSync(fp, Buffer.from(data));
+    await fs.promises.writeFile(fp, Buffer.from(data)); // async: never block main
     return { saved: true, path: fp };
   } catch (e) {
     return { saved: false, error: String((e && e.message) || e) };
@@ -557,7 +557,7 @@ ipcMain.handle("dialog:save-file", async (e, { data, defaultName, filters }) => 
     filters: filters && filters.length ? filters : [{ name: "Tất cả", extensions: ["*"] }],
   });
   if (res.canceled || !res.filePath) return { saved: false };
-  fs.writeFileSync(res.filePath, Buffer.from(data));
+  await fs.promises.writeFile(res.filePath, Buffer.from(data)); // async: never block main
   return { saved: true, path: res.filePath };
 });
 
@@ -621,6 +621,11 @@ ipcMain.handle("print:printers", async (e) => {
   }
 });
 
+// Paper sizes valid for webContents.print() in Electron 33 (WebContentsPrintOptions).
+const PRINT_PAGE_SIZES = new Set([
+  "A0", "A1", "A2", "A3", "A4", "A5", "A6", "Legal", "Letter", "Tabloid",
+]);
+
 ipcMain.handle("print:page", (e, opts = {}) => {
   return new Promise((resolve) => {
     const win = senderWindow(e);
@@ -636,7 +641,10 @@ ipcMain.handle("print:page", (e, opts = {}) => {
       margins: { marginType: "none" },
     };
     if (opts.deviceName) printOpts.deviceName = opts.deviceName;
-    if (opts.pageSize) printOpts.pageSize = opts.pageSize; // 'A4' | 'A5' | 'A3' | 'Letter' | 'Legal'
+    // Named sizes Electron's webContents.print() accepts (WebContentsPrintOptions).
+    // A0/A1/A2 are supported natively — large-format printing (drawings/posters).
+    // Only forward a known-good value; an unrecognised string makes print() throw.
+    if (opts.pageSize && PRINT_PAGE_SIZES.has(opts.pageSize)) printOpts.pageSize = opts.pageSize;
     if (opts.duplexMode) printOpts.duplexMode = opts.duplexMode; // 'simplex' | 'shortEdge' | 'longEdge'
     try {
       win.webContents.print(printOpts, (success, reason) => {

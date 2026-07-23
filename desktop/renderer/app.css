@@ -291,6 +291,33 @@ button.ghost { background: transparent; }
 .comments-count { color: var(--muted); font-weight: 400; font-size: 12px; margin-left: 2px; }
 .comments-list { flex: 1; overflow-y: auto; padding: 8px; display: flex; flex-direction: column; gap: 6px; }
 .comments-empty { padding: 24px 16px; color: var(--muted); font-size: 12px; text-align: center; line-height: 1.6; }
+
+/* ---- text-box Format panel (annotation editor) ---- */
+.fmt-panel {
+  position: absolute; right: 0; top: 0; bottom: 0; width: 236px;
+  background: var(--bg-2); border-left: 1px solid var(--line);
+  display: flex; flex-direction: column;
+  box-shadow: -8px 0 24px rgba(0,0,0,0.3); z-index: 21; overflow-y: auto;
+}
+.fmt-head { padding: 10px 12px; border-bottom: 1px solid var(--line); }
+.fmt-head b { font-size: 13px; }
+.fmt-section { padding: 10px 12px; border-bottom: 1px solid var(--line); display: flex; flex-direction: column; gap: 8px; }
+.fmt-title { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+.fmt-grid { display: flex; gap: 6px; flex-wrap: wrap; }
+.fmt-ic {
+  width: 34px; height: 30px; display: inline-flex; align-items: center; justify-content: center;
+  padding: 0; border: 1px solid var(--line); border-radius: 6px; background: var(--bg-3);
+  color: var(--fg); cursor: pointer;
+}
+.fmt-ic:hover { border-color: var(--accent); }
+.fmt-ic.active { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
+.fmt-ic svg { width: 16px; height: 16px; display: block; }
+.fmt-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 12px; color: var(--fg); }
+.fmt-row input[type="number"] { width: 62px; }
+.fmt-row input[type="range"] { flex: 1; min-width: 0; }
+.fmt-unit { color: var(--muted); font-size: 11px; min-width: 16px; }
+.fmt-chk { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--fg); }
+.fmt-note { margin: 0; font-size: 11px; color: var(--muted); }
 .comment-item {
   text-align: left; width: 100%; background: var(--bg-3); border: 1px solid var(--bg-3);
   border-radius: 8px; padding: 8px 10px; cursor: pointer; color: var(--fg);

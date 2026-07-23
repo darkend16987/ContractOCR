@@ -316,9 +316,9 @@
   // ---- lifecycle -----------------------------------------------------------
 
   // Guarded exit: staged edits prompt "ghi hay bỏ" instead of vanishing.
-  function confirmExit() {
+  async function confirmExit() {
     const n = Object.keys(te.edits).length;
-    if (n && window.confirm(`Còn ${n} đoạn đã sửa chưa ghi vào PDF. Ghi trước khi thoát?\n(OK = ghi, Cancel = bỏ các sửa đổi)`)) {
+    if (n && (await window.uiConfirm(`Còn ${n} đoạn đã sửa chưa ghi vào PDF. Ghi trước khi thoát?\n(OK = ghi, Cancel = bỏ các sửa đổi)`, { okText: "Ghi", cancelText: "Bỏ sửa đổi" }))) {
       apply(); // apply() exits by itself on success
       return;
     }

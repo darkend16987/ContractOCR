@@ -70,6 +70,46 @@ function showOverlay(msg) {
 function hideOverlay() {
   $("overlay").hidden = true;
 }
+// Non-blocking confirm dialog — the drop-in replacement for window.confirm().
+// The native confirm() blocks Electron's renderer thread for as long as it is
+// open AND, when dismissed, blurs the window: document.hasFocus() goes false and
+// stays false, so the next textarea we .focus() shows no caret (the annotation
+// text-box "no cursor after Hủy bỏ" bug). This in-DOM modal never touches OS
+// focus and never blocks. Returns a Promise<boolean> (true = OK/Enter).
+function uiConfirm(message, opts) {
+  const { okText = "OK", cancelText = "Hủy", title = "Xác nhận" } = opts || {};
+  return new Promise((resolve) => {
+    const modal = $("confirm-modal");
+    const okBtn = $("confirm-ok");
+    const cancelBtn = $("confirm-cancel");
+    $("confirm-title").textContent = title;
+    $("confirm-msg").textContent = message || "";
+    okBtn.textContent = okText;
+    cancelBtn.textContent = cancelText;
+    let done = false;
+    const finish = (val) => {
+      if (done) return;
+      done = true;
+      modal.hidden = true;
+      okBtn.removeEventListener("click", onOk);
+      cancelBtn.removeEventListener("click", onCancel);
+      document.removeEventListener("keydown", onKey, true);
+      resolve(val);
+    };
+    const onOk = () => finish(true);
+    const onCancel = () => finish(false);
+    const onKey = (e) => {
+      if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); finish(false); }
+      else if (e.key === "Enter") { e.preventDefault(); e.stopPropagation(); finish(true); }
+    };
+    okBtn.addEventListener("click", onOk);
+    cancelBtn.addEventListener("click", onCancel);
+    document.addEventListener("keydown", onKey, true);
+    modal.hidden = false;
+    okBtn.focus();
+  });
+}
+window.uiConfirm = uiConfirm; // shared with editor.js / text-edit.js (same window scope)
 function toU8(d) {
   return d instanceof Uint8Array ? d : new Uint8Array(d);
 }
@@ -243,8 +283,9 @@ async function checkRecovery() {
   const top = orphans[0]; // most recent
   const when = top.savedAt ? new Date(top.savedAt).toLocaleString() : "";
   const extra = orphans.length > 1 ? `\n(và ${orphans.length - 1} tài liệu khác — sẽ hỏi lại lần sau)` : "";
-  const ok = window.confirm(
-    `Tìm thấy tài liệu chưa lưu từ phiên trước:\n"${top.name}"${when ? " — " + when : ""}\n\nKhôi phục?${extra}`
+  const ok = await uiConfirm(
+    `Tìm thấy tài liệu chưa lưu từ phiên trước:\n"${top.name}"${when ? " — " + when : ""}\n\nKhôi phục?${extra}`,
+    { okText: "Khôi phục", cancelText: "Bỏ qua" }
   );
   if (!ok) return; // leave the snapshots for a later launch
   try {
@@ -338,7 +379,7 @@ function fileCrumb(name, fullPath) {
 async function loadBytes(bytes, name, fullPath) {
   // Replacing an unsaved document would silently drop its changes — ask first.
   // (First load / recovery restore are clean, so this never fires there.)
-  if (docHasUnsavedChanges() && !window.confirm("Tài liệu hiện tại có thay đổi chưa lưu. Bỏ các thay đổi đó và mở tài liệu khác?")) {
+  if (docHasUnsavedChanges() && !(await uiConfirm("Tài liệu hiện tại có thay đổi chưa lưu. Bỏ các thay đổi đó và mở tài liệu khác?", { okText: "Bỏ & mở", cancelText: "Ở lại" }))) {
     return;
   }
   state.bytes = toU8(bytes);
@@ -1514,6 +1555,29 @@ async function saveAsDoc() {
 // Rasterising to real DOM images prints reliably (same approach pdf.js viewers
 // use for print). ~150 DPI keeps text crisp without exploding memory.
 const PRINT_DPI = 150;
+
+// Large-format guard. For normal source pages 150 DPI is cheap (A4 ≈ 2.2 MP), but
+// a large-format *source* PDF — the actual A0–A2 use case (CAD drawings, posters)
+// — explodes: an A0 page at 150 DPI is ~35 MP ≈ 140 MB of canvas, and EVERY page
+// is held in #print-root at once → renderer OOM on multi-page jobs. So we cap each
+// page's raster by a pixel-area budget: pages under budget (A5–A2) render at the
+// full 150 DPI unchanged; only larger sheets have their DPI eased down enough to
+// stay memory-safe (A1 ≈ 124 DPI, A0 ≈ 88 DPI — still crisp at large-sheet viewing
+// distance). MAX_PRINT_SIDE_PX is a second guard against Chromium's canvas
+// dimension limit / toDataURL failures on extreme aspect ratios.
+const MAX_PRINT_MEGAPIXELS = 12;
+const MAX_PRINT_SIDE_PX = 10000;
+
+// Render scale for a page whose size (at scale 1) is vpW1×vpH1 CSS px (== PDF pt):
+// the smallest of the 150-DPI scale, the area-budget scale, and the side-cap scale.
+// Never upscales beyond 150 DPI.
+function printScaleFor(vpW1, vpH1) {
+  const baseScale = PRINT_DPI / 72;
+  const areaScale = Math.sqrt((MAX_PRINT_MEGAPIXELS * 1e6) / (vpW1 * vpH1));
+  const sideScale = MAX_PRINT_SIDE_PX / Math.max(vpW1, vpH1);
+  return Math.min(baseScale, areaScale, sideScale);
+}
+
 let printing = false;
 
 function ensurePrintRoot() {
@@ -1538,11 +1602,19 @@ async function buildPrintPages() {
   // Copy the bytes: pdf.js may transfer/neuter the buffer it's handed, and
   // state.bytes must stay intact for the live viewer / saving.
   const doc = await pdfjsLib.getDocument({ data: state.bytes.slice() }).promise;
+  const total = doc.numPages;
   try {
-    const scale = PRINT_DPI / 72;
-    for (let i = 1; i <= doc.numPages; i++) {
+    for (let i = 1; i <= total; i++) {
+      // Show progress so multi-page large-format jobs don't look frozen. Let the
+      // overlay repaint before the (main-thread) render/encode work of this page.
+      showOverlay(t("Đang chuẩn bị in… (trang {n}/{total})", { n: i, total }));
+      await new Promise((r) => setTimeout(r, 0));
+
       const page = await doc.getPage(i);
-      const vp = page.getViewport({ scale }); // honours page rotation
+      // Base viewport (scale 1) → page size in pt; pick a memory-safe raster scale.
+      const vp1 = page.getViewport({ scale: 1 }); // honours page rotation
+      const scale = printScaleFor(vp1.width, vp1.height);
+      const vp = page.getViewport({ scale });
       const canvas = document.createElement("canvas");
       canvas.width = Math.ceil(vp.width);
       canvas.height = Math.ceil(vp.height);
@@ -1552,6 +1624,9 @@ async function buildPrintPages() {
       img.className = "print-page";
       img.src = canvas.toDataURL("image/png");
       root.appendChild(img);
+      // Release the canvas backing store now (up to `total` of these, each up to
+      // ~48 MB for a capped large sheet) — don't wait for GC while we build the rest.
+      canvas.width = canvas.height = 0;
       // Ensure the image is actually decoded before we hand off to the print
       // dialog — otherwise the sheet can come out blank. decode() may reject on
       // some engines; fall back to a load event / small wait.
@@ -2156,6 +2231,62 @@ async function runTranslate() {
     }
   } catch (err) {
     toast("Lỗi dịch: " + err.message, "bad");
+  } finally {
+    hideOverlay();
+  }
+}
+
+// ---- PDF -> Office (Word/Excel/CSV) --------------------------------------
+
+function openOffice() {
+  if (sidecar.state !== "ready" || !sidecar.base) {
+    toast("Engine chưa sẵn sàng.", "bad");
+    return;
+  }
+  if (!state.bytes) {
+    toast("Mở PDF trước.", "bad");
+    return;
+  }
+  // "Selected pages" only makes sense when a selection exists; default to all.
+  const sc = $("office-scope");
+  const selOpt = sc && sc.querySelector('option[value="selected"]');
+  if (selOpt) selOpt.disabled = state.selected.size === 0;
+  if (sc && state.selected.size === 0) sc.value = "all";
+  $("office-modal").hidden = false;
+}
+
+async function runOffice() {
+  $("office-modal").hidden = true;
+  if (window.Editor) await window.Editor.bakePending(); // fold pending annotations in first
+
+  const fmt = $("office-format").value || "xlsx";
+  const scopeKind = $("office-scope").value || "all";
+  let scope = "all";
+  if (scopeKind === "selected" && state.selected.size > 0) {
+    scope = Array.from(state.selected).sort((a, b) => a - b);
+  }
+
+  showOverlay("Đang chuyển sang Office…");
+  try {
+    const res = await sidecarFetch("/pdf-to-office", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ pdf_b64: u8ToB64(state.bytes), format: fmt, scope }),
+    });
+    const data = await res.json();
+    if (!data.success) {
+      const msg = data.is_scan
+        ? 'PDF này là bản scan (không có text thật) — hãy chạy "OCR văn bản" trong Công cụ trước rồi thử lại.'
+        : "Xuất Office lỗi: " + (data.error || data.detail || "không rõ");
+      toast(msg, "bad");
+      return;
+    }
+    const bytes = Uint8Array.from(atob(data.data_b64), (ch) => ch.charCodeAt(0));
+    const name = `${baseName(state.name)}.${fmt}`;
+    const r = await window.desktop.saveFile(bytes, name, [{ name: fmt.toUpperCase(), extensions: [fmt] }]);
+    if (r.saved) toast("Đã xuất: " + r.path, "good");
+  } catch (err) {
+    toast("Lỗi xuất Office: " + err.message, "bad");
   } finally {
     hideOverlay();
   }
@@ -2941,6 +3072,8 @@ function updateToolbar() {
   if (bs) bs.disabled = !(ready && has) || editing;
   const btr = $("btn-translate");
   if (btr) btr.disabled = !(ready && has) || editing;
+  const bto = $("btn-to-office");
+  if (bto) bto.disabled = !(ready && has) || editing;
   const bc = $("btn-compress");
   if (bc) bc.disabled = !(ready && has) || editing;
   // Compare picks its own two files, so it only needs the engine ready (no open doc).
@@ -3091,6 +3224,9 @@ $("cmp-cancel").onclick = () => ($("cmp-modal").hidden = true);
 $("cmp-ok").onclick = runCompress;
 $("tr-cancel").onclick = () => ($("tr-modal").hidden = true);
 $("tr-ok").onclick = runTranslate;
+$("btn-to-office").onclick = openOffice;
+$("office-cancel").onclick = () => ($("office-modal").hidden = true);
+$("office-ok").onclick = runOffice;
 
 // Toolbar dropdowns (Trang ▾ / Công cụ ▾) — triggers toggle their menu; each item
 // runs its tool and the menu closes. Outside-click / Escape close any open menu.

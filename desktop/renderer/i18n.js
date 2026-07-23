@@ -102,6 +102,15 @@
     "Trang PDF → ảnh…": "PDF pages → images…",
     "Ảnh → PDF…": "Images → PDF…",
     "Xuất ảnh trong PDF…": "Export images in PDF…",
+    "Xuất ra Office (Word/Excel/CSV)…": "Export to Office (Word/Excel/CSV)…",
+    "Chuyển nội dung PDF (chữ + bảng) sang Word/Excel/CSV có thể chỉnh sửa. Chỉ PDF có text thật.":
+      "Convert the PDF's content (text + tables) into editable Word/Excel/CSV. Text-based PDFs only.",
+    "Xuất PDF ra Office": "Export PDF to Office",
+    "Chuyển nội dung PDF (chữ + bảng) sang file có thể chỉnh sửa. Excel/CSV giữ bảng theo đúng hàng/cột; Word giữ toàn văn kèm bảng. Chỉ hỗ trợ PDF có text thật (không phải bản scan — nếu là scan hãy chạy \"OCR văn bản\" trước).":
+      "Convert the PDF's content (text + tables) into an editable file. Excel/CSV keep tables as real rows × columns; Word keeps the full text with tables. Text-based PDFs only (not scans — run \"OCR text\" first if it's a scan).",
+    "Excel (.xlsx) — bảng theo hàng/cột": "Excel (.xlsx) — tables as rows/columns",
+    "Word (.docx) — toàn văn + bảng": "Word (.docx) — full text + tables",
+    "CSV (.csv) — bảng dạng văn bản": "CSV (.csv) — tables as text",
     "Bảo mật": "Security",
     "Khoá file (đặt mật khẩu)…": "Lock file (set password)…",
     "Bóc tách": "Extract fields",
@@ -420,8 +429,35 @@
 
     // --- print (dynamic, app.js) ---
     "Đang chuẩn bị in…": "Preparing to print…",
+    "Đang chuẩn bị in… (trang {n}/{total})": "Preparing to print… (page {n}/{total})",
     "Đã gửi lệnh in.": "Sent to printer.",
     "In lỗi:": "Print error:",
+    // --- text-box Format panel ---
+    "Định dạng văn bản": "Text formatting",
+    "Đoạn văn": "Paragraph",
+    "Giãn dòng": "Line spacing",
+    "Giãn đoạn": "Paragraph spacing",
+    "Giãn ký tự": "Character spacing",
+    "Giãn từ": "Word spacing",
+    "Co giãn ngang": "Horizontal scale",
+    "Gạch ngang": "Strikethrough",
+    "Sắp xếp theo trang": "Arrange on page",
+    "Áp dụng cho hộp văn bản đang chọn.": "Applies to the selected text box.",
+    "Căn trái": "Align left",
+    "Căn giữa": "Align center",
+    "Căn phải": "Align right",
+    "Căn đều": "Justify",
+    "Giảm thụt lề": "Decrease indent",
+    "Tăng thụt lề": "Increase indent",
+    "Dấu đầu dòng": "Bullet list",
+    "Đánh số": "Numbered list",
+    "Căn giữa theo chiều ngang": "Center horizontally",
+    "Căn giữa theo chiều dọc": "Center vertically",
+    "Căn giữa trang": "Center on page",
+    "Sát mép trái trang": "Align to left edge",
+    "Sát mép phải trang": "Align to right edge",
+    "Sát mép trên trang": "Align to top edge",
+    "Sát mép dưới trang": "Align to bottom edge",
   };
 
   // Elements whose text/attrs change at runtime — never register these, or a

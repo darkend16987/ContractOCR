@@ -35,6 +35,8 @@ HEAVY_PACKAGES = (
     "scipy",
     "google.genai",
     "openpyxl",
+    "docx",  # python-docx (import name); PDF→Office DOCX export, lazy-imported
+    "lxml",  # python-docx's engine; ships native binaries collect_all must gather
     "fitz",  # PyMuPDF (import name); lazy-imported in api.py
     "pymupdf",  # newer PyMuPDF dist name — loop skips whichever isn't present
     "matplotlib",  # provides DejaVuSans.ttf for the Vietnamese text layer / text-edit
@@ -89,6 +91,9 @@ extra_hiddenimports = [
     "src.pdf.fonts",
     "src.pdf.legacy_text",
     "src.pdf.layout",
+    # PDF→Office converter — imported lazily inside the /pdf-to-office endpoint,
+    # so pin it (and the analysis follows src.output.writer already).
+    "src.output.pdf_office",
     # Add modules here as PyInstaller reports them missing at runtime.
 ]
 

@@ -511,6 +511,76 @@ async def export(req: ExportRequest):
     )
 
 
+class PdfToOfficeRequest(BaseModel):
+    """Body for POST /pdf-to-office — convert a PDF's content to Office files."""
+    pdf_b64: str
+    format: str = "xlsx"   # "xlsx" | "docx" | "csv"
+    scope: Any = "all"     # "all" or a list of 0-based page indices
+
+
+class PdfToOfficeResponse(BaseModel):
+    success: bool
+    filename: str = ""
+    mime: str = ""
+    data_b64: str = ""
+    is_scan: bool = False
+    error: str | None = None
+
+
+_OFFICE_MIME = {
+    "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "csv": "text/csv",
+    "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+}
+
+
+@app.post("/pdf-to-office", response_model=PdfToOfficeResponse)
+async def pdf_to_office(req: PdfToOfficeRequest):
+    """Convert a text-based PDF's content (prose + tables) to xlsx/docx/csv.
+
+    XLSX/CSV keep tables as real rows×columns; DOCX keeps the full text with
+    tables. Scans (no text layer) are rejected — run OCR first. Bytes come back
+    base64; the desktop app saves them via a native dialog (same as /export).
+    """
+    fmt = (req.format or "").lower()
+    if fmt not in _OFFICE_MIME:
+        raise HTTPException(status_code=400, detail="format must be xlsx|docx|csv")
+    if len(req.pdf_b64) > _MAX_PDF_B64:
+        raise HTTPException(status_code=400, detail="PDF quá lớn (tối đa ~200MB).")
+    try:
+        pdf_bytes = base64.b64decode(req.pdf_b64)
+    except Exception:
+        raise HTTPException(status_code=400, detail="pdf_b64 không hợp lệ")
+
+    page_indices = None
+    if isinstance(req.scope, list):
+        page_indices = [p for p in req.scope if isinstance(p, int) and p >= 0]
+
+    try:
+        from src.output.pdf_office import convert
+        data, had_content = convert(pdf_bytes, fmt, page_indices)
+    except ValueError as ve:  # unsupported format (defensive; validated above)
+        raise HTTPException(status_code=400, detail=str(ve))
+    except Exception as e:
+        logger.exception("pdf-to-office error")
+        return PdfToOfficeResponse(success=False, error=str(e))
+
+    if not had_content:
+        return PdfToOfficeResponse(
+            success=False,
+            is_scan=True,
+            error="PDF này là bản scan (không có lớp text) — chuyển sang Office cần PDF có text thật. Hãy chạy OCR trước.",
+        )
+
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    return PdfToOfficeResponse(
+        success=True,
+        filename=f"converted_{ts}.{fmt}",
+        mime=_OFFICE_MIME[fmt],
+        data_b64=base64.b64encode(data).decode("ascii"),
+    )
+
+
 class SearchableRequest(BaseModel):
     """Request body for building a searchable PDF (invisible OCR text layer)."""
     pdf_b64: str  # the source PDF, base64 (no data URL prefix)
@@ -1965,6 +2035,20 @@ async def translate_pdf(req: TranslateRequest):
                 lf = embed_local(b["font"], bold, italic) if b["font"] else None
                 if lf:
                     fontname, fontfile = lf
+
+                # Coverage guard (mirrors /edit-text, api.py "needs_unicode" block):
+                # b["font"] is the ORIGINAL PDF font. Translating EN→VI, that is an
+                # English font, and many Western fonts have no glyphs for the
+                # Vietnamese range (Latin Extended Additional, U+1EA0–U+1EFF). A
+                # local TTF resolved from such a name makes insert_textbox draw
+                # notdef boxes (□) SILENTLY. Trust the local font only when it
+                # actually covers the translated text; otherwise drop to the bundled
+                # DejaVu below (Vietnamese-safe).
+                needs_unicode = any(ord(ch) > 0xFF for ch in t)
+                if needs_unicode and not (fontfile and _font_covers(t, fontfile=fontfile)):
+                    fontname = None
+                    fontfile = None
+
                 if fontname is None:
                     emb = embed_vn(bold, italic) or embed_vn(False, False)
                     if emb:
