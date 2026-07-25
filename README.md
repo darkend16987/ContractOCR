@@ -7,7 +7,7 @@ khoanh vùng (chữ nhật / elip / **khoanh mây revision** — chữ nhật ho
 watermark · redact (che thông tin chọn màu) · **sửa chữ (tự OCR lấy lại chữ Việt lỗi font `.Vn`/mã hoá hỏng trên bản vẽ CAD/Revit)** · nén · **in (kết nối máy in — hỗ trợ khổ A4…A0)** · so sánh 2 file
 (văn bản & **bản vẽ CAD/Revit** — khoanh mây revision vùng thay đổi (**tick chọn từng vùng để khoanh**, mặc định chọn tất), **chồng lớp overlay 2 bản vẽ** căn tự động + tô màu khác biệt, phóng to/vừa bề ngang & **vừa chiều dọc**) ·
 tạo PDF tìm-kiếm-được · **dịch PDF (AI) giữ layout** (PDF có text thật, **giữ đúng cột/căn lề trong bảng**, xuất file mới) · **xuất PDF → Office (Word/Excel/CSV)** ·
-**mở nhiều cửa sổ** · **"Open with Nabu PDF"** (mở PDF trực tiếp từ Windows) · **copy/paste ảnh trong trang** ·
+**mở nhiều tài liệu bằng tab trong một cửa sổ** (kéo sắp xếp thứ tự · Ctrl+T/Ctrl+W/Ctrl+Tab/Ctrl+1–9) · mở nhiều cửa sổ · **"Open with Nabu PDF"** (mở PDF trực tiếp từ Windows) · **copy/paste ảnh trong trang** ·
 **tự lưu & khôi phục khi sự cố** (máy tắt đột ngột / quên lưu → mở lại mời khôi phục) ·
 **ký số bằng USB token** (VNPT-CA / Viettel-CA / FPT-CA / BKAV… qua kho chứng thư Windows — chữ ký nhìn thấy + dấu thời gian TSA) ·
 kèm **OCR + bóc tách hợp đồng** bằng AI. Giao diện **song ngữ Việt / Anh**.
