@@ -15,4 +15,6 @@ contextBridge.exposeInMainWorld("shellBridge", {
   newTab: () => ipcRenderer.send("tabs:new-tab"),
   activate: (id) => ipcRenderer.send("tabs:activate", id),
   close: (id) => ipcRenderer.send("tabs:close", id),
+  // New left-to-right order after a drag. ids: number[].
+  reorder: (ids) => ipcRenderer.send("tabs:reorder", ids),
 });

@@ -1,8 +1,8 @@
 "use strict";
 
 // Tab strip logic. Renders the tab list pushed from main (tabs:state) and sends
-// intents back (activate / close / new). No document logic lives here — each tab
-// is a full renderer in its own WebContentsView.
+// intents back (activate / close / new / reorder). No document logic lives here —
+// each tab is a full renderer in its own WebContentsView.
 
 (function () {
   const tabsEl = document.getElementById("tabs");
@@ -13,6 +13,36 @@
     return s.length > 60 ? s.slice(0, 57) + "…" : s;
   }
 
+  // ---- drag to reorder ----------------------------------------------------
+  // The strip reorders its own DOM live while dragging (so the user sees the tab
+  // move), then reports the final order to main on drop. Main owns the real order
+  // and echoes a fresh tabs:state back, which re-renders authoritatively — so a
+  // rejected/stale reorder simply snaps back.
+
+  // The tab the dragged one should be inserted BEFORE, from the pointer's x.
+  function dropTargetAt(x) {
+    for (const el of tabsEl.querySelectorAll(".tab:not(.dragging)")) {
+      const r = el.getBoundingClientRect();
+      if (x < r.left + r.width / 2) return el;
+    }
+    return null;
+  }
+
+  function commitOrder() {
+    const ids = [...tabsEl.querySelectorAll(".tab")].map((el) => Number(el.dataset.id));
+    if (ids.length && ids.every((n) => Number.isFinite(n))) window.shellBridge.reorder(ids);
+  }
+
+  tabsEl.addEventListener("dragover", (ev) => {
+    const dragging = tabsEl.querySelector(".tab.dragging");
+    if (!dragging) return;
+    ev.preventDefault(); // required for the drop to be allowed
+    const before = dropTargetAt(ev.clientX);
+    if (before) tabsEl.insertBefore(dragging, before);
+    else tabsEl.appendChild(dragging);
+  });
+  tabsEl.addEventListener("drop", (ev) => ev.preventDefault());
+
   function render(state) {
     const tabs = (state && state.tabs) || [];
     tabsEl.textContent = "";
@@ -20,6 +50,8 @@
       const el = document.createElement("div");
       el.className = "tab" + (t.active ? " active" : "") + (t.dirty ? " dirty" : "");
       el.title = t.title || "document.pdf";
+      el.dataset.id = String(t.id);
+      el.draggable = true;
 
       const dot = document.createElement("span");
       dot.className = "dot";
@@ -49,6 +81,23 @@
         } else if (ev.button === 0) {
           window.shellBridge.activate(t.id);
         }
+      });
+
+      el.addEventListener("dragstart", (ev) => {
+        el.classList.add("dragging");
+        if (ev.dataTransfer) {
+          ev.dataTransfer.effectAllowed = "move";
+          // Firefox/Chromium need *some* payload or the drag never starts.
+          try {
+            ev.dataTransfer.setData("text/plain", String(t.id));
+          } catch (_) {
+            /* ignore */
+          }
+        }
+      });
+      el.addEventListener("dragend", () => {
+        el.classList.remove("dragging");
+        commitOrder();
       });
 
       tabsEl.appendChild(el);

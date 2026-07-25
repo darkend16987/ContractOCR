@@ -143,10 +143,12 @@ Mỗi mục: **bất biến → ở đâu → vì sao → dấu hiệu vỡ.**
 ## 6. Checkpoint bắt buộc trước khi phát hành
 
 1. `.venv\Scripts\python run_tests.py` → phải `N/N test files passed`.
-2. `node --check` mọi file JS đã sửa (renderer **không** có test tự động).
-3. Nếu đụng `*.py` hoặc `sidecar.spec` → **rebuild sidecar**, nếu không OTA giao bản cũ.
-4. Chạy `npm start`, test tay các mục ở §5 tương ứng với thứ vừa sửa.
-5. Cập nhật `HANDOFF.md` + tài liệu này nếu phát sinh bất biến mới.
+2. `cd desktop ; npm run test:tabs` → phải `N pass, 0 fail`
+   (lưới cho logic sắp xếp tab + định tuyến phím trong `src/tabs.js`).
+3. `node --check` mọi file JS đã sửa (renderer **không** có test tự động).
+4. Nếu đụng `*.py` hoặc `sidecar.spec` → **rebuild sidecar**, nếu không OTA giao bản cũ.
+5. Chạy `npm start`, test tay các mục ở §5 tương ứng với thứ vừa sửa.
+6. Cập nhật `HANDOFF.md` + tài liệu này nếu phát sinh bất biến mới.
 
 **Bài học quy trình đã có tiền lệ tốt:** commit `c75e355` viết lưới test cho `api.py`
 **trước** khi refactor `65b38bf`. Với thay đổi lớn, hãy dựng lưới an toàn trước.

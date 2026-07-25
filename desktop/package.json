@@ -14,6 +14,7 @@
     "build:helper": "node scripts/build-helper.js",
     "prebuild": "node scripts/check-sidecar-fresh.js",
     "build": "electron-builder --config electron-builder.yml",
+    "test:tabs": "node test/tabs-logic.test.js",
     "checksums": "node scripts/checksums.js",
     "gen:licenses": "node scripts/gen-third-party-licenses.js",
     "license": "node scripts/license-cli.js",

@@ -122,6 +122,26 @@ class TabbedWindow {
     return false;
   }
 
+  // Adopt a new tab order from the strip. Purely a permutation of `this.tabs` —
+  // the active view stays attached and nothing re-renders, so reordering can never
+  // disturb a document. Ctrl+1..9 follow the new visual order for free.
+  reorderTabs(orderedIds) {
+    if (!Array.isArray(orderedIds) || orderedIds.length !== this.tabs.length) return;
+    const byId = new Map(this.tabs.map((t) => [t.id, t]));
+    const next = [];
+    for (const id of orderedIds) {
+      const t = byId.get(id);
+      if (t) {
+        next.push(t);
+        byId.delete(id);
+      }
+    }
+    // A stale list (a tab closed mid-drag) must never silently drop a live tab.
+    if (next.length !== this.tabs.length) return;
+    this.tabs = next;
+    this._emit();
+  }
+
   cycleTab(dir) {
     if (this.tabs.length < 2) return;
     const i = this.tabs.findIndex((t) => t.id === this.activeId);

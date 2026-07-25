@@ -747,6 +747,12 @@ ipcMain.on("tabs:activate", (e, id) => {
   if (tw) tw.activateTab(id);
 });
 
+// Drag-to-reorder finished in the strip: adopt the new left-to-right order.
+ipcMain.on("tabs:reorder", (e, ids) => {
+  const tw = Tabs.findByStrip(e.sender);
+  if (tw) tw.reorderTabs(ids);
+});
+
 // ✕ on a tab (or middle-click) — runs the same unsaved-changes guard as a window
 // close, but only tears down that one tab (closing the window if it was last).
 ipcMain.on("tabs:close", (e, id) => {
