@@ -3152,9 +3152,11 @@ function updateToolbar() {
 // ---- wiring --------------------------------------------------------------
 
 async function openDialog() {
-  const files = await window.desktop.openPdf({ multi: false });
-  if (!files.length) return;
-  await loadBytes(toU8(files[0].data), files[0].name, files[0].path);
+  // Open into NEW tabs so the current document is never replaced/lost. If this
+  // tab is still empty, the first file fills it instead of leaving a blank tab.
+  const paths = await window.desktop.pickPdfs();
+  if (!paths || !paths.length) return;
+  await window.desktop.openPaths(paths, !state.bytes);
 }
 
 $("btn-open").onclick = openDialog;
@@ -3567,10 +3569,16 @@ window.addEventListener("drop", async (e) => {
   e.preventDefault();
   const f = [...e.dataTransfer.files].find((x) => x.name.toLowerCase().endsWith(".pdf"));
   if (f) {
-    const buf = await f.arrayBuffer();
-    // Electron exposes the dropped file's real path via file.path; use it for the
-    // breadcrumb when present (older/secured builds may omit it).
-    await loadBytes(new Uint8Array(buf), f.name, f.path || null);
+    // Electron exposes the dropped file's real path via file.path. If this tab
+    // already holds a document, open the drop as a NEW tab (never clobber the
+    // current one); if the tab is empty, or the path is unavailable (secured
+    // build), load it here.
+    if (f.path && state.bytes) {
+      await window.desktop.openPaths([f.path], false);
+    } else {
+      const buf = await f.arrayBuffer();
+      await loadBytes(new Uint8Array(buf), f.name, f.path || null);
+    }
   }
 });
 

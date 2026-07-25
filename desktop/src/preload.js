@@ -79,6 +79,12 @@ contextBridge.exposeInMainWorld("desktop", {
   newWindow: () => ipcRenderer.invoke("window:new"),
   // Report this tab's label + unsaved state to the tab strip. meta: { title, dirty }.
   setTabMeta: (meta) => ipcRenderer.send("tab:meta", meta),
+  // Pick PDF paths (no bytes read) for the tab layer to open by path.
+  // Returns string[] absolute paths, [] if cancelled.
+  pickPdfs: () => ipcRenderer.invoke("dialog:pick-pdfs"),
+  // Open PDF paths as new tabs in this window. fillCurrent=true reuses THIS tab
+  // for paths[0] when it's still empty (so no stray blank tab is left behind).
+  openPaths: (paths, fillCurrent) => ipcRenderer.invoke("tabs:open-paths", { paths, fillCurrent }),
   // A file was handed to this window to open ("Open with" / drag-onto-icon).
   // cb receives { path, name, data: Uint8Array }.
   onOpenFile: (cb) => {

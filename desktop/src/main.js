@@ -497,6 +497,19 @@ ipcMain.handle("dialog:open-pdf", async (e, { multi = false } = {}) => {
   }));
 });
 
+// Pick PDF paths WITHOUT reading them: the tab layer opens each by path, so main
+// reads the bytes straight into the target renderer (no wasteful double read /
+// IPC of a large file just to grab its path). Returns absolute paths, [] if
+// cancelled.
+ipcMain.handle("dialog:pick-pdfs", async (e) => {
+  const res = await dialog.showOpenDialog(senderWindow(e), {
+    title: "Mở PDF",
+    properties: ["openFile", "multiSelections"],
+    filters: [{ name: "PDF", extensions: ["pdf"] }],
+  });
+  return res.canceled ? [] : res.filePaths;
+});
+
 // Generic open for non-PDF inputs (images → PDF). `filters`/`multi` come from the
 // renderer; defaults to common image types with multi-selection.
 ipcMain.handle("dialog:open-files", async (e, { multi = true, filters } = {}) => {
@@ -715,6 +728,22 @@ ipcMain.on("tabs:close", (e, id) => {
 ipcMain.on("tab:meta", (e, meta) => {
   const found = Tabs.findDoc(e.sender);
   if (found) found.tw.setMeta(e.sender, meta);
+});
+
+// Open PDF paths as new tabs in the window that asked (menu/toolbar Open, or a
+// drop onto a tab that already holds a document). fillCurrent loads the first
+// path into the asking tab when it's still empty, instead of leaving it blank.
+ipcMain.handle("tabs:open-paths", (e, { paths, fillCurrent } = {}) => {
+  const found = Tabs.findDoc(e.sender);
+  const tw = found ? found.tw : Tabs.focusedTabbedWindow();
+  if (!tw || !Array.isArray(paths) || !paths.length) return false;
+  let start = 0;
+  if (fillCurrent) {
+    sendFileToView(e.sender, paths[0]);
+    start = 1;
+  }
+  for (let i = start; i < paths.length; i++) tw.createTab({ openPath: paths[i] });
+  return true;
 });
 
 // ---- IPC: unsaved-changes close guard ------------------------------------
