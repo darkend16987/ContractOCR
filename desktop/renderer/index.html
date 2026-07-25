@@ -110,6 +110,10 @@
 
         <div class="spacer"></div>
 
+        <!-- Ghi chú sống ở HÀNG 1 (không phải hàng công cụ): hàng công cụ bị ẩn khi
+             vào chế độ Chú thích/Sửa nội dung, mà panel ghi chú lại cố ý dùng được
+             ngay trong lúc chú thích — xem updateToolbar() trong app.js. -->
+        <button id="btn-comments" class="ghost icon-only" disabled title="Danh sách ghi chú — xem mọi comment trong tài liệu, bấm để nhảy tới"><svg class="ic"><use href="#ic-message"/></svg><span id="btn-comments-count" class="btn-badge" hidden></span></button>
         <button id="btn-settings" class="ghost icon-only" title="Cài đặt — API key cho Bóc tách"><svg class="ic"><use href="#ic-settings"/></svg></button>
         <span id="sidecar-badge" class="badge starting" title="Trạng thái engine OCR">OCR: …</span>
         <span id="update-badge" class="badge update" title="Trạng thái cập nhật" hidden></span>
@@ -153,35 +157,42 @@
 
         <div class="sep"></div>
 
-        <!-- Công cụ ▾ : OCR/dịch/nén/so sánh/ảnh/bảo mật -->
+        <!-- Công cụ ▾ : XỬ LÝ nội dung tại chỗ (OCR/dịch/nén/so sánh/copy ảnh) + khoá file.
+             Mọi đường đưa nội dung RA định dạng khác đã tách sang "Xuất ▾" bên cạnh. -->
         <div class="dropdown" id="tools-dd">
-          <button id="btn-tools" class="ghost" disabled title="Công cụ tài liệu: OCR văn bản, dịch, nén, so sánh, ảnh, khoá file"><svg class="ic"><use href="#ic-settings"/></svg>Công cụ<svg class="ic chev"><use href="#ic-chevron"/></svg></button>
+          <button id="btn-tools" class="ghost" disabled title="Xử lý tài liệu: OCR văn bản, dịch, nén, so sánh, copy ảnh, khoá file"><svg class="ic"><use href="#ic-settings"/></svg>Công cụ<svg class="ic chev"><use href="#ic-chevron"/></svg></button>
           <div class="dropdown-menu" id="tools-menu" hidden>
             <div class="dd-head">Văn bản</div>
             <button class="dd-item" id="btn-searchable" title="OCR thêm lớp text vô hình để tìm/bôi đen được"><svg class="ic"><use href="#ic-file-search"/></svg>OCR văn bản (tạo lớp tìm kiếm)…</button>
             <button class="dd-item" id="btn-translate" title="Giữ layout, xuất file mới. Chỉ PDF có text thật."><svg class="ic"><use href="#ic-translate"/></svg>Dịch tài liệu (AI)…</button>
             <div class="dd-sep"></div>
             <div class="dd-head">Tài liệu</div>
-            <button class="dd-item" id="btn-to-office" title="Chuyển nội dung PDF (chữ + bảng) sang Word/Excel/CSV có thể chỉnh sửa. Chỉ PDF có text thật."><svg class="ic"><use href="#ic-file"/></svg>Xuất ra Office (Word/Excel/CSV)…</button>
             <button class="dd-item" id="btn-compress"><svg class="ic"><use href="#ic-compress"/></svg>Nén (giảm dung lượng)…</button>
             <button class="dd-item" id="btn-diff"><svg class="ic"><use href="#ic-diff"/></svg>So sánh 2 file PDF…</button>
             <button class="dd-item" id="btn-copy-img" title="Bấm vào ảnh để copy, hoặc kéo chọn một vùng. Dán (Ctrl+V) sang app khác."><svg class="ic"><use href="#ic-photo"/></svg>Copy ảnh trong trang</button>
+            <div class="dd-sep"></div>
+            <div class="dd-head">Bảo mật</div>
+            <button class="dd-item" id="mi-encrypt"><svg class="ic"><use href="#ic-lock"/></svg>Khoá file (đặt mật khẩu)…</button>
+          </div>
+        </div>
+
+        <!-- Xuất ▾ : mọi cách đưa nội dung RA khỏi PDF (Office + ảnh) -->
+        <div class="dropdown" id="export-dd">
+          <button id="btn-export" class="ghost" disabled title="Xuất nội dung sang định dạng khác: Word/Excel/CSV hoặc ảnh"><svg class="ic"><use href="#ic-file"/></svg>Xuất<svg class="ic chev"><use href="#ic-chevron"/></svg></button>
+          <div class="dropdown-menu" id="export-menu" hidden>
+            <div class="dd-head">Office</div>
+            <button class="dd-item" id="btn-to-office" title="Chuyển nội dung PDF (chữ + bảng) sang Word/Excel/CSV có thể chỉnh sửa. Chỉ PDF có text thật."><svg class="ic"><use href="#ic-file"/></svg>Xuất ra Office (Word/Excel/CSV)…</button>
             <div class="dd-sep"></div>
             <div class="dd-head">Ảnh</div>
             <button class="dd-item" id="mi-pdf-to-images"><svg class="ic"><use href="#ic-photo"/></svg>Trang PDF → ảnh…</button>
             <button class="dd-item" id="mi-images-to-pdf"><svg class="ic"><use href="#ic-file"/></svg>Ảnh → PDF…</button>
             <button class="dd-item" id="mi-extract-images"><svg class="ic"><use href="#ic-photo"/></svg>Xuất ảnh trong PDF…</button>
-            <div class="dd-sep"></div>
-            <div class="dd-head">Bảo mật</div>
-            <!-- F3 ký số: helper .NET đã build (dist-helper/nabu-sign.exe), menu bật để test token. -->
-            <button class="dd-item" id="mi-sign" title="Ký số bằng USB token (VNPT-CA / Viettel-CA / FPT-CA / BKAV…) — chữ ký nhìn thấy + dấu thời gian"><svg class="ic"><use href="#ic-signature"/></svg>Ký số (USB token)…</button>
-            <button class="dd-item" id="mi-encrypt"><svg class="ic"><use href="#ic-lock"/></svg>Khoá file (đặt mật khẩu)…</button>
           </div>
         </div>
 
-        <div class="spacer"></div>
-
-        <button id="btn-comments" class="ghost" disabled title="Danh sách ghi chú — xem mọi comment trong tài liệu, bấm để nhảy tới"><svg class="ic"><use href="#ic-message"/></svg>Ghi chú<span id="btn-comments-count" class="btn-badge" hidden></span></button>
+        <!-- Ký số lên cấp 1: tính năng chính của v0.2.38, trước bị chôn 2 lớp trong Công cụ ▾.
+             Giữ vai trò gác cổng bản quyền bằng cách thêm id này vào GATED_BTNS (app.js). -->
+        <button id="btn-sign" class="ghost" disabled title="Ký số bằng USB token (VNPT-CA / Viettel-CA / FPT-CA / BKAV…) — chữ ký nhìn thấy + dấu thời gian"><svg class="ic"><use href="#ic-signature"/></svg>Ký số</button>
       </div>
     </header>
 

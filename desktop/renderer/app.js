@@ -130,6 +130,12 @@ function withTimeout(promise, ms, msg) {
 // they collapse into one history step when baked. Snapshots are full copies —
 // fine for a desktop app; capped at HISTORY_LIMIT to bound memory.
 const HISTORY_LIMIT = 30;
+// Second, INDEPENDENT cap — by total bytes. HISTORY_LIMIT alone bounds the step
+// COUNT, not the memory: each snapshot is a full copy, so 30 steps on a 128 MB
+// scan is ~3.8 GB in one tab (and every tab is its own renderer process). This
+// budget is what actually keeps a heavy document from eating the machine; for
+// ordinary files (<~17 MB) it never kicks in and undo depth stays the full 30.
+const HISTORY_BYTES_BUDGET = 512 * 1024 * 1024;
 const history = { undo: [], redo: [] };
 
 function snapshot() {
@@ -144,12 +150,26 @@ function resetHistory() {
   history.redo.length = 0;
   updateUndoRedo();
 }
+function historyBytes() {
+  let n = 0;
+  for (const s of history.undo) n += s.bytes ? s.bytes.length : 0;
+  for (const s of history.redo) n += s.bytes ? s.bytes.length : 0;
+  return n;
+}
+// Drop the OLDEST steps until the history fits HISTORY_BYTES_BUDGET. Always keeps
+// at least one undo step, so Ctrl+Z is never a no-op straight after an edit even
+// when a single snapshot is bigger than the whole budget.
+function trimHistoryToBudget() {
+  while (history.undo.length > 1 && historyBytes() > HISTORY_BYTES_BUDGET) history.undo.shift();
+  while (history.redo.length && historyBytes() > HISTORY_BYTES_BUDGET) history.redo.shift();
+}
 // Call BEFORE mutating state.bytes. Captures the pre-op document.
 function pushUndo() {
   if (!state.bytes) return;
   history.undo.push(snapshot());
   if (history.undo.length > HISTORY_LIMIT) history.undo.shift();
   history.redo.length = 0;
+  trimHistoryToBudget();
   updateUndoRedo();
   // Every canonical-bytes mutation routes through here → the document now has
   // changes not yet written to its real file; flag it and schedule a background
@@ -2927,6 +2947,11 @@ const GATED_BTNS = [
   "btn-translate",
   "btn-compress",
   "btn-tools",
+  // Both were reachable only through the gated "Công cụ ▾" before they were
+  // promoted to the toolbar — without these two entries the promotion would have
+  // silently opened a hole in the license gate.
+  "btn-export",
+  "btn-sign",
   "btn-edit",
   "btn-text-edit",
   "btn-merge",
@@ -3127,7 +3152,20 @@ function updateToolbar() {
   // per-handler guards enforce the finer "open a PDF first / engine ready" rules.
   const bcv = $("btn-tools");
   if (bcv) bcv.disabled = (!has && !ready) || editing;
+  // "Xuất ▾" follows the same rule as "Công cụ ▾": Ảnh → PDF needs only the engine,
+  // the rest need an open doc; per-item handlers enforce the finer rules.
+  const bex = $("btn-export");
+  if (bex) bex.disabled = (!has && !ready) || editing;
+  // Ký số always needs an open document.
+  const bsg = $("btn-sign");
+  if (bsg) bsg.disabled = !has || editing;
   if (editing) closeAllMenus();
+  // Contextual bars (#edit-bar / #tedit-bar) REPLACE the tools row rather than
+  // stacking above it — everything in that row is disabled while editing anyway,
+  // so keeping it visible only costs vertical space. Ghi chú deliberately lives in
+  // row 1 (it stays usable while annotating), so hiding this row loses nothing.
+  const toolsRow = document.querySelector(".tb-row.tb-tools");
+  if (toolsRow) toolsRow.hidden = editing;
   // Overlay edit must not run while text-editing, and vice versa.
   const be = $("btn-edit");
   if (be) be.disabled = !has || textEditing;
@@ -3269,6 +3307,7 @@ $("office-ok").onclick = runOffice;
 // runs its tool and the menu closes. Outside-click / Escape close any open menu.
 wireDropdown("btn-pages");
 wireDropdown("btn-tools");
+wireDropdown("btn-export");
 const ddRun = (fn) => () => {
   closeAllMenus();
   fn();

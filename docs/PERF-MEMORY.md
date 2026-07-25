@@ -2,6 +2,10 @@
 
 _Đo ngày 2026-07-25 trên nhánh tab (Lớp 1), Windows 11, Electron 33, chạy `npm start` (dev)._
 
+> **Trạng thái:** P1 (trần dung lượng undo) **đã code, chờ test GUI** — hằng số
+> `HISTORY_BYTES_BUDGET = 512 MB` ở `app.js`, cắt bớt trong `trimHistoryToBudget()`.
+> Chưa làm: P2 (tab nền nhả bitmap), P3 (autosave co giãn), P4 (chặn mềm số tab), P5 (canvas So sánh).
+
 **Câu hỏi:** mở nhiều tab/cửa sổ có cần tối ưu RAM như đã làm với file nặng không?
 **Trả lời ngắn: CÓ.** Chi phí cộng dồn tuyến tính theo số tab, tab nền **không** nhả RAM,
 và có một quả bom số học trong lịch sử undo lớn hơn nhiều so với bản thân tài liệu.

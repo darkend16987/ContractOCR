@@ -564,7 +564,7 @@ body.editing .note-marker, body.text-editing .note-marker { pointer-events: none
 /* ---- find-in-document (persistent toolbar box; also Ctrl+F) ---- */
 .find-box {
   display: flex; align-items: center; gap: 4px;
-  background: var(--panel); border: 1px solid var(--border);
+  background: var(--bg-2); border: 1px solid var(--line);
   border-radius: 10px; padding: 3px 6px;
 }
 .find-box .find-ic { opacity: 0.6; margin: 0 2px; }

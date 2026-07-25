@@ -180,7 +180,9 @@ function pdfPathFromArgv(argv) {
 const MENU_STR = {
   vi: {
     file: "Tập tin",
+    newTab: "Tab mới",
     newWindow: "Cửa sổ mới",
+    closeTab: "Đóng tab",
     open: "Mở…",
     print: "In…",
     save: "Lưu",
@@ -218,7 +220,9 @@ const MENU_STR = {
   },
   en: {
     file: "File",
+    newTab: "New Tab",
     newWindow: "New Window",
+    closeTab: "Close Tab",
     open: "Open…",
     print: "Print…",
     save: "Save",
@@ -270,6 +274,15 @@ function buildMenu(lang) {
     {
       label: L.file,
       submenu: [
+        {
+          label: L.newTab,
+          accelerator: "CmdOrCtrl+T",
+          click: () => {
+            const tw = Tabs.focusedTabbedWindow();
+            if (tw) tw.createTab();
+            else Tabs.createTabbedWindow();
+          },
+        },
         { label: L.newWindow, accelerator: "CmdOrCtrl+N", click: () => Tabs.createTabbedWindow() },
         { label: L.open, accelerator: "CmdOrCtrl+O", click: send("open") },
         { type: "separator" },
@@ -278,7 +291,25 @@ function buildMenu(lang) {
         { label: L.save, accelerator: "CmdOrCtrl+S", click: send("save") },
         { label: L.saveAs, accelerator: "CmdOrCtrl+Shift+S", click: send("saveAs") },
         { type: "separator" },
-        { role: "close", label: L.close },
+        // Ctrl+W must close the TAB, not the window — that is what every tabbed app
+        // does, and role:"close" would silently bind Ctrl+W to the whole window
+        // (taking every other tab down with it). Window close moves to Ctrl+Shift+W.
+        {
+          label: L.closeTab,
+          accelerator: "CmdOrCtrl+W",
+          click: () => {
+            const tw = Tabs.focusedTabbedWindow();
+            if (tw && tw.activeId != null) tw.closeTab(tw.activeId);
+          },
+        },
+        {
+          label: L.close,
+          accelerator: "CmdOrCtrl+Shift+W",
+          click: () => {
+            const tw = Tabs.focusedTabbedWindow();
+            if (tw && !tw.base.isDestroyed()) tw.base.close();
+          },
+        },
         { role: "quit", label: L.quit },
       ],
     },

@@ -60,6 +60,7 @@ class TabbedWindow {
       },
     });
     this.base.contentView.addChildView(this.strip);
+    this.bindTabKeys(this.strip.webContents);
     this.strip.webContents.loadFile(path.join(deps.RENDERER, "shell.html"));
     // The strip may finish loading after the first tab is created — re-push state
     // once it's ready so it never misses the initial render.
@@ -92,6 +93,43 @@ class TabbedWindow {
     }
   }
 
+  // Ctrl+Tab / Ctrl+Shift+Tab / Ctrl+1..9. These can't be menu accelerators without
+  // littering the menu with nine hidden entries, so they're intercepted before the
+  // page sees them — which also means they work while a text field has focus.
+  // Ctrl+T (new tab) and Ctrl+W (close tab) ARE menu accelerators, see main.js.
+  bindTabKeys(webContents) {
+    webContents.on("before-input-event", (e, input) => {
+      if (this.handleTabKey(input)) e.preventDefault();
+    });
+  }
+
+  handleTabKey(input) {
+    if (!input || input.type !== "keyDown" || input.alt) return false;
+    const mod = process.platform === "darwin" ? input.meta : input.control;
+    if (!mod) return false;
+    if (input.key === "Tab") {
+      this.cycleTab(input.shift ? -1 : 1);
+      return true;
+    }
+    if (input.shift) return false;
+    if (/^[1-9]$/.test(input.key)) {
+      // Ctrl+9 jumps to the LAST tab (browser convention), 1..8 are positional.
+      const n = parseInt(input.key, 10);
+      const tab = n === 9 ? this.tabs[this.tabs.length - 1] : this.tabs[n - 1];
+      if (tab) this.activateTab(tab.id);
+      return true;
+    }
+    return false;
+  }
+
+  cycleTab(dir) {
+    if (this.tabs.length < 2) return;
+    const i = this.tabs.findIndex((t) => t.id === this.activeId);
+    if (i === -1) return;
+    const next = this.tabs[(i + dir + this.tabs.length) % this.tabs.length];
+    if (next) this.activateTab(next.id);
+  }
+
   _active() {
     return this.tabs.find((t) => t.id === this.activeId) || null;
   }
@@ -114,6 +152,7 @@ class TabbedWindow {
     const wc = view.webContents;
     deps.hardenNav(wc);
     deps.attachContextMenu(wc);
+    this.bindTabKeys(wc);
     wc.loadFile(path.join(deps.RENDERER, "index.html"));
     if (openPath) {
       wc.once("did-finish-load", () => deps.sendFileToView(wc, openPath));

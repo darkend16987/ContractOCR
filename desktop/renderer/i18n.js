@@ -114,6 +114,8 @@
     "Bảo mật": "Security",
     "Khoá file (đặt mật khẩu)…": "Lock file (set password)…",
     "Bóc tách": "Extract fields",
+    "Xuất": "Export",
+    "Ký số": "Sign",
     "OCR + bóc tách field bằng AI": "OCR + AI field extraction",
 
     // --- overlay editor toolbar ---

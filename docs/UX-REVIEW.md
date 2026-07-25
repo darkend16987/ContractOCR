@@ -2,6 +2,9 @@
 
 _Thực hiện 2026-07-25, sau khi thêm tab (Lớp 1). Đối chiếu mã nguồn thật, có trích dẫn._
 
+> **Trạng thái:** U1, U2, U3, U4, U5, U6, U7 **đã code, chờ test GUI** (lưới test ở §5).
+> Còn lại: U8 (quy tắc panel phải) — chờ kết quả test mục 8.
+
 Nguyên tắc dùng để đánh giá (heuristic đã được kiểm chứng rộng rãi, không phải cảm tính):
 **Jakob** (người dùng mong app của bạn hoạt động giống app họ đã quen) ·
 **Hick** (thời gian chọn tăng theo số lựa chọn) · **Fitts** (đích to/gần thì bấm nhanh) ·

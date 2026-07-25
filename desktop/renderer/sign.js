@@ -372,7 +372,7 @@
   // --- wiring -----------------------------------------------------------------
 
   function wire() {
-    const mi = byId("mi-sign");
+    const mi = byId("btn-sign");
     if (mi) mi.onclick = openDialog;
     byId("sign-cancel").onclick = closeDialog;
     byId("sign-ok").onclick = onOk;
