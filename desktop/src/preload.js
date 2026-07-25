@@ -43,8 +43,11 @@ contextBridge.exposeInMainWorld("desktop", {
   },
   // Show the native Save / Don't save / Cancel dialog. Resolves to 0 / 1 / 2.
   confirmClose: () => ipcRenderer.invoke("window:confirm-close"),
-  // Proceed to actually close this window (bypasses the guard once).
+  // Proceed to actually close this tab/window (bypasses the guard once).
   forceCloseWindow: () => ipcRenderer.invoke("window:force-close"),
+  // Tell main the close was cancelled, so a whole-window close aborts instead of
+  // hanging while it waits for this tab's decision.
+  cancelClose: () => ipcRenderer.invoke("window:close-cancelled"),
 
   // --- crash recovery (AutoRecover-style snapshots) ---
   recovery: {
@@ -71,9 +74,11 @@ contextBridge.exposeInMainWorld("desktop", {
     apply: (payload) => ipcRenderer.invoke("sign:apply", payload),
   },
 
-  // --- multi-window ---
+  // --- multi-window / tabs ---
   // Open a new empty document window.
   newWindow: () => ipcRenderer.invoke("window:new"),
+  // Report this tab's label + unsaved state to the tab strip. meta: { title, dirty }.
+  setTabMeta: (meta) => ipcRenderer.send("tab:meta", meta),
   // A file was handed to this window to open ("Open with" / drag-onto-icon).
   // cb receives { path, name, data: Uint8Array }.
   onOpenFile: (cb) => {

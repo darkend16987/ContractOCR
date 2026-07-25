@@ -40,9 +40,20 @@ function updateBlocker() {
   return null;
 }
 
+// getWin() may return a BrowserWindow (has .webContents and is its own dialog
+// parent) or a { base, contents } pair (BaseWindow + a WebContentsView's
+// webContents — the tabbed shell). Normalise to both a dialog parent and a
+// webContents to push status to.
+function resolveTarget() {
+  const w = getWin();
+  if (!w) return { base: null, contents: null };
+  if (w.webContents) return { base: w, contents: w.webContents }; // BrowserWindow
+  return { base: w.base || null, contents: w.contents || null }; // { base, contents }
+}
+
 function notify(payload) {
-  const win = getWin();
-  if (win && !win.isDestroyed()) win.webContents.send("update:status", payload);
+  const { contents } = resolveTarget();
+  if (contents && !contents.isDestroyed()) contents.send("update:status", payload);
 }
 
 // `windowProvider` is a function returning the current primary BrowserWindow (or
@@ -94,8 +105,8 @@ function initAutoUpdate(windowProvider) {
       message: `Nabu PDF ${info && info.version} đã tải xong.`,
       detail: "Khởi động lại để cài bản mới. Bạn cũng có thể tiếp tục dùng và bản mới sẽ tự cài khi thoát app.",
     };
-    const w = getWin();
-    const { response } = await (w ? dialog.showMessageBox(w, boxOpts) : dialog.showMessageBox(boxOpts));
+    const { base } = resolveTarget();
+    const { response } = await (base ? dialog.showMessageBox(base, boxOpts) : dialog.showMessageBox(boxOpts));
     if (response === 0) autoUpdater.quitAndInstall();
   });
 

@@ -224,6 +224,13 @@ function updateDirtyIndicator() {
   // name stays visible after the filename.
   const dot = state.dirty ? "● " : "";
   document.title = state.bytes ? `${dot}${state.name || "document.pdf"} — Nabu PDF` : "Nabu PDF";
+  // Mirror this tab's label + unsaved state onto the window's tab strip.
+  if (window.desktop && window.desktop.setTabMeta) {
+    window.desktop.setTabMeta({
+      title: state.bytes ? state.name || "document.pdf" : "Trang mới",
+      dirty: !!state.dirty,
+    });
+  }
 }
 
 function markDirty() {
@@ -3583,6 +3590,11 @@ function finishClose() {
 }
 if (window.desktop.onCloseRequest) {
   let deciding = false;
+  // In tabbed mode main awaits this tab's close decision; tell it we cancelled so
+  // a whole-window close aborts cleanly instead of hanging.
+  const cancelClose = () => {
+    if (window.desktop.cancelClose) window.desktop.cancelClose();
+  };
   window.desktop.onCloseRequest(async () => {
     if (deciding) return;
     if (!docHasUnsavedChanges()) {
@@ -3596,12 +3608,18 @@ if (window.desktop.onCloseRequest) {
     } finally {
       deciding = false;
     }
-    if (choice === 2 || choice == null) return; // Huỷ — keep the window open
+    if (choice === 2 || choice == null) {
+      cancelClose(); // Huỷ — keep the tab open
+      return;
+    }
     if (choice === 0) {
       // Lưu: saveDoc bakes pending edits + writes (may prompt Save As). If it's
       // still dirty afterwards (user cancelled Save As), abort the close.
       await saveDoc();
-      if (docHasUnsavedChanges()) return;
+      if (docHasUnsavedChanges()) {
+        cancelClose();
+        return;
+      }
     }
     finishClose(); // saved (0) or discarded (1)
   });

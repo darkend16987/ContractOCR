@@ -8,30 +8,36 @@ const { startSidecar, stopSidecar } = require("./sidecar");
 const { initAutoUpdate } = require("./updater");
 const { initLicense } = require("./license");
 const { initSigning } = require("./signing");
+const Tabs = require("./tabs");
 
-// All open document windows. Each BrowserWindow runs its own renderer with its
-// own single-doc state, but every window shares the ONE Python sidecar (same
-// port + token) so OCR models are loaded once regardless of window count.
-const windows = new Set();
+// Each document opens as a TAB inside a TabbedWindow (BaseWindow + one
+// WebContentsView per doc — see src/tabs.js). Every tab is a full, independent
+// renderer with its own single-doc state, but all tabs across all windows share
+// the ONE Python sidecar (same port + token) so OCR models load once.
 let sidecar = null;
-// Set once an app-wide quit is under way, so the per-window unsaved-changes guard
-// stands down (see the window "close" handler).
+// Set once an app-wide quit is under way, so the per-tab unsaved-changes guard
+// stands down (see TabbedWindow._onClose).
 let appQuitting = false;
 
-// The primary window = first still-alive window. Used as a default parent for
-// app-level dialogs (updater) and as a fallback when no window has focus.
+// A BaseWindow to parent app-level dialogs (updater / message boxes) on: the
+// focused TabbedWindow, else any. May be null before the first window exists.
 function primaryWindow() {
-  const focused = BrowserWindow.getFocusedWindow();
-  if (focused && windows.has(focused) && !focused.isDestroyed()) return focused;
-  for (const w of windows) if (!w.isDestroyed()) return w;
-  return null;
+  const tw = Tabs.focusedTabbedWindow();
+  return tw ? tw.base : null;
 }
 
-// The window that sent an IPC message (correct parent for its dialogs / target
-// for its print job). Falls back to the primary window.
+// The BaseWindow that owns the webContents that sent an IPC message — the
+// correct parent for its native dialogs. Resolves both document views and the
+// tab strip; falls back to the primary window.
 function senderWindow(e) {
-  const w = e && e.sender ? BrowserWindow.fromWebContents(e.sender) : null;
-  return w && !w.isDestroyed() ? w : primaryWindow();
+  const wc = e && e.sender;
+  if (wc) {
+    const found = Tabs.findDoc(wc);
+    if (found && !found.tw.base.isDestroyed()) return found.tw.base;
+    const tw = Tabs.findByStrip(wc);
+    if (tw && !tw.base.isDestroyed()) return tw.base;
+  }
+  return primaryWindow();
 }
 
 // Per-launch shared secret. Passed to the sidecar (env) and to the renderer (in
@@ -47,70 +53,36 @@ const RENDERER = path.join(__dirname, "..", "renderer");
 
 function setSidecarState(next) {
   sidecarState = { ...sidecarState, ...next };
-  for (const w of windows) {
-    if (!w.isDestroyed()) w.webContents.send("sidecar:status", sidecarState);
+  for (const wc of Tabs.allDocContents()) {
+    wc.send("sidecar:status", sidecarState);
   }
 }
 
-// Create a document window. `openPath` (optional) is an absolute path to a PDF
-// to load once the renderer is ready (used by "Open with" / drag-onto-icon and
-// the second-instance handler).
-function createWindow(openPath) {
-  const win = new BrowserWindow({
-    width: 1360,
-    height: 880,
-    minWidth: 900,
-    minHeight: 600,
-    title: "Nabu PDF",
-    icon: path.join(__dirname, "..", "build", "icon.png"),
-    backgroundColor: "#0f172a",
-    webPreferences: {
-      preload: path.join(__dirname, "preload.js"),
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: true,
-    },
-  });
-  windows.add(win);
-
-  // Load the PDF UI immediately — no waiting on the heavy OCR sidecar.
-  win.loadFile(path.join(RENDERER, "index.html"));
-
-  // Hand the renderer a file to open once it has finished loading. Read here in
-  // the main process (renderer has no fs) and push the bytes over IPC.
-  if (openPath) {
-    win.webContents.once("did-finish-load", () => sendFileToWindow(win, openPath));
-  }
-
-  // Navigation hardening: this is a single local page. Block any attempt to
-  // navigate away or open new windows (defence-in-depth if the renderer is ever
-  // compromised, e.g. via a crafted PDF). External http(s) links go through the
-  // explicit shell:open-external IPC instead.
-  win.webContents.setWindowOpenHandler(({ url }) => {
+// Defence-in-depth navigation lock for a document view: it only ever shows the
+// one local page. Block any attempt to navigate away or open new windows (in
+// case the renderer is ever compromised, e.g. via a crafted PDF). External
+// http(s) links go through the explicit shell:open-external IPC instead.
+function hardenNav(webContents) {
+  webContents.setWindowOpenHandler(({ url }) => {
     if (/^https?:\/\//i.test(url)) shell.openExternal(url);
     return { action: "deny" };
   });
-  win.webContents.on("will-navigate", (e, url) => {
-    if (url !== win.webContents.getURL()) e.preventDefault();
+  webContents.on("will-navigate", (e, url) => {
+    if (url !== webContents.getURL()) e.preventDefault();
   });
+}
 
-  attachContextMenu(win);
-
-  // Unsaved-changes guard: intercept the first close and let the renderer decide
-  // (Save / Don't save / Cancel via window:confirm-close). window:force-close then
-  // re-closes with the flag set. Skipped during an app quit (appQuitting) so quit
-  // never hangs on an async round-trip or leaves the sidecar torn down after a
-  // cancel — the autosave recovery snapshot is the safety net for that path.
-  win.on("close", (e) => {
-    if (win._forceClose || appQuitting) return;
-    e.preventDefault();
-    if (!win.isDestroyed()) win.webContents.send("window:before-close");
-  });
-
-  win.on("closed", () => {
-    windows.delete(win);
-  });
-  return win;
+// Open a PDF path in the app: as a new TAB in the focused window if one exists,
+// otherwise in a fresh window. Used by "Open with" / drag-onto-icon and the
+// second-instance handler (double-clicking more PDFs → more tabs).
+function openPathInApp(filePath) {
+  const tw = Tabs.focusedTabbedWindow();
+  if (tw) {
+    tw.createTab({ openPath: filePath });
+    tw.focus();
+  } else {
+    Tabs.createTabbedWindow(filePath);
+  }
 }
 
 // Right-click context menu. Rebuilt on every click from the hit-test params so it
@@ -120,8 +92,8 @@ function createWindow(openPath) {
 // code and works under the sandbox. Labels follow the in-app language (menuLang);
 // undo/redo appear only inside editable fields, so the native roles here never
 // clash with the renderer's own PDF undo stack.
-function attachContextMenu(win) {
-  win.webContents.on("context-menu", (_e, params) => {
+function attachContextMenu(webContents) {
+  webContents.on("context-menu", (_e, params) => {
     const L = MENU_STR[menuLang] || MENU_STR.vi;
     const f = params.editFlags || {};
     const hasSelection = !!(params.selectionText && params.selectionText.trim());
@@ -159,25 +131,25 @@ function attachContextMenu(win) {
       );
     }
 
-    if (items.length) Menu.buildFromTemplate(items).popup({ window: win });
+    if (items.length) Menu.buildFromTemplate(items).popup();
   });
 }
 
 // Read a PDF off disk and push it to a window's renderer to open. Guards the
 // path so only real .pdf files are read (defence against a bogus argv entry).
-function sendFileToWindow(win, filePath) {
+function sendFileToView(webContents, filePath) {
   try {
-    if (!win || win.isDestroyed()) return;
+    if (!webContents || webContents.isDestroyed()) return;
     if (!filePath || !/\.pdf$/i.test(filePath)) return;
     if (!fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) return;
     const data = fs.readFileSync(filePath);
-    win.webContents.send("file:open", {
+    webContents.send("file:open", {
       path: filePath,
       name: path.basename(filePath),
       data,
     });
   } catch (_) {
-    /* ignore unreadable file — the empty window is still usable */
+    /* ignore unreadable file — the empty tab is still usable */
   }
 }
 
@@ -289,16 +261,16 @@ let menuLang = "vi";
 function buildMenu(lang) {
   const L = MENU_STR[lang] || MENU_STR.vi;
   const send = (cmd) => () => {
-    // Menu commands target the window the user is interacting with.
-    const win = primaryWindow();
-    if (win) win.webContents.send("menu:cmd", cmd);
+    // Menu commands target the active tab of the window the user is using.
+    const wc = Tabs.activeContents();
+    if (wc) wc.send("menu:cmd", cmd);
   };
   const isDev = !app.isPackaged;
   const template = [
     {
       label: L.file,
       submenu: [
-        { label: L.newWindow, accelerator: "CmdOrCtrl+N", click: () => createWindow() },
+        { label: L.newWindow, accelerator: "CmdOrCtrl+N", click: () => Tabs.createTabbedWindow() },
         { label: L.open, accelerator: "CmdOrCtrl+O", click: send("open") },
         { type: "separator" },
         { label: L.print, accelerator: "CmdOrCtrl+P", registerAccelerator: false, click: send("print") },
@@ -392,7 +364,7 @@ let pendingOpenPath = null;
 app.on("open-file", (e, filePath) => {
   e.preventDefault();
   if (app.isReady()) {
-    createWindow(filePath);
+    openPathInApp(filePath);
   } else {
     pendingOpenPath = filePath;
   }
@@ -407,13 +379,13 @@ if (!app.requestSingleInstanceLock()) {
   app.on("second-instance", (_e, argv) => {
     const filePath = pdfPathFromArgv(argv);
     if (filePath) {
-      createWindow(filePath);
+      openPathInApp(filePath);
       return;
     }
-    const win = primaryWindow();
-    if (win) {
-      if (win.isMinimized()) win.restore();
-      win.focus();
+    const tw = Tabs.focusedTabbedWindow();
+    if (tw) {
+      if (tw.base.isMinimized()) tw.base.restore();
+      tw.focus();
     }
   });
 
@@ -440,19 +412,41 @@ if (!app.requestSingleInstanceLock()) {
       });
     });
 
+    // Wire the tab layer with the process-level helpers it needs (keeps tabs.js
+    // free of app wiring / circular requires).
+    Tabs.configure({
+      RENDERER,
+      docPreload: path.join(__dirname, "preload.js"),
+      shellPreload: path.join(__dirname, "shell-preload.js"),
+      iconPath: path.join(__dirname, "..", "build", "icon.png"),
+      hardenNav,
+      attachContextMenu,
+      sendFileToView,
+      isQuitting: () => appQuitting,
+      onAllClosed: () => {
+        if (process.platform !== "darwin") app.quit();
+      },
+    });
+
     buildMenu(menuLang);
     // Open a file passed on the command line (Windows "Open with") or stashed by
-    // a pre-ready macOS open-file event; otherwise an empty window.
+    // a pre-ready macOS open-file event; otherwise an empty tab.
     const launchFile = pendingOpenPath || pdfPathFromArgv(process.argv);
     pendingOpenPath = null;
-    createWindow(launchFile || undefined);
+    Tabs.createTabbedWindow(launchFile || undefined);
     bootSidecar();
-    initAutoUpdate(primaryWindow);
+    // Updater needs both a BaseWindow (to parent its dialogs) and a webContents
+    // (to push status events) — the focused window's base + its active tab.
+    initAutoUpdate(() => {
+      const tw = Tabs.focusedTabbedWindow();
+      if (!tw) return null;
+      return { base: tw.base, contents: Tabs.activeContents() };
+    });
     initLicense();
     initSigning();
 
     app.on("activate", () => {
-      if (BrowserWindow.getAllWindows().length === 0) createWindow();
+      if (Tabs.count() === 0) Tabs.createTabbedWindow();
     });
   });
 }
@@ -613,9 +607,10 @@ ipcMain.handle("licenses:open", (_e, which) => {
 
 ipcMain.handle("print:printers", async (e) => {
   try {
-    const win = senderWindow(e);
-    if (!win || win.isDestroyed()) return [];
-    return await win.webContents.getPrintersAsync();
+    // e.sender is the requesting document view's webContents (its #print-root
+    // holds the rasterised pages we print).
+    if (!e.sender || e.sender.isDestroyed()) return [];
+    return await e.sender.getPrintersAsync();
   } catch (_) {
     return [];
   }
@@ -628,8 +623,8 @@ const PRINT_PAGE_SIZES = new Set([
 
 ipcMain.handle("print:page", (e, opts = {}) => {
   return new Promise((resolve) => {
-    const win = senderWindow(e);
-    if (!win || win.isDestroyed()) {
+    const wc = e.sender; // the requesting document view's webContents
+    if (!wc || wc.isDestroyed()) {
       resolve({ ok: false, reason: "no-window" });
       return;
     }
@@ -647,7 +642,7 @@ ipcMain.handle("print:page", (e, opts = {}) => {
     if (opts.pageSize && PRINT_PAGE_SIZES.has(opts.pageSize)) printOpts.pageSize = opts.pageSize;
     if (opts.duplexMode) printOpts.duplexMode = opts.duplexMode; // 'simplex' | 'shortEdge' | 'longEdge'
     try {
-      win.webContents.print(printOpts, (success, reason) => {
+      wc.print(printOpts, (success, reason) => {
         resolve({ ok: success, reason });
       });
     } catch (err) {
@@ -688,10 +683,38 @@ ipcMain.handle("clipboard:read-image", () => {
   }
 });
 
-// New empty document window (renderer "Cửa sổ mới" button / Ctrl+N routed here).
+// New empty document WINDOW (renderer "Cửa sổ mới" button / Ctrl+N). Each window
+// carries its own tabs.
 ipcMain.handle("window:new", () => {
-  createWindow();
+  Tabs.createTabbedWindow();
   return true;
+});
+
+// ---- IPC: tab strip (shell.html) -----------------------------------------
+
+// The ＋ button — open a new empty tab in the window that owns this strip.
+ipcMain.on("tabs:new-tab", (e) => {
+  const tw = Tabs.findByStrip(e.sender);
+  if (tw) tw.createTab();
+});
+
+ipcMain.on("tabs:activate", (e, id) => {
+  const tw = Tabs.findByStrip(e.sender);
+  if (tw) tw.activateTab(id);
+});
+
+// ✕ on a tab (or middle-click) — runs the same unsaved-changes guard as a window
+// close, but only tears down that one tab (closing the window if it was last).
+ipcMain.on("tabs:close", (e, id) => {
+  const tw = Tabs.findByStrip(e.sender);
+  if (tw) tw.closeTab(id);
+});
+
+// A document renderer reporting its tab title / dirty state (see setTabMeta in
+// preload.js). e.sender is that tab's view webContents.
+ipcMain.on("tab:meta", (e, meta) => {
+  const found = Tabs.findDoc(e.sender);
+  if (found) found.tw.setMeta(e.sender, meta);
 });
 
 // ---- IPC: unsaved-changes close guard ------------------------------------
@@ -722,13 +745,21 @@ ipcMain.handle("window:confirm-close", async (e) => {
   }
 });
 
-// Renderer has decided the window may close — do it, bypassing the guard once.
+// The document renderer has decided its tab may close — resolve the pending
+// close request (see TabbedWindow._requestClose), which tears that tab down
+// (and closes the window if it was the last tab).
 ipcMain.handle("window:force-close", (e) => {
-  const win = senderWindow(e);
-  if (win && !win.isDestroyed()) {
-    win._forceClose = true;
-    win.close();
-  }
+  const found = Tabs.findDoc(e.sender);
+  if (found) found.tw._resolveClose(found.tab.id, true);
+  return true;
+});
+
+// The document renderer cancelled its close (user chose "Huỷ", or aborted a Save
+// As) — resolve the pending close as "cancel" so a whole-window close aborts
+// cleanly instead of hanging waiting for a decision.
+ipcMain.handle("window:close-cancelled", (e) => {
+  const found = Tabs.findDoc(e.sender);
+  if (found) found.tw._resolveClose(found.tab.id, false);
   return true;
 });
 
