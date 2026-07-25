@@ -465,18 +465,28 @@
     }
     showOverlay("Đang ghi thay đổi vào PDF…");
     try {
-      const res = await sidecarFetch("/edit-text", {
+      // ?raw=1: on success the sidecar returns the PDF bytes directly
+      // (Content-Type application/pdf), so we read them with arrayBuffer() and
+      // skip the base64 decode that OOM'd the renderer on large files. On failure
+      // it returns JSON with an error message.
+      const res = await sidecarFetch("/edit-text?raw=1", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ pdf_b64: u8ToB64(state.bytes), edits }),
       });
-      const data = await res.json();
-      if (!data.success) {
-        toast("Sửa lỗi: " + (data.error || data.detail || "không rõ"), "bad");
+      const ct = res.headers.get("content-type") || "";
+      if (!res.ok || ct.includes("json")) {
+        let msg = res.statusText || "không rõ";
+        try {
+          const data = await res.json();
+          msg = data.error || data.detail || msg;
+        } catch (_) {}
+        toast("Sửa lỗi: " + msg, "bad");
         return;
       }
+      const buf = await res.arrayBuffer();
       if (window.History) window.History.pushUndo();
-      state.bytes = Uint8Array.from(atob(data.data_b64), (ch) => ch.charCodeAt(0));
+      state.bytes = new Uint8Array(buf);
       const n = edits.length;
       await exit(new Set([te.page])); // only the edited page changed — repaint just it
       toast(`Đã ghi ${n} sửa đổi vào PDF.`, "good");

@@ -20,7 +20,7 @@ from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel
 from PIL import Image
 
@@ -1598,8 +1598,15 @@ class EditTextResponse(BaseModel):
 
 
 @app.post("/edit-text", response_model=EditTextResponse)
-async def edit_text(req: EditTextRequest):
-    """Apply span-level text replacements: remove old glyphs, redraw new text in place."""
+async def edit_text(req: EditTextRequest, raw: bool = False):
+    """Apply span-level text replacements: remove old glyphs, redraw new text in place.
+
+    With ?raw=1 the successful result is returned as a raw application/pdf body
+    (metadata in headers) instead of base64 JSON. The desktop renderer uses this
+    to avoid decoding a ~180 MB base64 string (which OOM'd the renderer on large
+    documents). Errors still return JSON, so the client tells success from failure
+    by response Content-Type. raw defaults False → JSON, keeping other callers/tests
+    unchanged."""
     try:
         import fitz  # PyMuPDF
     except ImportError:
@@ -1811,6 +1818,17 @@ async def edit_text(req: EditTextRequest):
         doc.close()
 
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    if raw:
+        # Binary path: hand back the PDF bytes directly — no base64 — so the
+        # renderer skips the decode that blew its heap on 100 MB+ files.
+        return Response(
+            content=out_bytes,
+            media_type="application/pdf",
+            headers={
+                "X-Pages-Changed": str(pages_changed),
+                "X-Filename": f"edited_{ts}.pdf",
+            },
+        )
     return EditTextResponse(
         success=True,
         data_b64=base64.b64encode(out_bytes).decode("ascii"),

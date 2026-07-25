@@ -571,7 +571,7 @@
         toast("Xuất lỗi: " + (data.error || data.detail || "không rõ"), "bad");
         return;
       }
-      const bytes = Uint8Array.from(atob(data.data_b64), (ch) => ch.charCodeAt(0));
+      const bytes = b64ToU8(data.data_b64);
       const name = cmp.b.name.replace(/\.pdf$/i, "") + "-danh-dau.pdf";
       const r = await window.desktop.savePdf(bytes, name);
       if (r.saved) toast("Đã lưu bản B có đánh dấu: " + r.path, "good");

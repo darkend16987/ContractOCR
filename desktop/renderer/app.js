@@ -441,7 +441,7 @@ async function unlockEncrypted(u8) {
         toast("Không mở khoá được: " + (data.error || data.detail || "không rõ"), "bad");
         return null;
       }
-      return Uint8Array.from(atob(data.data_b64), (ch) => ch.charCodeAt(0));
+      return b64ToU8(data.data_b64);
     } catch (err) {
       toast("Lỗi mở khoá: " + err.message, "bad");
       return null;
@@ -683,24 +683,39 @@ async function renderPageCanvas(i) {
   m.wrap.dataset.rendered = "1";
   m.rendering = true; // guards against a concurrent free() while rasterising
   const { page, vp, cw, ch, canvas, dpr } = m;
-  canvas.width = Math.floor(cw * dpr);
-  canvas.height = Math.floor(ch * dpr);
+  const pw = Math.floor(cw * dpr);
+  const ph = Math.floor(ch * dpr);
   // While the editor is open, the round-trip text boxes / notes are lifted into
   // the live overlay, so hide their baked PDF appearance here (and let the overlay
   // own the note markers) to avoid drawing them twice.
   const editing = !!(window.Editor && window.Editor.active);
   try {
+    // Rasterise into an OFF-SCREEN canvas first, then blit onto the visible one
+    // only after render succeeds. Assigning canvas.width clears the canvas, so
+    // painting the visible canvas up-front and then failing (e.g. a transient
+    // allocation failure after a large edit) used to leave the page blank with no
+    // sign of the error. Rendering off-screen keeps the previous bitmap on failure.
+    const off = document.createElement("canvas");
+    off.width = pw;
+    off.height = ph;
     await page.render({
-      canvasContext: canvas.getContext("2d"),
+      canvasContext: off.getContext("2d"),
       viewport: vp,
       transform: dpr !== 1 ? [dpr, 0, 0, dpr, 0, 0] : undefined,
       annotationMode: editing ? pdfjsLib.AnnotationMode.DISABLE : pdfjsLib.AnnotationMode.ENABLE,
     }).promise;
+    canvas.width = pw;
+    canvas.height = ph;
+    canvas.getContext("2d").drawImage(off, 0, 0);
     await addTextLayer(i, m);  // selectable/​highlightable text for text-based pages
     if (!editing) await addNoteMarkers(i, m); // surface baked sticky-note comments (readable in-app)
     if (search.matches.length) drawSearchLayer(i); // repaint find highlights on (re)render
-  } catch (_) {
+  } catch (err) {
     m.wrap.dataset.rendered = "0"; // let it retry on the next intersection
+    // Don't fail silently: a swallowed render error looked exactly like "the page
+    // vanished". The visible canvas still holds its previous bitmap (we never
+    // cleared it), so the page shows stale-but-present rather than blank.
+    console.error("renderPageCanvas: page " + (i + 1) + " render failed", err);
   } finally {
     m.rendering = false;
     // If the page scrolled far away while we were rasterising (fast fling), the
@@ -2101,7 +2116,7 @@ async function runExport(fmt) {
       toast("Xuất lỗi: " + data.error, "bad");
       return;
     }
-    const bytes = Uint8Array.from(atob(data.data_b64), (ch) => ch.charCodeAt(0));
+    const bytes = b64ToU8(data.data_b64);
     const ext = fmt === "excel" ? "xlsx" : fmt;
     const r = await window.desktop.saveFile(bytes, data.filename, [
       { name: fmt.toUpperCase(), extensions: [ext] },
@@ -2124,6 +2139,19 @@ function u8ToB64(u8) {
     s += String.fromCharCode.apply(null, u8.subarray(i, i + chunk));
   }
   return btoa(s);
+}
+// Inverse of u8ToB64: decode a base64 PDF payload to bytes with a plain indexed
+// loop. Do NOT use Uint8Array.from(atob(b64), c => c.charCodeAt(0)) — its
+// iterator+callback path allocates ~one temp object per byte and blows the V8
+// heap on large (100 MB+) documents, which made an edit's re-render fail and
+// leave the page blank. This loop allocates only the binary string + the output
+// array. Shared with the sibling classic scripts (text-edit.js / compare.js).
+function b64ToU8(b64) {
+  const bin = atob(b64 || "");
+  const len = bin.length;
+  const out = new Uint8Array(len);
+  for (let i = 0; i < len; i++) out[i] = bin.charCodeAt(i);
+  return out;
 }
 
 async function makeSearchable() {
@@ -2149,7 +2177,7 @@ async function makeSearchable() {
       toast("Tạo searchable lỗi: " + (data.error || data.detail || "không rõ"), "bad");
       return;
     }
-    const bytes = Uint8Array.from(atob(data.data_b64), (ch) => ch.charCodeAt(0));
+    const bytes = b64ToU8(data.data_b64);
     const name = `${baseName(state.name)}-searchable.pdf`;
     const r = await window.desktop.savePdf(bytes, name);
     if (r.saved) {
@@ -2220,7 +2248,7 @@ async function runTranslate() {
       toast(msg, "bad");
       return;
     }
-    const bytes = Uint8Array.from(atob(data.data_b64), (ch) => ch.charCodeAt(0));
+    const bytes = b64ToU8(data.data_b64);
     const name = `${baseName(state.name)}-dich-${target}.pdf`;
     const r = await window.desktop.savePdf(bytes, name);
     if (r.saved) {
@@ -2281,7 +2309,7 @@ async function runOffice() {
       toast(msg, "bad");
       return;
     }
-    const bytes = Uint8Array.from(atob(data.data_b64), (ch) => ch.charCodeAt(0));
+    const bytes = b64ToU8(data.data_b64);
     const name = `${baseName(state.name)}.${fmt}`;
     const r = await window.desktop.saveFile(bytes, name, [{ name: fmt.toUpperCase(), extensions: [fmt] }]);
     if (r.saved) toast("Đã xuất: " + r.path, "good");
@@ -2332,7 +2360,7 @@ async function runCompress() {
     const pct = data.original_size
       ? Math.round((100 * data.compressed_size) / data.original_size)
       : 100;
-    const bytes = Uint8Array.from(atob(data.data_b64), (ch) => ch.charCodeAt(0));
+    const bytes = b64ToU8(data.data_b64);
     const name = `${baseName(state.name)}-nen.pdf`;
     const r = await window.desktop.savePdf(bytes, name);
     if (r.saved) {
@@ -2408,7 +2436,7 @@ async function runEncrypt() {
       toast("Khoá file lỗi: " + (data.error || data.detail || "không rõ"), "bad");
       return;
     }
-    const bytes = Uint8Array.from(atob(data.data_b64), (ch) => ch.charCodeAt(0));
+    const bytes = b64ToU8(data.data_b64);
     const name = `${baseName(state.name)}-locked.pdf`;
     const r = await window.desktop.savePdf(bytes, name);
     if (r.saved) toast("Đã khoá file bằng mật khẩu: " + r.path, "good");
@@ -2435,7 +2463,7 @@ async function extractImages() {
       toast("Xuất ảnh lỗi: " + (data.error || data.detail || "không rõ"), "bad");
       return;
     }
-    const bytes = Uint8Array.from(atob(data.data_b64), (ch) => ch.charCodeAt(0));
+    const bytes = b64ToU8(data.data_b64);
     const name = `${baseName(state.name)}-images.zip`;
     const r = await window.desktop.saveFile(bytes, name, [{ name: "ZIP", extensions: ["zip"] }]);
     if (r.saved) toast(`Đã xuất ${data.count} ảnh: ` + r.path, "good");
@@ -2469,7 +2497,7 @@ async function runPdfToImages() {
       toast("Chuyển ảnh lỗi: " + (data.error || data.detail || "không rõ"), "bad");
       return;
     }
-    const bytes = Uint8Array.from(atob(data.data_b64), (ch) => ch.charCodeAt(0));
+    const bytes = b64ToU8(data.data_b64);
     const name = `${baseName(state.name)}-pages.zip`;
     const r = await window.desktop.saveFile(bytes, name, [{ name: "ZIP", extensions: ["zip"] }]);
     if (r.saved) toast(`Đã xuất ${data.count} trang thành ảnh: ` + r.path, "good");
@@ -2519,7 +2547,7 @@ async function runSplit() {
       toast("Tách PDF lỗi: " + (data.error || data.detail || "không rõ"), "bad");
       return;
     }
-    const bytes = Uint8Array.from(atob(data.data_b64), (ch) => ch.charCodeAt(0));
+    const bytes = b64ToU8(data.data_b64);
     const name = `${baseName(state.name)}-split.zip`;
     const r = await window.desktop.saveFile(bytes, name, [{ name: "ZIP", extensions: ["zip"] }]);
     if (r.saved) toast(`Đã tách thành ${data.count} file: ` + r.path, "good");
@@ -2576,7 +2604,7 @@ async function runImagesToPdf() {
       toast("Tạo PDF lỗi: " + (data.error || data.detail || "không rõ"), "bad");
       return;
     }
-    const bytes = Uint8Array.from(atob(data.data_b64), (ch) => ch.charCodeAt(0));
+    const bytes = b64ToU8(data.data_b64);
     const r = await window.desktop.savePdf(bytes, "images-to-pdf.pdf");
     if (r.saved) toast(`Đã tạo PDF ${data.pages} trang từ ảnh: ` + r.path, "good");
   } catch (err) {
@@ -2760,7 +2788,7 @@ async function runPageNumbers() {
     }
     // Apply to the open document so it shows immediately; one undo step, then save.
     pushUndo();
-    state.bytes = Uint8Array.from(atob(data.data_b64), (ch) => ch.charCodeAt(0));
+    state.bytes = b64ToU8(data.data_b64);
     await renderAll();
     toast("Đã đánh số trang — bấm Lưu để ghi ra file.", "good");
   } catch (err) {

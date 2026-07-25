@@ -4,7 +4,14 @@
 > [DESIGN.md](DESIGN.md) (kiến trúc), [ROADMAP.md](ROADMAP.md) (tiến độ chi tiết),
 > [SETUP.md](SETUP.md) (dựng môi trường).
 
-_Cập nhật: 2026-07-23 · v0.2.39_
+_Cập nhật: 2026-07-25 · v0.2.40_
+
+> v0.2.40 — **Sửa lỗi "Sửa nội dung" trên PDF lớn làm trắng trang + truyền binary** (renderer + sidecar; **binary rebuild** vì đổi `api.py`):
+> - **Lỗi trắng trang sau khi sửa text (PDF ~100MB+)** ([`app.js`](desktop/renderer/app.js), [`text-edit.js`](desktop/renderer/text-edit.js), [`compare.js`](desktop/renderer/compare.js)): nguyên nhân gốc là `Uint8Array.from(atob(data_b64), c=>c.charCodeAt(0))` — đường iterator+callback sinh ~1 object tạm/byte → **nổ heap V8** khi giải mã PDF lớn trả về; render trang vừa sửa thất bại rồi bị `catch` nuốt im lặng, và canvas đã bị xoá trắng trước khi vẽ → trang trắng, không báo lỗi. Đã chứng minh crash trên chính file 134MB của người dùng. **Fix:** helper chung `b64ToU8()` (vòng lặp chỉ số) thay **14** chỗ decode → hết crash (peak ~1.3GB < trần ~4GB); **gia cố `renderPageCanvas`** render ra canvas offscreen rồi mới đắp lên khi thành công (lỗi thì giữ ảnh cũ + log, không còn trắng trang im lặng). Lỗi này từng tiềm ẩn ở MỌI thao tác toàn-tài-liệu (đóng dấu/nén/đánh số/dịch…) vì dùng chung pattern decode đó.
+> - **Truyền binary cho `/edit-text`** ([`api.py`](api.py), [`text-edit.js`](desktop/renderer/text-edit.js)): thêm `?raw=1` → sidecar trả thẳng bytes `application/pdf` (metadata ở header) thay vì base64 JSON; renderer đọc bằng `arrayBuffer()` → bỏ hẳn tầng base64 nặng nhất ở chiều nhận. `raw` mặc định False nên các caller/test khác **không đổi**. ⚠️ Cần rebuild sidecar để có `?raw=1` (frontend mới coi JSON là lỗi). Verify: round-trip test 4/4, nhánh raw=True trả PDF hợp lệ chứa chữ đã sửa.
+> - **Kế hoạch Tab** ([`docs/TABS-DESIGN.md`](docs/TABS-DESIGN.md) MỚI, chưa code): thiết kế mở nhiều tài liệu bằng tab (`BaseWindow`+`WebContentsView`, mỗi tab 1 renderer `index.html` nguyên vẹn) — GĐ1 ~2–3 ngày, cần test GUI trước khi phát hành.
+> - **Verify**: test Python 8/8 · `node --check` renderer OK · mô phỏng đúng chuỗi cấp phát `apply()` cho file 134MB → hết crash. **CHƯA smoke-test GUI** (user chấp nhận phát hành bản vá; tab để nhánh test riêng).
+> - **Đã biết (chưa sửa, có task riêng):** lịch sử undo giữ tối đa 30 bản sao toàn tài liệu (`HISTORY_LIMIT`) → file lớn có thể tới ~4GB, nguy cơ OOM sau nhiều lần sửa.
 
 > v0.2.39 — **Định dạng hộp văn bản + In khổ lớn + sửa 3 lỗi + xuất Office** (renderer + sidecar; **binary rebuild** vì đổi `api.py` và thêm `python-docx`):
 > - **Định dạng hộp văn bản** ([`editor.js`](desktop/renderer/editor.js), [`index.html`](desktop/renderer/index.html), [`app.css`](desktop/renderer/app.css)): bảng **Định dạng** bên phải khi chọn/tạo hộp văn bản — căn lề trái/giữa/phải/**đều**, thụt lề −/＋, **bullet/đánh số**, giãn dòng/đoạn/ký tự/từ, **co giãn ngang**, độ mờ, gạch ngang, và **Sắp xếp theo trang** (căn giữa ngang/dọc/cả hai + sát mép). Một "engine dàn chữ" dùng chung cho đo/xem-trước/ghi-PNG nên WYSIWYG khớp; mọi field lưu vào `/NabuData` (file cũ tự nhận mặc định an toàn). Verify: layout 20/20 + round-trip 21/21 (Node).
