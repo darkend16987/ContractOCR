@@ -375,6 +375,8 @@
     "Sáng": "Light",
     "Ngôn ngữ": "Language",
     "Ngôn ngữ giao diện": "Interface language",
+    "Mở lại phiên trước": "Reopen last session",
+    "Khởi động lại app thì mở lại đúng các tab lần trước": "Reopen the same tabs the next time the app starts",
     // ("Tiếng Việt" / "Tiếng Anh" defined once in the translate-dialog block.)
     "Cập nhật phần mềm": "Software update",
     "Kiểm tra cập nhật": "Check for updates",

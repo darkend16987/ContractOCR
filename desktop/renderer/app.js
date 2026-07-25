@@ -249,6 +249,9 @@ function updateDirtyIndicator() {
     window.desktop.setTabMeta({
       title: state.bytes ? state.name || "document.pdf" : "Trang mới",
       dirty: !!state.dirty,
+      // Lets main remember this tab for the next launch. A document with no path
+      // (new / never saved) reports null and is simply not part of the session.
+      path: state.path || null,
     });
   }
 }
@@ -298,8 +301,15 @@ if (window.desktop.recovery) setInterval(autosaveTick, AUTOSAVE_INTERVAL_MS);
 // power loss). Runs only in a still-empty window and only once per app launch
 // (main returns the orphan list to the first asker), so it never fights a window
 // that's opening a real file.
+// Set when main tells us this tab is earmarked for a document (an "Open with"
+// file, or one parked by session restore). Such a tab must not offer to restore
+// a crash snapshot into itself: the document is on its way and would overwrite
+// it, and the prompt belongs to a tab that is genuinely empty.
+let tabReserved = false;
+if (window.desktop.onTabReserved) window.desktop.onTabReserved(() => (tabReserved = true));
+
 async function checkRecovery() {
-  if (!window.desktop.recovery || state.bytes) return;
+  if (!window.desktop.recovery || state.bytes || tabReserved) return;
   let orphans = [];
   try {
     orphans = (await window.desktop.recovery.scan()) || [];
@@ -2852,6 +2862,15 @@ async function openSettings() {
   $("set-theme").value =
     document.documentElement.getAttribute("data-theme") === "light" ? "light" : "dark";
   if ($("set-lang") && window.I18N) $("set-lang").value = window.I18N.getLang();
+  // "Reopen last session" lives in main (it has to be readable before any
+  // renderer exists), so read it back rather than assuming a default.
+  const restoreBox = $("set-restore-session");
+  if (restoreBox && window.desktop.session) {
+    window.desktop.session
+      .getRestore()
+      .then((on) => (restoreBox.checked = !!on))
+      .catch(() => {});
+  }
   loadLicense();
   if (window.desktop.appInfo) {
     window.desktop
@@ -3385,6 +3404,13 @@ $("set-theme").onchange = (e) => applyTheme(e.target.value);
 if ($("set-lang")) {
   $("set-lang").onchange = (e) => {
     if (window.I18N) window.I18N.setLang(e.target.value);
+  };
+}
+// Reopen-last-session toggle. Persisted by main, which is the only side that can
+// act on it (it reads the flag at launch, before any renderer exists).
+if ($("set-restore-session")) {
+  $("set-restore-session").onchange = (e) => {
+    if (window.desktop.session) window.desktop.session.setRestore(e.target.checked).catch(() => {});
   };
 }
 $("set-gemini-key").addEventListener("keydown", (e) => {

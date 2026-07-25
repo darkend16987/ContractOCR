@@ -14,7 +14,7 @@ tài liệu này chỉ có giá trị nếu được cập nhật.
 |---|---|---|
 | `desktop/renderer/app.js` | ~3750 | State trung tâm + 12 hàm nút thắt. **Gần như mọi bản phát hành đều đụng.** |
 | `desktop/renderer/editor.js` | ~3340 | Overlay annotation, bake, form. Diff lớn nhất mỗi lần release. |
-| `desktop/src/main.js` + `src/tabs.js` | — | Tầng cửa sổ/tab — **hệ con mới nhất, ít va đập thực tế nhất** (v0.2.41 chưa phát hành). |
+| `desktop/src/main.js` + `src/tabs.js` | — | Tầng cửa sổ/tab — **hệ con mới nhất, ít va đập thực tế nhất** (ra mắt v0.2.41). Có lưới tự động `npm run test:tabs` cho phần logic thuần. |
 | `api.py` + `src/pdf/*.py` | — | Có lưới test tự động (`run_tests.py`) → rủi ro thấp hơn renderer. |
 
 > Renderer **không có** test tự động. Mọi bảo đảm ở renderer đến từ tài liệu này +
@@ -100,6 +100,43 @@ Mỗi mục: **bất biến → ở đâu → vì sao → dấu hiệu vỡ.**
 - Tạo động ở `app.js:648`; `capture.js` và `sign.js` phụ thuộc vào nó.
 - Đọc khai báo `state` ở đầu file sẽ **không** thấy trường này tồn tại.
 
+### BI-15 · `detachTab` **không bao giờ** được đóng `webContents`
+- `tabs.js` — `detachTab` (chuyển nhà) vs `destroyTab` (khai tử). Hai đường tách bạch.
+- Tab tách ra vẫn là **đúng renderer đó**, giữ nguyên tài liệu + lịch sử hoàn tác +
+  phiên chú thích đang dở. Đóng `webContents` ở đường tách = người dùng mất việc đang làm
+  chỉ vì kéo một cái tab.
+- **Vỡ khi:** kéo tab ra → cửa sổ mới trắng trơn, hoặc tài liệu nạp lại từ đầu.
+
+### BI-16 · Sau `detachTab`, tab **bắt buộc** phải có người nhận
+- `moveTabTo` / `tearOutTab` luôn `adoptTab` ngay sau khi gỡ.
+- Tab không ai nhận = một tiến trình renderer mồ côi, giữ nguyên RAM của cả tài liệu,
+  không cửa sổ nào đóng được nó.
+
+### BI-17 · Phím tắt của tab phải tra chủ sở hữu **động**
+- `tabs.js` `ownerOf()` + `bindTabKeys()`.
+- Listener `before-input-event` gắn vào `webContents`, mà `webContents` **đổi cửa sổ** khi
+  tách tab. Đóng gói `this` vào listener → sau khi tách, Ctrl+Tab / Ctrl+1–9 điều khiển
+  cửa sổ **cũ** (có thể đã bị huỷ).
+- **Cũng đừng gắn lại listener lúc `adoptTab`** — sẽ thành hai listener, mỗi phím nhảy hai tab.
+
+### BI-18 · Phiên nhớ **đường dẫn**, khôi phục sự cố nhớ **nội dung** — không trộn
+- `src/session.js` (đầu file) + `docs/SESSION-RESTORE.md` §2.
+- Tab chưa có file trên đĩa **không** nằm trong phiên; nội dung sửa dở là việc của
+  `recovery:*`. Nhờ ranh giới này, một lỗi trong `session.js` **không thể** làm mất tài liệu.
+- **Vỡ khi:** ai đó nhét bytes vào `session.json` cho tiện.
+
+### BI-19 · Tab đã được main “đặt chỗ” không được nhận lời nhắc khôi phục sự cố
+- `tabs.js` `createTab` gửi `tab:reserved` → `renderer/app.js` `checkRecovery` rút lui.
+- `recovery:scan` chỉ trả kết quả cho người hỏi **đầu tiên** (BI-7). Một tab sắp nhận
+  tài liệu mà giành mất danh sách rồi bỏ đi = **nuốt luôn lời nhắc của cả lần chạy đó**.
+- Đi kèm: khi khởi động **có** bản nháp sự cố, main phải mở một tab trống để lời nhắc có chỗ hiện.
+
+### BI-20 · Không ghi phiên khi một cửa sổ đang đóng dở
+- Cờ `_closing` + `Session.anyClosing()`; bảng đầy đủ ở `docs/SESSION-RESTORE.md` §3.2.
+- Lúc teardown danh sách tab rỗng dần → ghi vào đúng lúc đó là lưu lại một cái app
+  đang chết dở làm thứ để khôi phục.
+- **Vỡ khi:** đóng cửa sổ đang có 5 tab, mở lại chỉ còn 1 tab (hoặc không tab nào).
+
 ### BI-14 · Gọi hàm chéo module theo kiểu “tên trần” là điểm gãy im lặng
 - `rerenderChanged` (gọi từ `editor.js:2521`, `text-edit.js:519`) và
   `showOverlay`/`hideOverlay` (gọi từ 4 module) **không** có `window.` và **không** có guard.
@@ -132,6 +169,8 @@ Mỗi mục: **bất biến → ở đâu → vì sao → dấu hiệu vỡ.**
 | Virtualization / `renderPageCanvas` / `freePageCanvas` | Cuộn nhanh lên-xuống PDF nhiều trang · in · so sánh · copy vùng ảnh (BI-4) |
 | `editor.js` bake | Chú thích → Xong → sửa lại được · số trang không đổi · comment panel còn đúng (BI-5) |
 | Tầng tab/cửa sổ (`main.js`, `tabs.js`) | Toàn bộ `docs/TABS-TEST-L1.md` (24 mục) |
+| Tách tab / kéo tab (`detachTab`, `adoptTab`, `classifyDrop`, `shell.js` dragend) | `docs/TABS-2B-DESIGN.md` §6.2 (18 mục) · BI-15/16/17 · **mục #1 là hồi quy của tính năng sắp xếp tab** |
+| Khôi phục phiên (`src/session.js`, `snapshotSession`, `_closing`, `tab:reserved`) | `docs/SESSION-RESTORE.md` §5.3 (14 mục) · BI-18/19/20 · **mục #12 là hồi quy của khôi phục sự cố** |
 | Guard đóng | BI-6: nút X vs menu Thoát vs Ctrl+Q — cả 3 đường |
 | Recovery/autosave | BI-7: mở 2 tab, chỉ tab đầu được hỏi khôi phục |
 | Thêm nút tính năng mới | BI-9: khoá bản quyền có ăn không · BI-10: đổi VI/EN không mất chữ |

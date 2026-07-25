@@ -15,6 +15,9 @@ contextBridge.exposeInMainWorld("shellBridge", {
   newTab: () => ipcRenderer.send("tabs:new-tab"),
   activate: (id) => ipcRenderer.send("tabs:activate", id),
   close: (id) => ipcRenderer.send("tabs:close", id),
-  // New left-to-right order after a drag. ids: number[].
-  reorder: (ids) => ipcRenderer.send("tabs:reorder", ids),
+  // A tab drag finished. `order` is the strip's new left-to-right order; main
+  // pairs it with the real cursor position to decide reorder / move / tear out.
+  dragEnd: (id, order) => ipcRenderer.send("tabs:drag-end", { id, order }),
+  // Right-click on a tab — main pops a native menu for it.
+  tabMenu: (id) => ipcRenderer.send("tabs:context-menu", id),
 });

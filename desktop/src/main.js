@@ -3,8 +3,9 @@
 const path = require("path");
 const fs = require("fs");
 const crypto = require("crypto");
-const { app, BrowserWindow, Menu, ipcMain, dialog, shell, session, clipboard, nativeImage } = require("electron");
+const { app, BrowserWindow, Menu, ipcMain, dialog, shell, session, clipboard, nativeImage, screen } = require("electron");
 const { startSidecar, stopSidecar } = require("./sidecar");
+const Session = require("./session");
 const { initAutoUpdate } = require("./updater");
 const { initLicense } = require("./license");
 const { initSigning } = require("./signing");
@@ -183,6 +184,8 @@ const MENU_STR = {
     newTab: "Tab mới",
     newWindow: "Cửa sổ mới",
     closeTab: "Đóng tab",
+    tearOut: "Tách ra cửa sổ riêng",
+    moveToWindow: "Chuyển tới cửa sổ",
     open: "Mở…",
     print: "In…",
     save: "Lưu",
@@ -223,6 +226,8 @@ const MENU_STR = {
     newTab: "New Tab",
     newWindow: "New Window",
     closeTab: "Close Tab",
+    tearOut: "Move Tab to New Window",
+    moveToWindow: "Move Tab to Window",
     open: "Open…",
     print: "Print…",
     save: "Save",
@@ -459,12 +464,33 @@ if (!app.requestSingleInstanceLock()) {
       },
     });
 
+    Session.configure({
+      file: path.join(app.getPath("userData"), "session.json"),
+      snapshot: Tabs.snapshotSession,
+      anyClosing: Tabs.anyClosing,
+    });
+
     buildMenu(menuLang);
     // Open a file passed on the command line (Windows "Open with") or stashed by
-    // a pre-ready macOS open-file event; otherwise an empty tab.
+    // a pre-ready macOS open-file event; otherwise reopen the previous session.
     const launchFile = pendingOpenPath || pdfPathFromArgv(process.argv);
     pendingOpenPath = null;
-    Tabs.createTabbedWindow(launchFile || undefined);
+    if (launchFile) {
+      // Launched by double-clicking a PDF: open just that file. Dragging the
+      // whole previous session along would be a surprise, not a service.
+      Tabs.createTabbedWindow(launchFile);
+    } else {
+      const restored = Session.isEnabled() ? Tabs.restoreSession(Session.previousWindows()) : 0;
+      if (!restored) {
+        Tabs.createTabbedWindow();
+      } else if (hasRecoveryOrphans()) {
+        // A previous run crashed with unsaved work. Every restored tab is
+        // earmarked for a document and declines the recovery prompt, so give
+        // that prompt an empty tab of its own to appear in.
+        const tw = Tabs.focusedTabbedWindow();
+        if (tw) tw.createTab();
+      }
+    }
     bootSidecar();
     // Updater needs both a BaseWindow (to parent its dialogs) and a webContents
     // (to push status events) — the focused window's base + its active tab.
@@ -747,10 +773,44 @@ ipcMain.on("tabs:activate", (e, id) => {
   if (tw) tw.activateTab(id);
 });
 
-// Drag-to-reorder finished in the strip: adopt the new left-to-right order.
-ipcMain.on("tabs:reorder", (e, ids) => {
+// A tab drag finished. The cursor position is read HERE, not in the strip: the
+// screen coordinates a WebContentsView reports are offset by the window frame
+// (measured; see docs/TABS-2B-DESIGN.md §2.3). Main then decides whether that
+// drop was a reorder, a move into another window, or a tear-out.
+ipcMain.on("tabs:drag-end", (e, { id, order } = {}) => {
   const tw = Tabs.findByStrip(e.sender);
-  if (tw) tw.reorderTabs(ids);
+  if (!tw) return;
+  let point = null;
+  try {
+    point = screen.getCursorScreenPoint();
+  } catch (_) {
+    /* no cursor info → classifyDrop falls back to a plain reorder */
+  }
+  Tabs.handleDragEnd(tw, { id, order, point });
+});
+
+// Right-click on a tab. Built here rather than in the strip's HTML so it is a
+// native menu, follows the app language, and can reach the other windows.
+ipcMain.on("tabs:context-menu", (e, id) => {
+  const tw = Tabs.findByStrip(e.sender);
+  if (!tw || !tw.tabs.some((t) => t.id === id)) return;
+  const L = MENU_STR[menuLang] || MENU_STR.vi;
+  const others = Tabs.allWindows().filter((w) => w !== tw);
+
+  const items = [
+    { label: L.newTab, click: () => tw.createTab() },
+    { type: "separator" },
+    // Tearing out the only tab would just rebuild the window it came from.
+    { label: L.tearOut, enabled: tw.tabs.length > 1, click: () => tw.tearOutTab(id, null) },
+  ];
+  if (others.length) {
+    items.push({
+      label: L.moveToWindow,
+      submenu: others.map((w) => ({ label: Tabs.windowLabel(w), click: () => tw.moveTabTo(id, w) })),
+    });
+  }
+  items.push({ type: "separator" }, { label: L.closeTab, click: () => tw.closeTab(id) });
+  Menu.buildFromTemplate(items).popup();
 });
 
 // ✕ on a tab (or middle-click) — runs the same unsaved-changes guard as a window
@@ -842,6 +902,25 @@ const sanitizeId = (id) => String(id || "").replace(/[^a-zA-Z0-9_-]/g, "").slice
 const RECOVERY_MAX_AGE_MS = 14 * 24 * 60 * 60 * 1000; // prune snapshots older than 2 weeks
 let recoveryScanDone = false; // only the first window per launch consumes orphans
 
+// Is there anything for the recovery prompt to offer? Asked at launch, before any
+// renderer exists, to decide whether a restored session needs an empty tab for
+// that prompt to live in. Deliberately cheap and non-destructive: it does not
+// prune, parse or consume anything — recovery:scan still owns all of that.
+function hasRecoveryOrphans() {
+  try {
+    const base = recoveryDir();
+    if (!fs.existsSync(base)) return false;
+    return fs.readdirSync(base).some((id) => fs.existsSync(path.join(base, id, "autosave.pdf")));
+  } catch (_) {
+    return false;
+  }
+}
+
+// ---- IPC: session restore setting ----------------------------------------
+
+ipcMain.handle("session:get-restore", () => Session.isEnabled());
+ipcMain.handle("session:set-restore", (_e, on) => Session.setEnabled(on));
+
 ipcMain.handle("recovery:save", async (_e, { docId, bytes, name, srcPath } = {}) => {
   try {
     const id = sanitizeId(docId);
@@ -917,6 +996,12 @@ app.on("window-all-closed", () => {
 });
 
 app.on("before-quit", () => {
+  // Quit from the menu / Ctrl+Q: the windows are all still standing, so this is
+  // the last honest look at what was open. (When the quit comes from closing the
+  // final window instead, there is nothing left to snapshot and TabbedWindow has
+  // already frozen the file — hence the guard.)
+  if (Tabs.count()) Session.saveNow();
+  Session.cancel();
   appQuitting = true; // let windows close without the per-window guard blocking quit
   stopSidecar(sidecar);
 });

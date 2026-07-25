@@ -28,9 +28,11 @@
     return null;
   }
 
-  function commitOrder() {
+  // The strip's current left-to-right order, or null if the DOM is in a state we
+  // don't trust — main rejects a bad list anyway, but there's no point sending one.
+  function currentOrder() {
     const ids = [...tabsEl.querySelectorAll(".tab")].map((el) => Number(el.dataset.id));
-    if (ids.length && ids.every((n) => Number.isFinite(n))) window.shellBridge.reorder(ids);
+    return ids.length && ids.every((n) => Number.isFinite(n)) ? ids : null;
   }
 
   tabsEl.addEventListener("dragover", (ev) => {
@@ -97,7 +99,16 @@
       });
       el.addEventListener("dragend", () => {
         el.classList.remove("dragging");
-        commitOrder();
+        // Main decides what this drop meant — reorder here, move to another
+        // window, or tear out into a new one. It is the only side that can read
+        // a trustworthy cursor position: screen coordinates reported to a
+        // WebContentsView are off by the window frame (TABS-2B-DESIGN §2.3).
+        window.shellBridge.dragEnd(t.id, currentOrder());
+      });
+
+      el.addEventListener("contextmenu", (ev) => {
+        ev.preventDefault();
+        window.shellBridge.tabMenu(t.id);
       });
 
       tabsEl.appendChild(el);

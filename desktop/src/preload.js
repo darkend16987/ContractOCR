@@ -49,6 +49,22 @@ contextBridge.exposeInMainWorld("desktop", {
   // hanging while it waits for this tab's decision.
   cancelClose: () => ipcRenderer.invoke("window:close-cancelled"),
 
+  // --- session restore (which documents were open last time) ---
+  session: {
+    // Is "reopen last session" on? Lives in main (session.json), not
+    // localStorage, because main must read it before any renderer exists.
+    getRestore: () => ipcRenderer.invoke("session:get-restore"),
+    setRestore: (on) => ipcRenderer.invoke("session:set-restore", !!on),
+  },
+  // Main has earmarked this tab for a document it is about to send. The renderer
+  // uses it to stand down from the crash-recovery prompt, which belongs to a tab
+  // that is genuinely empty (see checkRecovery).
+  onTabReserved: (cb) => {
+    const handler = () => cb();
+    ipcRenderer.on("tab:reserved", handler);
+    return () => ipcRenderer.removeListener("tab:reserved", handler);
+  },
+
   // --- crash recovery (AutoRecover-style snapshots) ---
   recovery: {
     // Write/refresh this document's recovery snapshot. payload:

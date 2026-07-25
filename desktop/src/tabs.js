@@ -18,11 +18,19 @@
 // free of app wiring (no circular require).
 // ---------------------------------------------------------------------------
 
+const fs = require("fs");
 const path = require("path");
-const { BaseWindow, WebContentsView } = require("electron");
+const { BaseWindow, WebContentsView, screen } = require("electron");
+const Session = require("./session");
 
 // Height (DIP) of the tab strip, below the native title bar.
 const TAB_STRIP_H = 40;
+
+// How far outside the strip a drop has to land before it means "tear this tab
+// out" rather than "my hand wobbled while reordering". Generous on purpose: an
+// accidental tear is far more annoying than a tear that needs a longer drag.
+const TEAR_PAD_X = 24;
+const TEAR_PAD_Y = 60;
 
 let deps = null;
 function configure(d) {
@@ -34,21 +42,27 @@ let _seq = 0; // monotonic tab id source (unique across all windows)
 let _focused = null; // most-recently-focused TabbedWindow
 
 class TabbedWindow {
-  constructor() {
+  // `bounds` (optional) places the window explicitly — used when a torn-out tab
+  // should land where the user dropped it instead of at the default position.
+  constructor({ bounds } = {}) {
     this.base = new BaseWindow({
       width: 1360,
       height: 880,
+      ...(bounds || {}),
       minWidth: 900,
       minHeight: 600,
       title: "Nabu PDF",
       icon: deps.iconPath,
       backgroundColor: "#0f172a",
     });
-    this.tabs = []; // [{ id, view, title, dirty }]
+    this.tabs = []; // [{ id, view, title, dirty, path, pendingPath }]
     this.activeId = null;
     // tabId -> { promise, resolve } while a close decision is in flight.
     this._pendingClose = new Map();
     this._forceClose = false;
+    // True from the moment this window starts tearing down. While it is set the
+    // window's tab list is transient and must not be written to the session file.
+    this._closing = false;
 
     // Tab strip: its own view + renderer (shell.html). Never detached.
     this.strip = new WebContentsView({
@@ -60,13 +74,17 @@ class TabbedWindow {
       },
     });
     this.base.contentView.addChildView(this.strip);
-    this.bindTabKeys(this.strip.webContents);
+    bindTabKeys(this.strip.webContents);
     this.strip.webContents.loadFile(path.join(deps.RENDERER, "shell.html"));
     // The strip may finish loading after the first tab is created — re-push state
     // once it's ready so it never misses the initial render.
     this.strip.webContents.once("did-finish-load", () => this._emit());
 
-    this.base.on("resize", () => this._layout());
+    this.base.on("resize", () => {
+      this._layout();
+      Session.schedule(); // remember where the user put this window
+    });
+    this.base.on("move", () => Session.schedule());
     this.base.on("focus", () => {
       _focused = this;
     });
@@ -91,16 +109,6 @@ class TabbedWindow {
     if (tab) {
       tab.view.setBounds({ x: 0, y: TAB_STRIP_H, width: w, height: Math.max(0, h - TAB_STRIP_H) });
     }
-  }
-
-  // Ctrl+Tab / Ctrl+Shift+Tab / Ctrl+1..9. These can't be menu accelerators without
-  // littering the menu with nine hidden entries, so they're intercepted before the
-  // page sees them — which also means they work while a text field has focus.
-  // Ctrl+T (new tab) and Ctrl+W (close tab) ARE menu accelerators, see main.js.
-  bindTabKeys(webContents) {
-    webContents.on("before-input-event", (e, input) => {
-      if (this.handleTabKey(input)) e.preventDefault();
-    });
   }
 
   handleTabKey(input) {
@@ -159,7 +167,13 @@ class TabbedWindow {
 
   // Create a new document tab. openPath (optional) is an absolute .pdf to load
   // once its renderer is ready. The new tab becomes active.
-  createTab({ openPath } = {}) {
+  //
+  //   deferred    park the document — the tab shows its filename but the PDF is
+  //               only read the first time the tab is activated. Session restore
+  //               uses this: opening ten 100MB documents at launch would blow out
+  //               memory for tabs the user may never look at (docs/PERF-MEMORY.md).
+  //   background  don't steal focus from the current tab.
+  createTab({ openPath, deferred = false, background = false } = {}) {
     const id = ++_seq;
     const view = new WebContentsView({
       webPreferences: {
@@ -172,16 +186,34 @@ class TabbedWindow {
     const wc = view.webContents;
     deps.hardenNav(wc);
     deps.attachContextMenu(wc);
-    this.bindTabKeys(wc);
+    bindTabKeys(wc);
     wc.loadFile(path.join(deps.RENDERER, "index.html"));
     if (openPath) {
-      wc.once("did-finish-load", () => deps.sendFileToView(wc, openPath));
+      wc.once("did-finish-load", () => {
+        // This tab is spoken for. Tell the renderer so it declines to host the
+        // crash-recovery prompt — that belongs to a genuinely empty tab, and
+        // without this a slow-loading document races it (renderer/app.js
+        // checkRecovery fires on a 1.2s timer).
+        try {
+          wc.send("tab:reserved");
+        } catch (_) {
+          /* renderer gone */
+        }
+        if (!deferred) deps.sendFileToView(wc, openPath);
+      });
     }
 
-    const tab = { id, view, title: "Nabu PDF", dirty: false };
+    const tab = {
+      id,
+      view,
+      title: openPath ? path.basename(openPath) : "Nabu PDF",
+      dirty: false,
+      path: openPath || null,
+      pendingPath: deferred && openPath ? openPath : null,
+    };
     this.tabs.push(tab);
-    this.activateTab(id);
-    this._emit();
+    if (background) this._emit();
+    else this.activateTab(id);
     return tab;
   }
 
@@ -203,12 +235,29 @@ class TabbedWindow {
     this.activeId = id;
     this.base.contentView.addChildView(next.view);
     this._layout();
+    this._wakeDeferred(next);
     try {
       next.view.webContents.focus();
     } catch (_) {
       /* focus is best-effort */
     }
     this._emit();
+  }
+
+  // A restored tab parked by session restore reads its document the first time
+  // it is looked at. Cleared before sending so a second activation can't load
+  // the same file twice over whatever the user has since done to it.
+  _wakeDeferred(tab) {
+    if (!tab || !tab.pendingPath) return;
+    const p = tab.pendingPath;
+    tab.pendingPath = null;
+    const wc = tab.view.webContents;
+    try {
+      if (wc.isLoading()) wc.once("did-finish-load", () => deps.sendFileToView(wc, p));
+      else deps.sendFileToView(wc, p);
+    } catch (_) {
+      /* renderer gone — the tab is about to disappear anyway */
+    }
   }
 
   // Ask a tab's renderer whether it may close, then destroy it on "proceed".
@@ -275,6 +324,12 @@ class TabbedWindow {
     if (this.tabs.length === 0) {
       this.activeId = null;
       if (closeIfEmpty) {
+        // The user closed their way down to nothing — record that empty state
+        // now, so the next launch doesn't hand back the last tab they shut.
+        // (Closing the WINDOW with tabs still in it is the opposite case: see
+        // _guardAndClose, which saves *before* tearing anything down.)
+        Session.saveNow();
+        this._closing = true;
         this._forceClose = true;
         if (!this.base.isDestroyed()) this.base.close();
       } else {
@@ -291,6 +346,102 @@ class TabbedWindow {
     }
   }
 
+  // ---- moving house: detach / adopt / tear out ----------------------------
+  //
+  // These are deliberately separate from destroyTab. destroyTab DEMOLISHES a tab
+  // (its webContents is closed); detachTab only MOVES it, leaving the renderer —
+  // and therefore the open document, its undo history and any live editing
+  // session — completely untouched. Mixing the two loses the user's work
+  // (BI-15/BI-16 in docs/REGRESSION-GUARD.md).
+
+  // Screen rect (DIP) of this window's tab strip: the drop zone. Same coordinate
+  // space as screen.getCursorScreenPoint(), which is why the hit test can be a
+  // plain rectangle comparison.
+  stripScreenRect() {
+    if (this.base.isDestroyed()) return null;
+    const b = this.base.getContentBounds();
+    return { x: b.x, y: b.y, width: b.width, height: TAB_STRIP_H };
+  }
+
+  // Take a tab out of this window WITHOUT closing its webContents. Returns the
+  // tab record, which the caller MUST hand to another window — an unadopted tab
+  // is an orphaned renderer holding a whole document in RAM with no way to close
+  // it. Refuses while a close prompt is in flight for that tab, so the dialog can
+  // never outlive the window it belongs to.
+  detachTab(id) {
+    const idx = this.tabs.findIndex((t) => t.id === id);
+    if (idx === -1) return null;
+    if (this._pendingClose.has(id)) return null;
+    const tab = this.tabs[idx];
+    const wasActive = this.activeId === id;
+    try {
+      this.base.contentView.removeChildView(tab.view);
+    } catch (_) {
+      /* already detached */
+    }
+    // Out of tabs[] *before* anything can close this window, or _onClosed would
+    // close the webContents we just promised to hand over.
+    this.tabs.splice(idx, 1);
+
+    if (this.tabs.length === 0) {
+      this.activeId = null;
+      this._emit();
+    } else if (wasActive) {
+      const nextTab = this.tabs[Math.min(idx, this.tabs.length - 1)];
+      this.activeId = null; // force activateTab to re-attach
+      this.activateTab(nextTab.id);
+    } else {
+      this._emit();
+    }
+    return tab;
+  }
+
+  // Take over a tab detached from another window. Its webContents keeps every
+  // listener it already had — nav hardening, context menu, key router — and the
+  // key router resolves its owner at keypress time, so it follows the tab here
+  // without being rebound (rebinding would double every shortcut).
+  adoptTab(tab) {
+    if (!tab || !tab.view || tab.view.webContents.isDestroyed()) return null;
+    this.tabs.push(tab);
+    this.activateTab(tab.id); // id is new to this window, so this really attaches
+    return tab;
+  }
+
+  // Hand a tab to another window. The source window closes if that emptied it —
+  // with no unsaved-changes guard, because nothing was lost: the document left
+  // with the tab, dirty flag and all.
+  moveTabTo(id, target) {
+    if (!target || target === this || target.base.isDestroyed()) return false;
+    const tab = this.detachTab(id);
+    if (!tab) return false;
+    target.adoptTab(tab);
+    target.focus();
+    if (!this.tabs.length) this.closeEmpty();
+    return true;
+  }
+
+  // Pull a tab out into a window of its own, placed at `point` (screen DIP).
+  // Refuses on the last tab: that would only rebuild the window it came from,
+  // and it is the source of every "empty window" bug.
+  tearOutTab(id, point) {
+    if (this.tabs.length < 2) return null;
+    const src = this.base.getBounds();
+    const at = point && Number.isFinite(point.x) && Number.isFinite(point.y) ? point : { x: src.x + 60, y: src.y + 60 };
+    const tab = this.detachTab(id);
+    if (!tab) return null;
+    const born = new TabbedWindow({ bounds: placeTornWindow(at, src) });
+    born.adoptTab(tab);
+    born.focus();
+    return born;
+  }
+
+  // Close a window that has no tabs left. Skips the guard on purpose — there is
+  // nothing left in here to save.
+  closeEmpty() {
+    this._forceClose = true;
+    if (!this.base.isDestroyed()) this.base.close();
+  }
+
   // Native-window close (the ✕ on the title bar): guard every tab in turn.
   _onClose(e) {
     if (this._forceClose || (deps.isQuitting && deps.isQuitting())) return; // allow
@@ -299,10 +450,18 @@ class TabbedWindow {
   }
 
   async _guardAndClose() {
+    // Capture the session BEFORE the teardown starts eating tabs: closing a
+    // window means "put this back next time", not "forget it".
+    Session.saveNow();
+    this._closing = true;
     for (const tab of [...this.tabs]) {
       if (!this._tab(tab.id)) continue;
       const proceed = await this.closeTab(tab.id, { closeIfEmpty: false });
-      if (!proceed) return; // a cancel aborts the whole-window close
+      if (!proceed) {
+        this._closing = false; // the window lives on — resume recording it
+        Session.schedule();
+        return; // a cancel aborts the whole-window close
+      }
     }
     this._forceClose = true;
     if (!this.base.isDestroyed()) this.base.close();
@@ -323,20 +482,35 @@ class TabbedWindow {
       /* ignore */
     }
     tabbedWindows.delete(this);
+    this._closing = false; // gone from the set; no longer suppresses saves
     if (_focused === this) _focused = null;
+    if (tabbedWindows.size) {
+      // One window of several closed — the session is now the ones left.
+      Session.saveNow();
+    } else {
+      // The LAST window just went. Leave the file exactly as _guardAndClose (or
+      // destroyTab) left it: that is the state the user is meant to get back.
+      Session.cancel();
+    }
     if (!tabbedWindows.size && deps.onAllClosed) deps.onAllClosed();
   }
 
-  // Update a tab's title/dirty from its doc renderer (tab:meta), then repaint.
+  // Update a tab's title/dirty/path from its doc renderer (tab:meta), then repaint.
   setMeta(viewWebContents, meta) {
     const tab = this.tabs.find((t) => t.view.webContents === viewWebContents);
     if (!tab) return;
     if (meta && typeof meta.title === "string") tab.title = meta.title;
     if (meta && typeof meta.dirty === "boolean") tab.dirty = meta.dirty;
+    // The renderer is the authority on which file this tab holds — it changes on
+    // open, on Save As, and back to null when the document is closed.
+    if (meta && "path" in meta) tab.path = typeof meta.path === "string" && meta.path ? meta.path : null;
     this._emit();
   }
 
   _emit() {
+    // Every change to the tab set funnels through here, which makes it the one
+    // place that has to remember the session.
+    Session.schedule();
     if (!this.strip || this.strip.webContents.isDestroyed()) return;
     const tabs = this.tabs.map((t) => ({
       id: t.id,
@@ -357,6 +531,183 @@ class TabbedWindow {
       this.base.focus();
     }
   }
+}
+
+// ---- keyboard routing ------------------------------------------------------
+
+// The window that owns a webContents right now — looked up on every keypress,
+// never captured in a closure. A tab can change windows (tearing), so a listener
+// holding on to "its" window would end up driving the wrong one, possibly one
+// that has already been destroyed (BI-17).
+function ownerOf(webContents) {
+  const d = findDoc(webContents);
+  if (d) return d.tw;
+  return findByStrip(webContents);
+}
+
+// Ctrl+Tab / Ctrl+Shift+Tab / Ctrl+1..9. These can't be menu accelerators without
+// littering the menu with nine hidden entries, so they're intercepted before the
+// page sees them — which also means they work while a text field has focus.
+// Ctrl+T (new tab) and Ctrl+W (close tab) ARE menu accelerators, see main.js.
+function bindTabKeys(webContents) {
+  webContents.on("before-input-event", (e, input) => {
+    const owner = ownerOf(webContents);
+    if (owner && owner.handleTabKey(input)) e.preventDefault();
+  });
+}
+
+// ---- drop classification (pure) --------------------------------------------
+
+// What does a drop at `point` mean? Free of Electron and of the DOM so it can be
+// unit-tested with plain numbers — the drag gesture itself is the one part of
+// this feature a machine cannot exercise (docs/TABS-2B-DESIGN.md §2.2).
+//
+//   rects     [{ key, rect }] — every visible window's strip, source included
+//   sourceKey the window the tab is being dragged from
+//
+// Order matters: the source strip wins an exact hit even if another window's
+// strip overlaps it, so reordering never turns into a move by accident.
+function classifyDrop(point, sourceKey, rects, pad) {
+  const list = Array.isArray(rects) ? rects.filter((t) => t && t.rect) : [];
+  const src = list.find((t) => t.key === sourceKey);
+  // No usable cursor position → do the harmless thing.
+  if (!point || !Number.isFinite(point.x) || !Number.isFinite(point.y)) {
+    return { action: "reorder", key: sourceKey };
+  }
+  const px = pad && Number.isFinite(pad.x) ? pad.x : TEAR_PAD_X;
+  const py = pad && Number.isFinite(pad.y) ? pad.y : TEAR_PAD_Y;
+  const inside = (r, gx, gy) =>
+    point.x >= r.x - gx && point.x <= r.x + r.width + gx && point.y >= r.y - gy && point.y <= r.y + r.height + gy;
+
+  if (src && inside(src.rect, 0, 0)) return { action: "reorder", key: sourceKey };
+  for (const t of list) {
+    if (t.key !== sourceKey && inside(t.rect, 0, 0)) return { action: "move", key: t.key };
+  }
+  // Just past the edge of its own strip: still a reorder. Tearing needs intent.
+  if (src && inside(src.rect, px, py)) return { action: "reorder", key: sourceKey };
+  return { action: "tear", key: null };
+}
+
+// Bounds for a torn-out window: under the cursor, keeping the source window's
+// size, but always clamped inside the work area of the display it was dropped on
+// so a tab can never be flung off-screen.
+function placeTornWindow(point, srcBounds) {
+  const area = screen.getDisplayNearestPoint(point).workArea;
+  const width = Math.min(Math.max(600, srcBounds.width), Math.max(600, area.width - 40));
+  const height = Math.min(Math.max(400, srcBounds.height), Math.max(400, area.height - 40));
+  // Offset so the tab lands roughly under the pointer that dropped it.
+  const x = Math.min(Math.max(Math.round(point.x) - 140, area.x), area.x + area.width - width);
+  const y = Math.min(Math.max(Math.round(point.y) - TAB_STRIP_H, area.y), area.y + area.height - height);
+  return { x, y, width, height };
+}
+
+// A tab drag finished in `sourceTw`'s strip. `order` is the strip's own DOM
+// order; `point` is the cursor in screen DIP, read by MAIN — renderer screen
+// coordinates inside a WebContentsView are off by the window frame and must not
+// be trusted (docs/TABS-2B-DESIGN.md §2.3).
+function handleDragEnd(sourceTw, { id, order, point } = {}) {
+  if (!sourceTw || sourceTw.base.isDestroyed()) return;
+  const rects = [];
+  for (const tw of tabbedWindows) {
+    if (tw.base.isDestroyed() || tw.base.isMinimized()) continue;
+    const rect = tw.stripScreenRect();
+    if (rect) rects.push({ key: tw, rect });
+  }
+  const d = classifyDrop(point, sourceTw, rects, null);
+  if (d.action === "move" && d.key && d.key !== sourceTw) {
+    if (sourceTw.moveTabTo(id, d.key)) return;
+  } else if (d.action === "tear") {
+    if (sourceTw.tearOutTab(id, point)) return;
+  }
+  // Anything that did not move is just a reorder (or a refused tear, which snaps
+  // back to whatever the strip is already showing).
+  sourceTw.reorderTabs(order);
+}
+
+// ---- session snapshot / restore --------------------------------------------
+
+// True while any window is mid-teardown, i.e. its tab list is a lie in progress.
+function anyClosing() {
+  for (const tw of tabbedWindows) if (tw._closing) return true;
+  return false;
+}
+
+// Plain-data picture of what is open right now. Paths only — a tab holding an
+// unsaved or brand-new document has nothing to point at and is simply left out;
+// its content is crash recovery's department (src/session.js header).
+//
+// `from` overrides the live window set; only the tests pass it.
+function snapshotSession(from) {
+  const windows = [];
+  for (const tw of from || tabbedWindows) {
+    if (tw.base.isDestroyed() || tw._closing) continue;
+    const tabs = [];
+    let active = 0;
+    for (const t of tw.tabs) {
+      if (!t.path) continue;
+      if (t.id === tw.activeId) active = tabs.length;
+      tabs.push(t.path);
+    }
+    if (!tabs.length) continue;
+    // Normal (un-maximised) bounds, so un-maximising a restored window puts it
+    // back where it was rather than somewhere arbitrary.
+    const b = tw.base.getNormalBounds ? tw.base.getNormalBounds() : tw.base.getBounds();
+    windows.push({ bounds: b, maximized: !!tw.base.isMaximized(), active, tabs });
+  }
+  return { windows };
+}
+
+// Rebuild the windows recorded by a previous run. Returns how many were made, so
+// the caller can fall back to a plain empty window when there was nothing usable.
+function restoreSession(list) {
+  if (!Array.isArray(list)) return 0;
+  let made = 0;
+  for (const w of list) {
+    if (!w || !Array.isArray(w.tabs)) continue;
+    // Files the user has since moved or deleted are dropped without comment —
+    // an error dialog per missing file at launch would be worse than the loss.
+    const paths = w.tabs.filter((p) => typeof p === "string" && p && safeExists(p));
+    if (!paths.length) continue;
+    const active = Math.min(Math.max(0, w.active | 0), paths.length - 1);
+    const tw = new TabbedWindow({ bounds: sanitizeBounds(w.bounds) });
+    // Only the tab the user was last looking at reads its PDF now. The rest are
+    // parked and wake on first activation (see createTab's `deferred`).
+    paths.forEach((p, i) => tw.createTab({ openPath: p, deferred: i !== active, background: true }));
+    const target = tw.tabs[active] || tw.tabs[0];
+    if (target) tw.activateTab(target.id);
+    if (w.maximized) {
+      try {
+        tw.base.maximize();
+      } catch (_) {
+        /* not fatal */
+      }
+    }
+    made++;
+  }
+  return made;
+}
+
+function safeExists(p) {
+  try {
+    return fs.existsSync(p);
+  } catch (_) {
+    return false;
+  }
+}
+
+// Only trust stored bounds if they land on a display that still exists — monitors
+// get unplugged, and a window restored onto one that is gone is invisible.
+function sanitizeBounds(b) {
+  if (!b || !Number.isFinite(b.x) || !Number.isFinite(b.y) || !(b.width > 0) || !(b.height > 0)) return undefined;
+  try {
+    const area = screen.getDisplayMatching(b).workArea;
+    const visibleX = Math.min(b.x + b.width, area.x + area.width) - Math.max(b.x, area.x);
+    const visibleY = Math.min(b.y + b.height, area.y + area.height) - Math.max(b.y, area.y);
+    if (visibleX < 120 || visibleY < 60) return undefined; // effectively off-screen
+  } catch (_) {
+    return undefined;
+  }
+  return { x: Math.round(b.x), y: Math.round(b.y), width: Math.round(b.width), height: Math.round(b.height) };
 }
 
 // ---- module-level lookups (used by main.js IPC reroute) -------------------
@@ -410,6 +761,19 @@ function count() {
   return tabbedWindows.size;
 }
 
+// Live windows, in creation order — used to build the "move tab to window" menu.
+function allWindows() {
+  return [...tabbedWindows].filter((tw) => !tw.base.isDestroyed());
+}
+
+// How a window is named in that menu: by the document it is currently showing.
+function windowLabel(tw) {
+  const t = tw && tw._active();
+  const title = (t && t.title) || "Nabu PDF";
+  const extra = tw && tw.tabs.length > 1 ? ` (+${tw.tabs.length - 1})` : "";
+  return (title.length > 40 ? title.slice(0, 37) + "…" : title) + extra;
+}
+
 module.exports = {
   configure,
   createTabbedWindow,
@@ -418,6 +782,14 @@ module.exports = {
   focusedTabbedWindow,
   allDocContents,
   activeContents,
+  allWindows,
+  windowLabel,
+  handleDragEnd,
+  classifyDrop,
+  snapshotSession,
+  restoreSession,
+  sanitizeBounds,
+  anyClosing,
   count,
   TabbedWindow,
   TAB_STRIP_H,
