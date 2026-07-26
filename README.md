@@ -1,7 +1,10 @@
 # Nabu PDF
 
 Bộ công cụ **PDF desktop** (Electron) cho tiếng Việt: xem · ghép · tách trang ·
-**tách thành nhiều file** · chèn · thêm trang trắng · xoay · **đánh số trang** · chú thích ·
+**tách thành nhiều file** · chèn · thêm trang trắng · xoay · **đánh số trang** ·
+**xoá nhiều trang theo khoảng (từ trang X đến Y, trừ vài trang — khỏi tick chọn)** ·
+**lối tắt tác vụ trang ngay trên thanh công cụ + menu chuột phải trên thumbnail**
+(thêm trang trắng ngay trên/dưới trang đang trỏ, xoay, tách, xoá) · chú thích ·
 khoanh vùng (chữ nhật / elip / **khoanh mây revision** — chữ nhật hoặc **vẽ mây tự do** bằng bút/điểm, chọn nét viền + màu nền + **độ mờ nền 0–100%** + **cỡ vòng mây tuỳ chỉnh**) ·
 **mũi tên (nhãn text ở đầu hoặc cuối — sửa/di chuyển lại được sau khi áp dụng)** · **đo & ghi kích thước (dim — hiệu chuẩn 1 đoạn, các đoạn khác tự ghi theo tỷ lệ)** · hộp văn bản (font/đậm/nghiêng/gạch chân/gạch ngang · **căn lề trái/giữa/phải/đều · bullet & đánh số · giãn dòng/đoạn/ký tự/từ · co giãn ngang · độ mờ · căn giữa/sát mép trang** — **sửa/di chuyển lại được sau khi áp dụng**) · **ghi chú dạng chuỗi bình luận (note-of-note) — comment tiếp được sau khi áp dụng, đọc được ở Foxit/Acrobat, kèm bảng danh sách ghi chú toàn tài liệu (bấm để nhảy tới)** · **chèn ảnh / chữ ký** (đóng dấu 1 lần cho **nhiều trang**, nhận PNG/JPG/BMP) ·
 watermark · redact (che thông tin chọn màu) · **sửa chữ gốc trong PDF — giữ đúng font, đúng cỡ và đúng nền** (tự dùng lại font hệ thống theo họ, kể cả tên kiểu `TimesNewRomanBold`; khi phải thay face thì tự khớp lại bề rộng & chiều cao để chữ sửa không dài ra đè chữ bên cạnh; không để lại vệt trắng trên ô bảng có nền; tự OCR lấy lại chữ Việt lỗi font `.Vn`/mã hoá hỏng trên bản vẽ CAD/Revit) · nén · **in (kết nối máy in — hỗ trợ khổ A4…A0)** · so sánh 2 file
@@ -12,7 +15,9 @@ tạo PDF tìm-kiếm-được · **dịch PDF (AI) giữ layout** (PDF có text
 **xem toàn màn hình (F11)** — trọn trang nằm gọn trong màn hình, ẩn hết thanh công cụ; kèm **"vừa cả trang"** cho cả khổ lớn A0–A1 ·
 **tự lưu & khôi phục khi sự cố** (máy tắt đột ngột / quên lưu → mở lại mời khôi phục) ·
 **ký số bằng USB token** (VNPT-CA / Viettel-CA / FPT-CA / BKAV… qua kho chứng thư Windows — chữ ký nhìn thấy + dấu thời gian TSA) ·
-kèm **OCR + bóc tách hợp đồng** bằng AI. Giao diện **song ngữ Việt / Anh**.
+kèm **OCR + bóc tách hợp đồng** bằng AI. Giao diện **song ngữ Việt / Anh**, kèm
+**hai badge trạng thái tách bạch** (engine trên máy · API key cho tính năng AI —
+chấm đặc là sẵn sàng, chấm rỗng là chưa; bấm vào badge API để nhập key).
 Chạy hoàn toàn trên máy (local-first).
 
 > **Ứng dụng desktop** nằm trong [`desktop/`](desktop/) — xem

@@ -4,7 +4,44 @@
 > [DESIGN.md](DESIGN.md) (kiến trúc), [ROADMAP.md](ROADMAP.md) (tiến độ chi tiết),
 > [SETUP.md](SETUP.md) (dựng môi trường).
 
-_Cập nhật: 2026-07-26 · v0.2.43_
+_Cập nhật: 2026-07-26 · v0.2.44_
+
+> v0.2.44 — **Tác vụ trang trong tầm tay + xoá theo khoảng + tách bạch trạng thái OCR / API**
+> (chỉ renderer + tài liệu — **sidecar KHÔNG đổi, không cần rebuild**):
+> - **5 lối tắt tác vụ trang lên thanh công cụ** ([`renderer/index.html`](desktop/renderer/index.html)):
+>   xoay trái/phải · thêm trang trắng | tách trang đang chọn · tách thành nhiều file.
+>   Icon-only, hai cụm ngăn bằng vạch dọc, dùng **đúng handler cũ** (id khác vì id phải
+>   duy nhất). Vẽ thêm sprite `ic-split-files` để không lẫn với `ic-scissors`.
+> - **Menu chuột phải trên thumbnail** (`openThumbMenu`, [`renderer/app.js`](desktop/renderer/app.js)):
+>   dùng lại widget `.ctx-menu` của `capture.js` (mở rộng `separator`/`header`/`danger`,
+>   phơi qua `window.Capture.showMenu`) ⇒ **một widget, một kiểu đóng**. Thêm trang trắng
+>   **ngay trên/dưới** trang đang trỏ, chèn PDF khác phía dưới — bỏ hẳn bước hỏi vị trí.
+>   Chuột phải ngoài vùng đang chọn → chọn mỗi trang đó; trong vùng → giữ nguyên nhiều trang.
+>   Gate bản quyền ở **tầng hàm** (mục menu là `<div>`, `GATED_BTNS` không thấy) — **BI-26**.
+> - **Xoá nhiều trang theo khoảng** — từ trang X đến Y, **trừ** `3, 5-7`, không cần tick.
+>   Xem trước sống “Sẽ xoá 5 trang: 2, 4, 8–10 · còn lại 15 trang.”, nút Xoá tự mờ khi
+>   khoảng ăn hết tài liệu. Số học tách ra [`renderer/page-range.js`](desktop/renderer/page-range.js)
+>   — **file renderer duy nhất không đụng DOM** nên là file renderer duy nhất có lưới tự
+>   động: `npm run test:pages` (50 ca). Dựng lưới **trước** đã bắt ngay 2 lỗi thật:
+>   `"1 - 3"` có dấu cách bị tách thành token rác, và `"-3"` bị hiểu là số âm rồi kẹp về
+>   trang 1 ⇒ **xoá nhầm trang 1**. **BI-27**.
+> - **Hai badge trạng thái thay vì một** ([`renderer/app.js`](desktop/renderer/app.js)):
+>   `OCR:` (engine trên máy) và `API:` (key Gemini cho Bóc tách/Dịch). Một badge
+>   “OCR: sẵn sàng” bị đọc thành “mọi thứ chạy được”, trong khi AI cần thêm key. Tín hiệu
+>   **không chỉ bằng màu**: chấm **đặc = sẵn sàng**, **rỗng = chưa**. Badge API bấm được →
+>   mở thẳng Cài đặt. Ba trạng thái, `null` = *chưa biết* (engine chưa lên) **không** vẽ
+>   thành “chưa có key”. **BI-29**.
+> - **Sửa 2 lỗi có sẵn** (đã chứng minh bằng chạy thật trước khi sửa):
+>   `window.Editor.active()` gọi một **boolean getter** như hàm ở 2 nhánh `keydown` →
+>   ném `TypeError` mỗi lần bấm ↑/↓/Delete lúc đang chú thích, nuốt luôn phần còn lại của
+>   handler (**BI-28**); và tên file gợi ý khi Tách trang liệt kê **mọi** số trang —
+>   200 trang = **714 ký tự**, vượt trần 255 của Windows (`extractFileName`, **BI-27**).
+> - **[`desktop/SIGNING.md`](desktop/SIGNING.md) viết lại** sau khi rà cứu: **EV không còn
+>   gỡ SmartScreen** (Microsoft bỏ đường tắt), và **Azure Artifact Signing không mở cho
+>   pháp nhân Việt Nam**. Đường khả thi: OV + cloud HSM. Kèm 3 bẫy cấu hình đã kiểm chứng
+>   trên electron-builder 25.1.8 (`azureSignOptions` không có `publisherName`; `az login`
+>   không đủ; nó tự cài module PowerShell `TrustedSigning`).
+> - Bất biến mới **BI-26/27/28/29** + 5 dòng ma trận trong [`docs/REGRESSION-GUARD.md`](docs/REGRESSION-GUARD.md).
 
 > v0.2.43 — **Sửa chữ giữ đúng font, đúng cỡ, đúng nền + Toàn màn hình đọc trọn trang**
 > (renderer + main + **sidecar CÓ ĐỔI → đã rebuild khi đóng gói**):

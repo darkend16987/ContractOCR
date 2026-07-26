@@ -426,8 +426,12 @@
     document.removeEventListener("keydown", onCtxKey, true);
     window.removeEventListener("blur", closePageMenu);
     window.removeEventListener("resize", closePageMenu);
-    const v = $("viewer");
-    if (v) v.removeEventListener("scroll", closePageMenu, true);
+    // Both scrollers: the menu is position:fixed, so it would hang in mid-air over
+    // whatever scrolled underneath it (#thumbs matters for the page menu app.js opens).
+    for (const id of ["viewer", "thumbs"]) {
+      const el = $(id);
+      if (el) el.removeEventListener("scroll", closePageMenu, true);
+    }
   }
 
   function onCtxAway(e) {
@@ -448,8 +452,25 @@
     const menu = document.createElement("div");
     menu.className = "ctx-menu";
     for (const en of entries) {
+      if (!en) continue;
+      // Non-interactive entries: a rule between groups, or a caption naming the
+      // pages the commands below act on (used by the thumbnail page menu).
+      if (en.separator) {
+        const sep = document.createElement("div");
+        sep.className = "ctx-menu-sep";
+        menu.appendChild(sep);
+        continue;
+      }
+      if (en.header) {
+        const head = document.createElement("div");
+        head.className = "ctx-menu-head";
+        head.textContent = en.header;
+        menu.appendChild(head);
+        continue;
+      }
       const item = document.createElement("div");
-      item.className = "ctx-menu-item" + (en.enabled === false ? " disabled" : "");
+      item.className =
+        "ctx-menu-item" + (en.enabled === false ? " disabled" : "") + (en.danger ? " danger" : "");
       item.textContent = en.label;
       if (en.enabled !== false) {
         item.addEventListener("click", () => {
@@ -473,8 +494,10 @@
     document.addEventListener("keydown", onCtxKey, true);
     window.addEventListener("blur", closePageMenu);
     window.addEventListener("resize", closePageMenu);
-    const v = $("viewer");
-    if (v) v.addEventListener("scroll", closePageMenu, true);
+    for (const id of ["viewer", "thumbs"]) {
+      const el = $(id);
+      if (el) el.addEventListener("scroll", closePageMenu, true);
+    }
   }
 
   async function onContextMenu(e) {
@@ -553,5 +576,10 @@
     enter,
     exit,
     toggle,
+    // Shared in-page context menu. app.js reuses it for the thumbnail page menu
+    // so there is exactly ONE menu widget (one dismiss behaviour, one style) and
+    // opening either kind closes the other.
+    showMenu: showPageMenu,
+    closeMenu: closePageMenu,
   };
 })();

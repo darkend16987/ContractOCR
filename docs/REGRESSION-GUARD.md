@@ -15,19 +15,23 @@ tài liệu này chỉ có giá trị nếu được cập nhật.
 | `desktop/renderer/app.js` | ~3750 | State trung tâm + 12 hàm nút thắt. **Gần như mọi bản phát hành đều đụng.** |
 | `desktop/renderer/editor.js` | ~3340 | Overlay annotation, bake, form. Diff lớn nhất mỗi lần release. |
 | `desktop/src/main.js` + `src/tabs.js` | — | Tầng cửa sổ/tab — **hệ con mới nhất, ít va đập thực tế nhất** (ra mắt v0.2.41). Có lưới tự động `npm run test:tabs` cho phần logic thuần. |
+| `desktop/renderer/page-range.js` | ~120 | Số học khoảng trang. Rủi ro **thấp** vì có lưới `npm run test:pages`, nhưng hậu quả sai là **mất trang tài liệu** → xem BI-27. |
 | `api.py` + `src/pdf/*.py` | — | Có lưới test tự động (`run_tests.py`) → rủi ro thấp hơn renderer. |
 
-> Renderer **không có** test tự động. Mọi bảo đảm ở renderer đến từ tài liệu này +
-> test tay. Đó là lý do sổ bất biến tồn tại.
+> Renderer gần như **không có** test tự động — ngoại lệ duy nhất là `page-range.js`
+> (không đụng DOM nên chạy được dưới node). Mọi bảo đảm còn lại ở renderer đến từ tài
+> liệu này + test tay. Đó là lý do sổ bất biến tồn tại.
 
 ---
 
 ## 2. Kiến trúc phải nhớ trước khi sửa
 
-- 7 file JS của renderer (`i18n, app, editor, text-edit, compare, capture, sign`) nạp bằng
-  `<script>` **classic**, dùng chung **một scope**. `state`, `toast`, `sidecarFetch`,
+- 8 file JS của renderer (`i18n, page-range, app, editor, text-edit, compare, capture, sign`)
+  nạp bằng `<script>` **classic**, dùng chung **một scope**. `state`, `toast`, `sidecarFetch`,
   `showOverlay`… là biến toàn cục dùng chéo, **không phải module** → đổi tên một hàm
   trong `app.js` có thể làm `editor.js` chết mà không hề có cảnh báo lúc build.
+  (`page-range.js` là ngoại lệ có chủ ý: nó **chỉ** phơi ra `window.PageRange`, không thả
+  tên trần nào vào scope chung, nên cũng `require()` được từ node để chạy test.)
 - **Mỗi tab = một renderer riêng** (`WebContentsView`, process riêng). `state` **không**
   chia sẻ giữa các tab. Cái chia sẻ là: main process, sidecar Python, thư mục recovery.
   → Mọi singleton ở main process là nguy cơ xung đột đa tab.
@@ -222,6 +226,75 @@ Mỗi mục: **bất biến → ở đâu → vì sao → dấu hiệu vỡ.**
   mốc 3 byte thì các mảnh nối thẳng được. Đổi thành số khác là hỏng payload **im lặng**.
 - Nhận cả `Uint8Array` (→ `pdf_b64`) lẫn object `{tên: bytes}` cho `/compare` (2 tài liệu).
 
+### BI-26 · Menu chuột phải là lối vào **không có id nút** → cổng bản quyền phải ở tầng HÀM
+- `app.js` `openThumbMenu()` + `GATED_BTNS` / `installLicenseGuard()`.
+- Cổng bản quyền có **hai** tầng và chúng không thay thế nhau:
+  1. `installLicenseGuard()` bắt click theo **id của `<button>`** — chỉ chặn được nút thật
+     khai trong `index.html`;
+  2. `gateProFeature()` gọi **bên trong từng hàm** (`addBlankPageAt`, `insertBuffersAt`,
+     `extractSelected`, `openSplit`→`convertReady`).
+- Mục menu chuột phải là `<div>` sinh động, **không có id** → tầng 1 **không nhìn thấy nó**.
+  Cùng tình huống với kéo–thả PDF vào dải thumbnail (đã đi qua `insertBuffersAt`).
+- **Luật:** mọi lệnh trả phí thêm vào menu ngữ cảnh **phải** gọi một hàm đã tự gọi
+  `gateProFeature()`. Đừng viết logic mới thẳng trong `onClick` của mục menu.
+- Ngược lại: nút mới trên **thanh công cụ** thì phải thêm id vào `GATED_BTNS` (BI-9) —
+  `btn-tb-blank` / `btn-tb-extract` / `btn-tb-split` là ví dụ.
+- **Vỡ khi:** máy chưa kích hoạt bản quyền mà chuột phải vào thumbnail vẫn chèn/tách được.
+
+### BI-27 · Số học khoảng trang sống ở `page-range.js`, **không** nhân bản vào `app.js`
+- `desktop/renderer/page-range.js` (`parseSpec` / `computeRange` / `formatList`) —
+  file renderer **duy nhất** không đụng DOM, nên là file renderer **duy nhất** có lưới
+  tự động: `npm run test:pages` (36 ca).
+- Ba luật đã có ca test canh gác, đừng “đơn giản hoá” mất:
+  - `"-3"` và `"3-"` là **rác**, không phải số âm — số âm sẽ kẹp về trang 1 rồi xoá nhầm;
+  - bỏ **toàn bộ** khoảng trắng trước khi tách token, nếu không `"1 - 3"` thành 3 token rác;
+  - `computeRange` trả `error: "all"` khi kết quả ăn hết tài liệu — PDF phải còn ≥1 trang.
+- `extractFileName` cũng ở đây: tên file gợi ý khi tách trang **phải có trần độ dài**.
+  Liệt kê mọi số trang là không giới hạn — **~80 trang đã vượt 255 ký tự**, giới hạn của
+  Windows cho một thành phần tên file, mà chuỗi đó đi thẳng vào `defaultPath` của hộp
+  thoại Lưu. Trần tính trên **chuỗi cuối cùng**, không tính theo số trang: `baseName`
+  là dữ liệu người dùng, dài bao nhiêu không biết trước. Thứ tự cắt: thu gọn phần
+  trang trước (rẻ hơn), cắt phần tên gốc sau cùng.
+- `app.js` gọi qua `window.PageRange.*` (có tên gọi rõ ràng), **không** gọi tên trần — xem BI-14.
+- **Vỡ khi:** gõ “từ 5 đến 12, trừ 7” mà trang 7 vẫn biến mất · hoặc “Chọn tất cả” rồi
+  Tách ra file mới thì hộp thoại Lưu hiện tên file rác/dài lê thê.
+
+### BI-29 · “Sẵn sàng” là HAI điều kiện độc lập — engine và API key, hai badge riêng
+- `app.js` `renderSidecarBadge()` / `setApiBadge()` / `refreshApiBadge()`;
+  `index.html` `#sidecar-badge` + `#api-badge`.
+- Engine cục bộ (sidecar) lo OCR/nén/tách/so sánh/sửa chữ. **Bóc tách và Dịch cần
+  THÊM một API key Gemini.** Một badge “OCR: sẵn sàng” duy nhất bị đọc thành “mọi thứ
+  chạy được” — đó là lý do tách đôi (yêu cầu người dùng 2026-07-26).
+- `apiKey.configured` là **ba trạng thái**: `true` / `false` / **`null` = chưa biết**.
+  `null` **không được** vẽ thành “chưa có key” — engine chưa lên hoặc `/config` không
+  gọi được thì ta *không biết*, và mắng người dùng về một cái key họ đang có là sai.
+  `refreshApiBadge()` nuốt mọi lỗi về `null` đúng vì vậy.
+- Nguồn sự thật là `GET /config` → `gemini_configured` (sidecar không bao giờ trả key
+  đầy đủ, chỉ mask). Ba chỗ cập nhật: sidecar vừa ready · mở hộp thoại Cài đặt ·
+  lưu key xong (dùng luôn phản hồi POST, không gọi lại).
+- Tín hiệu **không được chỉ dựa vào màu**: `.badge.dot::before` vẽ chấm **đặc = sẵn
+  sàng**, **rỗng (vòng tròn viền) = chưa**. Bỏ phần hình dạng đi là mất tín hiệu với
+  người mù màu và trên theme sáng (warn/ok gần nhau).
+- Cả hai badge nằm trong `SKIP_IDS` (BI-10) ⇒ registry i18n **không** vẽ lại chúng khi
+  đổi ngôn ngữ ⇒ phải tự vẽ lại qua listener `i18n:changed`. Bỏ listener đó thì thanh
+  công cụ thành nửa Việt nửa Anh.
+- **Vỡ khi:** chưa nhập key mà badge API vẫn xanh · hoặc engine chưa lên mà đã báo
+  “chưa có key” · hoặc đổi VI↔EN thì hai badge đứng nguyên tiếng cũ.
+
+### BI-28 · `Editor.active` / `TextEdit.active` là **thuộc tính**, không phải hàm
+- `editor.js:3324-3327` và `text-edit.js:595-598` đều khai `get active() { … }` trả về
+  **boolean**. Gọi `window.Editor.active()` ném `TypeError` — và vì các chỗ dùng nằm
+  trong listener `keydown`, ngoại lệ **nuốt luôn phần còn lại của handler**.
+- Bẫy nằm ở chỗ `x && x()` **im lặng khi cờ tắt**: `false && …` không gọi gì cả, nên lỗi
+  chỉ hiện khi tính năng **đang bật** — đúng lúc ít ai test. Đã có thật ở `app.js` nhánh
+  ↑/↓/PageUp/PageDown và nhánh Delete (sửa 2026-07-26); hành vi lúc đó *tình cờ* vẫn đúng
+  vì ngoại lệ cũng làm handler không chạy tiếp, nên lỗi sống rất lâu mà không ai thấy.
+- Mẫu đúng, dùng ở `updateToolbar()`: `!!(window.Editor && window.Editor.active)`.
+- Mở rộng: **chế độ Sửa nội dung không cần kiểm riêng trong `keydown`** — `isTyping()` đã
+  bao nó qua class `body.text-editing`. Thêm kiểm tra thứ hai là thừa và dễ lệch nhau.
+- **Vỡ khi:** console đầy `TypeError: … is not a function` lúc đang chú thích · hoặc code
+  mới thêm vào cuối handler đó không bao giờ chạy khi đang chú thích.
+
 ### BI-14 · Gọi hàm chéo module theo kiểu “tên trần” là điểm gãy im lặng
 - `rerenderChanged` (gọi từ `editor.js:2521`, `text-edit.js:519`) và
   `showOverlay`/`hideOverlay` (gọi từ 4 module) **không** có `window.` và **không** có guard.
@@ -260,6 +333,12 @@ Mỗi mục: **bất biến → ở đâu → vì sao → dấu hiệu vỡ.**
 | Guard đóng | BI-6: nút X vs menu Thoát vs Ctrl+Q — cả 3 đường |
 | Recovery/autosave | BI-7: mở 2 tab, chỉ tab đầu được hỏi khôi phục |
 | Thêm nút tính năng mới | BI-9: khoá bản quyền có ăn không · BI-10: đổi VI/EN không mất chữ |
+| Menu chuột phải trên thumbnail (`openThumbMenu`) | BI-26 · chuột phải **ngoài** vùng đang chọn → chỉ chọn trang đó · chuột phải **trong** vùng đang chọn → giữ nguyên nhiều trang · đang Chú thích/Sửa nội dung → **không** ra menu · chọn hết trang → mục Xoá phải mờ |
+| `page-range.js` hay hộp thoại xoá theo khoảng | `cd desktop ; npm run test:pages` · gõ “từ 5 đến 12, trừ 7” trên tài liệu thật → trang 7 **còn nguyên** · Ctrl+Z quay lại đủ trang (BI-27, BI-3) |
+| Tên file gợi ý khi Tách trang (`extractFileName`) | `npm run test:pages` · mở PDF ≥200 trang → Chọn tất cả bỏ 1 trang → Tách → tên trong hộp thoại Lưu **ngắn, đọc được**, lưu thành công (BI-27) |
+| Badge trạng thái (`renderSidecarBadge`, `setApiBadge`, `/config`) | Mở app lúc engine chưa lên → OCR chấm rỗng, API “…” · engine lên & chưa có key → API chấm rỗng vàng · nhập key → chuyển xanh **ngay**, không cần khởi động lại · bấm badge API → mở Cài đặt đúng ô nhập · đổi VI↔EN → cả hai badge đổi theo (BI-29) |
+| Bất kỳ điều kiện nào đọc `Editor.active` / `TextEdit.active` | Vào Chú thích rồi bấm ↑/↓/PageUp/PageDown/Delete → **không** có lỗi trong console, trang không bị xoá · thoát Chú thích → Delete xoá lại được (BI-28) |
+| Menu ngữ cảnh dùng chung (`showPageMenu` trong `capture.js`) | Chuột phải lên **trang PDF** (Sao chép ảnh/vùng/Dán) vẫn đúng · mở menu này rồi mở menu kia → menu cũ đóng · cuộn dải thumbnail → menu đóng |
 | Cỡ/hình học chữ vẽ lại (`hscale`, `vscale`, `orig_text`, `orig_size`) | `test_edit_text_metrics.py` · sửa 1 dòng trên hoá đơn thật → **không** dài ra đè chữ bên cạnh, **không** cao hơn dòng chưa sửa (BI-25) |
 | Redaction / `add_redact_annot` / `apply_redactions` | `test_edit_text_layout.py` **và** `test_translate_layout.py` · sửa 1 chữ trong ô bảng **có nền** → không vệt trắng, không mất đường kẻ (BI-23) |
 | `pdfJsonBody` hay bất kỳ chỗ gọi sidecar nào có PDF | Mở file **lớn** (≥100MB) rồi: Sửa nội dung · Nén · So sánh 2 file · Tách — không tab nào chết vì hết bộ nhớ (BI-24) |
@@ -275,6 +354,8 @@ Mỗi mục: **bất biến → ở đâu → vì sao → dấu hiệu vỡ.**
 1. `.venv\Scripts\python run_tests.py` → phải `N/N test files passed`.
 2. `cd desktop ; npm run test:tabs` → phải `N pass, 0 fail`
    (lưới cho logic sắp xếp tab + định tuyến phím trong `src/tabs.js`).
+2b. `cd desktop ; npm run test:pages` → phải `N pass, 0 fail`
+   (lưới cho số học khoảng trang trong `renderer/page-range.js`).
 3. `node --check` mọi file JS đã sửa (renderer **không** có test tự động).
 4. Nếu đụng `*.py` hoặc `sidecar.spec` → **rebuild sidecar**, nếu không OTA giao bản cũ.
 5. Chạy `npm start`, test tay các mục ở §5 tương ứng với thứ vừa sửa.

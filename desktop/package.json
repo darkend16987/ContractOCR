@@ -1,6 +1,6 @@
 {
   "name": "nabu-pdf-desktop",
-  "version": "0.2.43",
+  "version": "0.2.44",
   "private": true,
   "description": "Nabu PDF — desktop PDF suite (Electron + Python sidecar)",
   "author": "darkend16987 <hoangnam.mng@gmail.com>",
@@ -15,6 +15,7 @@
     "prebuild": "node scripts/check-sidecar-fresh.js",
     "build": "electron-builder --config electron-builder.yml",
     "test:tabs": "node test/tabs-logic.test.js",
+    "test:pages": "node test/page-range.test.js",
     "checksums": "node scripts/checksums.js",
     "gen:licenses": "node scripts/gen-third-party-licenses.js",
     "license": "node scripts/license-cli.js",

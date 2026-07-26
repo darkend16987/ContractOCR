@@ -2,3 +2,7 @@ node_modules/
 dist-app/
 dist-helper/
 scripts/.keys/
+# Throwaway harness for driving the renderer in a plain browser (see
+# docs/REGRESSION-GUARD.md). It stubs window.desktop — including a license bridge
+# that always reports "licensed" — so it must never be committed.
+renderer/_probe.html

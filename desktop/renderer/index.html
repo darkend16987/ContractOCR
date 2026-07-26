@@ -33,6 +33,9 @@
         <symbol id="ic-layers" viewBox="0 0 24 24"><path d="M12 3l9 5-9 5-9-5 9-5z"/><path d="M3 13l9 5 9-5"/></symbol>
         <symbol id="ic-grip" viewBox="0 0 24 24"><circle cx="9" cy="6" r="1"/><circle cx="15" cy="6" r="1"/><circle cx="9" cy="12" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="9" cy="18" r="1"/><circle cx="15" cy="18" r="1"/></symbol>
         <symbol id="ic-scissors" viewBox="0 0 24 24"><circle cx="6" cy="7" r="2"/><circle cx="6" cy="17" r="2"/><path d="M7.7 8.3L20 17M7.7 15.7L20 7"/></symbol>
+        <!-- "one file → many files": distinct from ic-scissors (extract the selected
+             pages into ONE new file) so the two toolbar buttons can't be confused. -->
+        <symbol id="ic-split-files" viewBox="0 0 24 24"><rect x="2" y="4" width="7" height="16" rx="1"/><path d="M10.5 12h3.6M12.4 10.2L14.2 12l-1.8 1.8"/><rect x="16" y="3" width="6" height="8" rx="1"/><rect x="16" y="13" width="6" height="8" rx="1"/></symbol>
         <symbol id="ic-rotate-l" viewBox="0 0 24 24"><polyline points="2 5 2 11 8 11"/><path d="M4.5 15a8 8 0 1 0 1.9-8.3L2 11"/></symbol>
         <symbol id="ic-rotate-r" viewBox="0 0 24 24"><polyline points="22 5 22 11 16 11"/><path d="M19.5 15a8 8 0 1 1-1.9-8.3L22 11"/></symbol>
         <symbol id="ic-trash" viewBox="0 0 24 24"><path d="M4 7h16M10 11v6M14 11v6"/><path d="M6 7l1 12a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1l1-12"/><path d="M9 7V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v3"/></symbol>
@@ -120,7 +123,12 @@
              ngay trong lúc chú thích — xem updateToolbar() trong app.js. -->
         <button id="btn-comments" class="ghost icon-only" disabled title="Danh sách ghi chú — xem mọi comment trong tài liệu, bấm để nhảy tới"><svg class="ic"><use href="#ic-message"/></svg><span id="btn-comments-count" class="btn-badge" hidden></span></button>
         <button id="btn-settings" class="ghost icon-only" title="Cài đặt — API key cho Bóc tách"><svg class="ic"><use href="#ic-settings"/></svg></button>
-        <span id="sidecar-badge" class="badge starting" title="Trạng thái engine OCR">OCR: …</span>
+        <!-- Two separate readiness signals, deliberately side by side. "OCR: sẵn sàng"
+             on its own used to read as "everything works", but the AI features
+             (Bóc tách, Dịch) need a Gemini API key on top of the local engine — so
+             each prerequisite gets its own badge. Filled dot = ready, hollow = not. -->
+        <span id="sidecar-badge" class="badge dot starting" title="Engine xử lý trên máy">OCR: …</span>
+        <button id="api-badge" class="badge badge-btn dot off" title="API key cho tính năng AI — bấm để nhập">API: …</button>
         <span id="update-badge" class="badge update" title="Trạng thái cập nhật" hidden></span>
       </div>
 
@@ -149,8 +157,25 @@
             <button class="dd-item" id="btn-rotate-l"><svg class="ic"><use href="#ic-rotate-l"/></svg>Xoay trái 90°</button>
             <button class="dd-item" id="btn-rotate-r"><svg class="ic"><use href="#ic-rotate-r"/></svg>Xoay phải 90°</button>
             <button class="dd-item" id="btn-delete"><svg class="ic"><use href="#ic-trash"/></svg>Xoá trang đang chọn</button>
+            <button class="dd-item" id="mi-delete-range" title="Nhập từ trang X đến trang Y, trừ ra vài trang — không cần tick chọn"><svg class="ic"><use href="#ic-trash"/></svg>Xoá nhiều trang theo khoảng…</button>
             <button class="dd-item" id="mi-page-numbers"><svg class="ic"><use href="#ic-type"/></svg>Đánh số trang…</button>
           </div>
+        </div>
+
+        <!-- Lối tắt cho các tác vụ trang dùng nhiều nhất. Cùng hành động với các
+             mục trong Trang ▾ (id khác vì id phải duy nhất) — xem docs/REGRESSION-GUARD.md
+             BI-26: mọi lối vào mới của một tính năng trả phí phải vào GATED_BTNS. -->
+        <div class="group" data-needs-doc>
+          <button id="btn-tb-rotate-l" class="icon-only" disabled title="Xoay trái 90° (trang đang chọn)"><svg class="ic"><use href="#ic-rotate-l"/></svg></button>
+          <button id="btn-tb-rotate-r" class="icon-only" disabled title="Xoay phải 90° (trang đang chọn)"><svg class="ic"><use href="#ic-rotate-r"/></svg></button>
+          <button id="btn-tb-blank" class="icon-only" disabled title="Thêm trang trắng…"><svg class="ic"><use href="#ic-file"/></svg></button>
+        </div>
+
+        <div class="sep"></div>
+
+        <div class="group" data-needs-doc>
+          <button id="btn-tb-extract" class="icon-only" disabled title="Tách trang đang chọn ra file mới"><svg class="ic"><use href="#ic-scissors"/></svg></button>
+          <button id="btn-tb-split" class="icon-only" disabled title="Tách thành nhiều file…"><svg class="ic"><use href="#ic-split-files"/></svg></button>
         </div>
 
         <div class="sep"></div>
@@ -740,6 +765,30 @@
       </div>
     </div>
 
+    <!-- delete a page range, minus exceptions (no ticking required) -->
+    <div class="modal" id="delrange-modal" hidden>
+      <div class="modal-card">
+        <h3>Xoá nhiều trang theo khoảng</h3>
+        <p class="cmp-note">Nhập khoảng trang cần xoá, rồi liệt kê những trang muốn GIỮ LẠI trong khoảng đó.</p>
+        <div class="modal-row">
+          <label>Từ trang
+            <input type="number" id="delrange-from" min="1" value="1" />
+          </label>
+          <label>Đến trang
+            <input type="number" id="delrange-to" min="1" value="1" />
+          </label>
+        </div>
+        <label>Trừ các trang (giữ lại) — vd: 3, 5-7
+          <input type="text" id="delrange-except" placeholder="3, 5-7" spellcheck="false" />
+        </label>
+        <p class="cmp-note delrange-preview" id="delrange-preview"></p>
+        <div class="modal-actions">
+          <button id="delrange-cancel">Hủy</button>
+          <button id="delrange-ok" class="primary">Xoá trang</button>
+        </div>
+      </div>
+    </div>
+
     <!-- Combine multiple PDFs into one (order picker) -->
     <div class="modal" id="combine-modal" hidden>
       <div class="modal-card combine-card">
@@ -1112,6 +1161,7 @@
     <script src="vendor/pdf-lib.min.js"></script>
     <script src="vendor/pdf.min.js"></script>
     <script src="i18n.js"></script>
+    <script src="page-range.js"></script>
     <script src="app.js"></script>
     <script src="editor.js"></script>
     <script src="text-edit.js"></script>

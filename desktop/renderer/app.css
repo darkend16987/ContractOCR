@@ -168,6 +168,35 @@ button.ghost { background: transparent; }
 .badge.error { color: var(--danger); }
 .badge.update { color: var(--accent); }
 .badge.done { color: var(--ok); cursor: default; }
+.badge.off { color: var(--muted); }
+
+/* Readiness dot. Colour alone is not a signal (colour-blind users, and the
+   warn/ok hues are close on the light theme), so the SHAPE carries it too:
+   filled disc = ready, hollow ring = not ready. Rendered via ::before so the
+   i18n text-node registry never sees it. */
+.badge.dot::before {
+  content: "";
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  margin-right: 6px;
+  vertical-align: 1px;
+  background: currentColor;
+}
+.badge.dot:not(.ready)::before {
+  background: transparent;
+  box-shadow: inset 0 0 0 1.5px currentColor;
+}
+
+/* Badge that is also a button (API key). Overrides the global <button> look so
+   it reads as a status pill, not a toolbar button, while staying focusable. */
+.badge-btn {
+  border: 1px solid transparent;
+  padding: 4px 10px;
+  border-radius: 999px;
+}
+.badge-btn:hover:not(:disabled) { background: var(--bg-hover); border-color: currentColor; }
 
 /* ---- workspace ---- */
 .workspace { flex: 1; display: flex; min-height: 0; position: relative; }
@@ -659,6 +688,15 @@ body.editing .note-marker, body.text-editing .note-marker { pointer-events: none
 .ctx-menu-item:hover { background: var(--accent); color: var(--accent-fg); }
 .ctx-menu-item.disabled { opacity: 0.4; cursor: default; }
 .ctx-menu-item.disabled:hover { background: transparent; color: var(--fg); }
+/* Grouping for the longer page-ops menu on thumbnails. The header states WHICH
+   pages the commands act on, so a multi-page selection can't be acted on blind. */
+.ctx-menu-sep { border-top: 1px solid var(--line); margin: 4px 6px; }
+.ctx-menu-head {
+  font-size: 10px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase;
+  color: var(--muted); padding: 6px 12px 3px;
+}
+.ctx-menu-item.danger { color: var(--danger); }
+.ctx-menu-item.danger:hover { background: var(--danger); color: var(--bg); }
 
 /* ---- selectable text layer (text-based PDFs) ---- */
 .text-layer {
@@ -763,6 +801,10 @@ body.editing .text-layer, body.text-editing .text-layer {
 .form-row label { font-size: 11px; color: var(--muted); }
 .form-row input[type="checkbox"] { width: 18px; height: 18px; accent-color: var(--accent); }
 .cmp-note { font-size: 12px; color: var(--muted); margin: 4px 0 12px; line-height: 1.5; }
+/* Live summary in "Xoá nhiều trang theo khoảng" — reserve its height so typing in
+   the fields doesn't make the dialog jump, and colour the refusal cases. */
+.delrange-preview { min-height: 36px; color: var(--fg); }
+.delrange-preview.is-bad { color: var(--danger); }
 
 /* Editable zoom % box in the toolbar (sits between the −/+ buttons). */
 .zoom-input {

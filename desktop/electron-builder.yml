@@ -48,17 +48,26 @@ publish:
 win:
   icon: build/icon.ico
   # --- Code signing (currently OFF — see SIGNING.md) -----------------------
-  # Until a certificate is wired up, builds are UNSIGNED and Windows SmartScreen
-  # will warn on first run. To enable later, uncomment ONE of the blocks below.
+  # Builds are UNSIGNED. Note what signing does and does NOT buy: NO certificate
+  # type removes the SmartScreen warning on first download any more (Microsoft
+  # dropped the EV fast-path). What it buys is reputation that CARRIES ACROSS
+  # releases, the real publisher name instead of "Unknown publisher", and running
+  # at all under Windows 11 Smart App Control. Full reasoning in SIGNING.md.
   #
-  # (A) Traditional cert (.pfx file or token) — set via env vars at build time:
-  #   CSC_LINK=path\to\cert.pfx   CSC_KEY_PASSWORD=...   then:
-  # signtoolOptions:
-  #   sign: null   # electron-builder auto-signs from CSC_LINK; no block needed
+  # (A) OV/EV cert (USB token or cloud HSM) — the viable route for a VN entity.
+  #   Set env vars at build time; NO config block is needed:
+  #     CSC_LINK=path\to\cert.pfx   CSC_KEY_PASSWORD=...   then `pnpm run build`.
+  #   Cloud HSM providers ship their own signtool → use win.signtoolOptions.sign.
   #
-  # (B) Azure Trusted Signing (~$10/mo, removes SmartScreen fast):
+  # (B) Azure Artifact Signing (formerly Trusted Signing, ~$10/mo).
+  #   ⚠ NOT AVAILABLE to Vietnamese entities — Public Trust is limited to US/CA/EU/
+  #   UK/AU/NZ/JP/KR/SG/CH/NO/IL (individuals: US/CA only). Kept here for the day
+  #   there is an entity in a supported region.
+  #   ⚠ There is NO `publisherName` field here — every unknown key is forwarded
+  #   verbatim as a CLI arg to Invoke-TrustedSigning and breaks the signing call.
+  #   ⚠ Auth is via EnvironmentCredential env vars (AZURE_TENANT_ID + AZURE_CLIENT_ID
+  #   + a secret/cert/password), NOT `az login`.
   # azureSignOptions:
-  #   publisherName: "Your Verified Name"
   #   endpoint: https://eus.codesigning.azure.net
   #   certificateProfileName: <profile>
   #   codeSigningAccountName: <account>

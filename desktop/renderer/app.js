@@ -1295,6 +1295,8 @@ function wireThumb(div) {
     updateToolbar();
   });
 
+  div.addEventListener("contextmenu", (e) => openThumbMenu(e, i));
+
   div.addEventListener("dragstart", (e) => {
     state.dragSrc = i;
     div.classList.add("dragging");
@@ -1350,6 +1352,77 @@ function wireThumb(div) {
   });
 }
 
+// ---- thumbnail right-click menu ------------------------------------------
+//
+// Page management where the pages actually are, so the common operations don't
+// need a trip to the toolbar. It reuses the ONE in-page menu widget owned by
+// capture.js (window.Capture.showMenu) — same look, same dismiss rules, and
+// opening this one closes the page menu and vice versa.
+//
+// Licence gating here is at the FUNCTION level (addBlankPageAt / insertFileAt /
+// extractSelected / openSplit all call gateProFeature() themselves). These are
+// generated <div>s, not <button id=…>, so the GATED_BTNS capture guard cannot
+// see them — same arrangement as drag-drop insert. See BI-26.
+function openThumbMenu(e, i) {
+  if (!state.bytes || !state.numPages) return;
+  // Page structure is frozen while annotating / text-editing, exactly as the
+  // toolbar is (updateToolbar) — offering the commands here would be a lie.
+  if ((window.Editor && window.Editor.active) || (window.TextEdit && window.TextEdit.active)) return;
+  if (!(window.Capture && window.Capture.showMenu)) return; // capture.js absent → native menu
+  e.preventDefault();
+  e.stopPropagation();
+
+  // Right-clicking OUTSIDE the current selection acts on that one page (the
+  // convention everywhere from Explorer to Acrobat); right-clicking INSIDE it
+  // keeps the multi-page selection intact.
+  if (!state.selected.has(i)) {
+    state.selected.clear();
+    state.selected.add(i);
+    state.lastClicked = i;
+    refreshSelectionUI();
+    updateToolbar();
+  }
+
+  const sel = [...state.selected].sort((a, b) => a - b);
+  const many = sel.length > 1;
+  const tr = (vi, params) => (window.t ? window.t(vi, params) : vi);
+  // Deleting every page is refused by deletePages(); grey it out up front rather
+  // than letting the user pick a command that can only fail.
+  const canDelete = sel.length < state.numPages;
+
+  window.Capture.showMenu(e.clientX, e.clientY, [
+    {
+      header: many
+        ? tr("{n} trang đang chọn", { n: sel.length })
+        : tr("Trang {n}", { n: i + 1 }),
+    },
+    { label: tr("Xoay trái 90°"), onClick: () => rotateSelected(-90) },
+    { label: tr("Xoay phải 90°"), onClick: () => rotateSelected(90) },
+    { separator: true },
+    { label: tr("Thêm trang trắng phía trên"), onClick: () => addBlankPageAt(i) },
+    { label: tr("Thêm trang trắng phía dưới"), onClick: () => addBlankPageAt(i + 1) },
+    { label: tr("Chèn PDF khác phía dưới…"), onClick: () => insertFileAt(i + 1) },
+    { separator: true },
+    {
+      label: many ? tr("Tách các trang đang chọn ra file mới…") : tr("Tách trang này ra file mới…"),
+      onClick: () => extractSelected(),
+    },
+    { label: tr("Tách thành nhiều file…"), onClick: () => openSplit() },
+    { separator: true },
+    {
+      label: many ? tr("Xoá các trang đang chọn") : tr("Xoá trang này"),
+      enabled: canDelete,
+      danger: true,
+      onClick: () => deleteSelected(),
+    },
+    {
+      label: tr("Xoá nhiều trang theo khoảng…"),
+      danger: true,
+      onClick: () => openDeleteRange(),
+    },
+  ]);
+}
+
 // ---- structural operations (pdf-lib) -------------------------------------
 
 async function reorderPage(from, to) {
@@ -1390,26 +1463,42 @@ async function rotateSelected(delta) {
   }
 }
 
-async function deleteSelected() {
-  if (state.selected.size === 0) {
-    toast("Tick chọn trang cần xóa trước.", "bad");
-    return;
+// Core page removal, shared by the sidebar selection / Delete key (deleteSelected),
+// the thumbnail page menu, and "Xoá nhiều trang theo khoảng". `indices` are 0-based
+// in any order; duplicates and out-of-range values are dropped. Returns true when
+// the document actually changed. Removal runs high→low so earlier removals can't
+// shift the indices still to be removed.
+async function deletePages(indices) {
+  if (!state.bytes) return false;
+  const uniq = [...new Set(indices)].filter((i) => Number.isInteger(i) && i >= 0 && i < state.numPages);
+  if (!uniq.length) {
+    toast("Không có trang nào để xóa.", "bad");
+    return false;
   }
-  if (state.selected.size >= state.numPages) {
+  if (uniq.length >= state.numPages) {
     toast("Không thể xóa tất cả trang.", "bad");
-    return;
+    return false;
   }
   showOverlay("Đang xóa…");
   pushUndo();
   try {
     const doc = await PDFDocument.load(state.bytes);
-    [...state.selected].sort((a, b) => b - a).forEach((i) => doc.removePage(i));
+    uniq.sort((a, b) => b - a).forEach((i) => doc.removePage(i));
     state.bytes = await doc.save();
     state.selected.clear();
     await renderAll();
+    return true;
   } finally {
     hideOverlay();
   }
+}
+
+async function deleteSelected() {
+  if (state.selected.size === 0) {
+    toast("Tick chọn trang cần xóa trước.", "bad");
+    return;
+  }
+  await deletePages([...state.selected]);
 }
 
 // Modal position picker shared by Merge + Insert. Resolves to a 0-based insertion
@@ -1497,6 +1586,15 @@ async function insertFile() {
   await insertBuffersAt([toU8(files[0].data)], at);
 }
 
+// Same as insertFile, minus the position dialog: the page menu already knows
+// where the user right-clicked, so asking again would be a pointless step.
+async function insertFileAt(at) {
+  if (gateProFeature()) return;
+  const files = await window.desktop.openPdf({ multi: false });
+  if (!files.length) return;
+  await insertBuffersAt([toU8(files[0].data)], at);
+}
+
 // Core insert shared by the picker (insertFile) and drag-drop onto the thumbnail
 // strip. `buffers` = list of PDF byte arrays inserted in order at index `at`.
 async function insertBuffersAt(buffers, at) {
@@ -1529,6 +1627,15 @@ async function addBlankPage() {
   if (!state.bytes) return;
   const at = await choosePosition("Thêm trang trắng — chọn vị trí");
   if (at == null) return; // cancelled
+  await addBlankPageAt(at);
+}
+
+// Insert one blank page at a known index (0 = before page 1). Split out of
+// addBlankPage so the thumbnail page menu can drop a page directly above/below
+// the page under the cursor without going through the position dialog.
+async function addBlankPageAt(at) {
+  if (gateProFeature()) return;
+  if (!state.bytes) return;
   const where = posLabel(at);
   showOverlay("Đang thêm trang trắng…");
   pushUndo();
@@ -1563,11 +1670,81 @@ async function extractSelected() {
     const pages = await out.copyPages(src, order);
     pages.forEach((p) => out.addPage(p));
     const bytes = await out.save();
-    const name = `${baseName(state.name)}-trang-${order.map((i) => i + 1).join("_")}.pdf`;
+    // Naming every page is unbounded — ~80 pages already exceeds the 255-character
+    // limit Windows puts on a filename, and this string becomes the Save dialog's
+    // defaultPath. extractFileName keeps the explicit list while it fits and falls
+    // back to a summary; covered by desktop/test/page-range.test.js.
+    const name = window.PageRange.extractFileName(baseName(state.name), order);
     const res = await window.desktop.savePdf(bytes, name);
     if (res.saved) toast("Đã lưu: " + res.path, "good");
   } finally {
     hideOverlay();
+  }
+}
+
+// ---- delete a page range, minus exceptions -------------------------------
+//
+// "Xoá từ trang X đến trang Y, trừ Z" — for the common case of dropping a long
+// stretch of pages, where ticking 60 checkboxes is the wrong interaction. The
+// arithmetic lives in page-range.js (DOM-free, covered by
+// desktop/test/page-range.test.js) because an off-by-one here deletes the wrong
+// page of a real document.
+
+function openDeleteRange() {
+  if (!state.bytes || !state.numPages) {
+    toast("Mở PDF trước.", "bad");
+    return;
+  }
+  const from = $("delrange-from");
+  const to = $("delrange-to");
+  const ex = $("delrange-except");
+  from.max = to.max = String(state.numPages);
+  // Seed from the current selection: right-clicking page 12 and choosing this
+  // should start at page 12, not page 1.
+  const sel = [...state.selected].sort((a, b) => a - b);
+  from.value = String(sel.length ? sel[0] + 1 : 1);
+  to.value = String(sel.length ? sel[sel.length - 1] + 1 : state.numPages);
+  ex.value = "";
+  syncDeleteRange();
+  $("delrange-modal").hidden = false;
+  from.focus();
+  from.select();
+}
+
+// Live summary under the fields + the OK gate. Returns the computed result so
+// runDeleteRange acts on exactly what the user was shown.
+function syncDeleteRange() {
+  const el = $("delrange-preview");
+  const ok = $("delrange-ok");
+  const r = window.PageRange.computeRange(
+    $("delrange-from").value,
+    $("delrange-to").value,
+    $("delrange-except").value,
+    state.numPages
+  );
+  ok.disabled = !!r.error;
+  el.classList.toggle("is-bad", !!r.error);
+  if (r.error === "all") {
+    el.textContent = t("Không thể xoá tất cả trang — phải giữ lại ít nhất 1 trang.");
+  } else if (r.error) {
+    el.textContent = t("Không có trang nào để xoá — kiểm tra lại khoảng trang.");
+  } else {
+    el.textContent = t("Sẽ xoá {n} trang: {list} · còn lại {kept} trang.", {
+      n: r.indices.length,
+      list: window.PageRange.formatList(r.indices),
+      kept: r.kept,
+    });
+  }
+  return r;
+}
+
+async function runDeleteRange() {
+  const r = syncDeleteRange();
+  if (r.error) return; // the preview already says why; leave the dialog open
+  const n = r.indices.length;
+  $("delrange-modal").hidden = true;
+  if (await deletePages(r.indices)) {
+    toast(`Đã xóa ${n} trang. Ctrl+Z để hoàn tác.`, "good");
   }
 }
 
@@ -3052,9 +3229,10 @@ async function openSettings() {
   try {
     const res = await sidecarFetch("/config");
     const data = await res.json();
+    setApiBadge(!!data.gemini_configured); // same fetch feeds the toolbar badge
     status.textContent = data.gemini_configured
       ? `Đã có key: ${data.gemini_key_masked}. Nhập key mới để thay.`
-      : "Chưa có key. Bóc tách sẽ không chạy cho tới khi bạn nhập.";
+      : "Chưa có key. Bóc tách và Dịch (AI) sẽ không chạy cho tới khi bạn nhập.";
     // Populate the model picker: current value + suggested choices.
     const mi = $("set-gemini-model");
     if (mi) {
@@ -3094,6 +3272,7 @@ async function saveSettings() {
     });
     const data = await res.json();
     if (data.success) {
+      setApiBadge(!!data.gemini_configured); // POST returns the new state — no refetch
       $("set-modal").hidden = true;
       toast(key ? "Đã lưu cài đặt." : "Đã lưu model: " + (data.gemini_model || ""), "good");
     } else {
@@ -3131,6 +3310,16 @@ const GATED_BTNS = [
   "btn-insert",
   "btn-blank",
   "btn-extract",
+  // Toolbar shortcuts for the same commands. A second entry point to a paid
+  // feature needs its own id here or it walks straight through the gate (BI-9).
+  // Rotate/delete have no entry because basic page ops stay free.
+  "btn-tb-blank",
+  "btn-tb-extract",
+  "btn-tb-split",
+  // Split was already gated inside openSplit() (convertReady → gateProFeature);
+  // listing it here only adds the matching "locked" affordance so both entry
+  // points to it look the same.
+  "mi-split",
 ];
 
 function licBlocked() {
@@ -3268,13 +3457,92 @@ function applySidecar(s) {
   sidecar.state = s.state;
   sidecar.base = s.port ? "http://127.0.0.1:" + s.port : null;
   sidecar.token = s.token || null;
-  const b = $("sidecar-badge");
-  b.className = "badge " + s.state;
-  b.textContent =
-    s.state === "ready" ? "OCR: sẵn sàng" : s.state === "error" ? "OCR: lỗi" : "OCR: đang tải…";
-  b.title = s.state === "error" ? s.error || "" : "Trạng thái engine OCR";
-  if (s.state === "ready") loadTemplates();
+  sidecar.error = s.error || null;
+  renderSidecarBadge();
+  if (s.state === "ready") {
+    loadTemplates();
+    refreshApiBadge();
+  } else {
+    setApiBadge(null); // engine down ⇒ the key state can't be read
+  }
   updateToolbar();
+}
+
+// Paint the engine badge from `sidecar`. Split out of applySidecar so a language
+// switch can repaint it without re-running the side effects (template reload,
+// /config refetch) that arriving status does.
+function renderSidecarBadge() {
+  const b = $("sidecar-badge");
+  if (!b) return;
+  b.className = "badge dot " + sidecar.state;
+  b.textContent = t(
+    sidecar.state === "ready"
+      ? "OCR: sẵn sàng"
+      : sidecar.state === "error"
+        ? "OCR: lỗi"
+        : "OCR: đang tải…",
+  );
+  // The tooltip has to spell out the LIMIT of this badge: it only covers the local
+  // engine. Reading "OCR: sẵn sàng" as "everything works" is exactly the confusion
+  // the API badge next to it exists to clear up.
+  b.title =
+    sidecar.state === "error"
+      ? sidecar.error || t("Engine xử lý trên máy gặp lỗi.")
+      : t(
+          "Engine xử lý trên máy: OCR, nén, tách, so sánh, sửa chữ. KHÔNG gồm tính năng AI — xem badge API bên cạnh.",
+        );
+}
+
+// ---- API key status ------------------------------------------------------
+//
+// The AI features (Bóc tách, Dịch) need a Gemini API key ON TOP of the local
+// engine, so readiness is two independent facts and gets two badges. `configured`
+// is a tri-state: true / false / null = "not known yet" (engine still starting,
+// or /config unreachable) — null must not be rendered as "missing", that would
+// nag about a key the user may well have.
+const apiKey = { configured: null };
+
+function setApiBadge(configured) {
+  apiKey.configured = configured;
+  const b = $("api-badge");
+  if (!b) return;
+  if (configured === true) {
+    b.className = "badge badge-btn dot ready";
+    b.textContent = t("API: đã có key");
+    b.title = t("Đã có API key — Bóc tách và Dịch (AI) dùng được. Bấm để đổi key.");
+  } else if (configured === false) {
+    b.className = "badge badge-btn dot starting";
+    b.textContent = t("API: chưa có key");
+    b.title = t("Chưa có API key — Bóc tách và Dịch (AI) sẽ không chạy. Bấm để nhập key.");
+  } else {
+    b.className = "badge badge-btn dot off";
+    b.textContent = "API: …";
+    b.title = t("Chưa đọc được trạng thái API key — cần engine chạy trước. Bấm để mở Cài đặt.");
+  }
+}
+
+// Both badges live in SKIP_IDS (their text is runtime state, BI-10), so the i18n
+// registry can't repaint them on a language switch — they have to repaint
+// themselves or the toolbar ends up half Vietnamese, half English.
+window.addEventListener("i18n:changed", () => {
+  renderSidecarBadge();
+  setApiBadge(apiKey.configured);
+});
+
+// Ask the sidecar whether a key is stored. Never throws: an unreachable /config
+// leaves the badge in the "unknown" state rather than claiming there's no key.
+async function refreshApiBadge() {
+  if (sidecar.state !== "ready" || !sidecar.base) {
+    setApiBadge(null);
+    return;
+  }
+  try {
+    const res = await sidecarFetch("/config");
+    const data = await res.json();
+    setApiBadge(!!data.gemini_configured);
+  } catch (_) {
+    setApiBadge(null);
+  }
 }
 
 // ---- toolbar state -------------------------------------------------------
@@ -3309,6 +3577,14 @@ function updateToolbar() {
   if (bto) bto.disabled = !(ready && has) || editing;
   const bc = $("btn-compress");
   if (bc) bc.disabled = !(ready && has) || editing;
+  // "Tách thành nhiều file" runs on the sidecar (/split), so BOTH of its entry
+  // points follow the same rule as the other engine-backed buttons: dim until the
+  // engine is up instead of letting the click fail with a toast. The
+  // [data-needs-doc] sweep above already covers the "no document / editing" half.
+  for (const id of ["btn-tb-split", "mi-split"]) {
+    const b = $(id);
+    if (b) b.disabled = !(ready && has) || editing;
+  }
   // Compare picks its own two files, so it only needs the engine ready (no open doc).
   const bd = $("btn-diff");
   if (bd) bd.disabled = !ready || editing;
@@ -3388,6 +3664,13 @@ $("btn-extract").onclick = extractSelected;
 $("btn-rotate-l").onclick = () => rotateSelected(-90);
 $("btn-rotate-r").onclick = () => rotateSelected(90);
 $("btn-delete").onclick = deleteSelected;
+// Toolbar shortcuts — same handlers as the Trang ▾ items above, no second copy
+// of the logic. (Different ids because ids must be unique.)
+$("btn-tb-rotate-l").onclick = () => rotateSelected(-90);
+$("btn-tb-rotate-r").onclick = () => rotateSelected(90);
+$("btn-tb-blank").onclick = addBlankPage;
+$("btn-tb-extract").onclick = extractSelected;
+$("btn-tb-split").onclick = openSplit;
 $("btn-zoom-in").onclick = () => zoom(0.2);
 $("btn-zoom-out").onclick = () => zoom(-0.2);
 $("btn-fit-width").onclick = fitWidth;
@@ -3501,6 +3784,7 @@ const ddRun = (fn) => () => {
 };
 $("mi-encrypt").onclick = ddRun(openEncrypt);
 $("mi-split").onclick = ddRun(openSplit);
+$("mi-delete-range").onclick = ddRun(openDeleteRange);
 $("mi-page-numbers").onclick = ddRun(openPageNumbers);
 $("pgnum-cancel").onclick = () => ($("pgnum-modal").hidden = true);
 $("pgnum-ok").onclick = runPageNumbers;
@@ -3531,6 +3815,14 @@ $("enc-pw-toggle").onclick = () => {
 };
 $("split-cancel").onclick = () => ($("split-modal").hidden = true);
 $("split-ok").onclick = runSplit;
+$("delrange-cancel").onclick = () => ($("delrange-modal").hidden = true);
+$("delrange-ok").onclick = runDeleteRange;
+for (const id of ["delrange-from", "delrange-to", "delrange-except"]) {
+  $(id).addEventListener("input", syncDeleteRange);
+  $(id).addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !$("delrange-ok").disabled) runDeleteRange();
+  });
+}
 $("split-mode").onchange = () => {
   const isRanges = $("split-mode").value === "ranges";
   $("split-size-wrap").hidden = isRanges;
@@ -3549,6 +3841,9 @@ $("combine-ok").onclick = runCombine;
 wireCombineList();
 
 $("btn-settings").onclick = openSettings;
+// The API badge is a shortcut into the same dialog — openSettings() focuses the
+// key field once the engine is up, so "chưa có key → bấm → gõ key" is one hop.
+$("api-badge").onclick = openSettings;
 $("set-cancel").onclick = () => ($("set-modal").hidden = true);
 $("set-ok").onclick = saveSettings;
 $("set-key-toggle").onclick = () => {
@@ -3754,7 +4049,12 @@ window.addEventListener("keydown", (e) => {
     (!cmpView || cmpView.hidden) &&
     (!ovView || ovView.hidden) &&
     $("viewer").offsetParent !== null &&
-    !(window.Editor && window.Editor.active && window.Editor.active())
+    // `Editor.active` is a boolean GETTER (editor.js), NOT a method. It used to be
+    // called — `window.Editor.active()` — which threw a TypeError on every one of
+    // these keypresses while annotating and aborted the rest of this handler. Use
+    // the same property form as updateToolbar(). Text-edit mode needs no check of
+    // its own here: isTyping() already covers it via the body.text-editing class.
+    !(window.Editor && window.Editor.active)
   ) {
     e.preventDefault();
     const cur = currentPageIndex();
@@ -3767,7 +4067,7 @@ window.addEventListener("keydown", (e) => {
   if (
     e.key === "Delete" &&
     !isTyping() &&
-    !(window.Editor && window.Editor.active && window.Editor.active()) &&
+    !(window.Editor && window.Editor.active) && // property, not a method — see above
     state.selected &&
     state.selected.size
   ) {

@@ -320,6 +320,65 @@
     "Khoảng trang (vd: 1-3,5,8-10)": "Page ranges (e.g. 1-3,5,8-10)",
     "Tách & lưu": "Split & save",
 
+    // --- readiness badges (OCR engine vs AI API key) ---
+    "OCR: sẵn sàng": "OCR: ready",
+    "OCR: đang tải…": "OCR: loading…",
+    "OCR: lỗi": "OCR: error",
+    "API: đã có key": "API: key set",
+    "API: chưa có key": "API: no key",
+    "Engine xử lý trên máy": "On-device processing engine",
+    "Engine xử lý trên máy: OCR, nén, tách, so sánh, sửa chữ. KHÔNG gồm tính năng AI — xem badge API bên cạnh.":
+      "On-device engine: OCR, compress, split, compare, edit text. Does NOT cover the AI features — see the API badge next to it.",
+    "Engine xử lý trên máy gặp lỗi.": "The on-device engine failed.",
+    "API key cho tính năng AI — bấm để nhập": "API key for the AI features — click to enter one",
+    "Đã có API key — Bóc tách và Dịch (AI) dùng được. Bấm để đổi key.":
+      "API key set — Extract and Translate (AI) are available. Click to change it.",
+    "Chưa có API key — Bóc tách và Dịch (AI) sẽ không chạy. Bấm để nhập key.":
+      "No API key — Extract and Translate (AI) will not run. Click to enter one.",
+    "Chưa đọc được trạng thái API key — cần engine chạy trước. Bấm để mở Cài đặt.":
+      "API key status unknown — the engine must be running first. Click to open Settings.",
+
+    // --- delete page range dialog ---
+    "Xoá nhiều trang theo khoảng": "Delete a range of pages",
+    "Xoá nhiều trang theo khoảng…": "Delete a range of pages…",
+    "Nhập từ trang X đến trang Y, trừ ra vài trang — không cần tick chọn":
+      "Enter from page X to page Y, minus a few exceptions — no ticking required",
+    "Nhập khoảng trang cần xoá, rồi liệt kê những trang muốn GIỮ LẠI trong khoảng đó.":
+      "Enter the range of pages to delete, then list the pages to KEEP within that range.",
+    "Từ trang": "From page",
+    "Đến trang": "To page",
+    "Trừ các trang (giữ lại) — vd: 3, 5-7": "Except (keep) these pages — e.g. 3, 5-7",
+    "Xoá trang": "Delete pages",
+    // Live summary + refusals (dynamic, via t()).
+    "Sẽ xoá {n} trang: {list} · còn lại {kept} trang.":
+      "Will delete {n} pages: {list} · {kept} pages left.",
+    "Không thể xoá tất cả trang — phải giữ lại ít nhất 1 trang.":
+      "Can't delete every page — at least 1 page must remain.",
+    "Không có trang nào để xoá — kiểm tra lại khoảng trang.":
+      "No pages to delete — check the range.",
+
+    // --- thumbnail page menu (right-click) + toolbar page shortcuts ---
+    "Trang {n}": "Page {n}",
+    "{n} trang đang chọn": "{n} pages selected",
+    "Thêm trang trắng phía trên": "Add a blank page above",
+    "Thêm trang trắng phía dưới": "Add a blank page below",
+    "Chèn PDF khác phía dưới…": "Insert another PDF below…",
+    "Tách trang này ra file mới…": "Extract this page into a new file…",
+    "Tách các trang đang chọn ra file mới…": "Extract the selected pages into a new file…",
+    "Xoá trang này": "Delete this page",
+    "Xoá các trang đang chọn": "Delete the selected pages",
+    "Xoay trái 90° (trang đang chọn)": "Rotate left 90° (selected pages)",
+    "Xoay phải 90° (trang đang chọn)": "Rotate right 90° (selected pages)",
+    // These five are the CURRENT Trang ▾ labels. The dictionary still carried the
+    // pre-overhaul wording (and "Xóa" where the markup says "Xoá"), so the menu was
+    // silently untranslated; the new toolbar tooltips reuse the same strings.
+    "Ghép PDF khác vào…": "Merge another PDF in…",
+    "Chèn trang từ PDF khác…": "Insert pages from another PDF…",
+    "Thêm trang trắng…": "Add a blank page…",
+    "Tách trang đang chọn ra file mới": "Extract the selected pages into a new file",
+    "Xoá trang đang chọn": "Delete the selected pages",
+    "Chọn vị trí (đầu/cuối/sau trang)": "Pick a position (start / end / after a page)",
+
     // --- combine dialog ---
     "Gộp nhiều PDF thành một file": "Combine several PDFs into one file",
     "Chọn nhiều file rồi kéo–thả (hoặc nút ↑/↓) để sắp xếp thứ tự. Không cần mở file nào trước.":
@@ -471,7 +530,7 @@
   // Elements whose text/attrs change at runtime — never register these, or a
   // language switch would overwrite their live value with stale static text.
   const SKIP_IDS = new Set([
-    "page-count", "sidecar-badge", "update-badge", "find-count",
+    "page-count", "sidecar-badge", "api-badge", "update-badge", "find-count",
     "pos-title", "pos-hint", "i2p-count", "combine-summary",
     "cmp2-a-name", "cmp2-b-name",
     "set-version", "set-status", "set-update-status",
@@ -481,6 +540,8 @@
     "thumbs", "breadcrumb", "ext-fields", "ext-class", "ext-custom-rows",
     "ext-raw-out", "form-fields", "toast", "overlay-msg",
     "ed-hint", "te-hint",
+    // Live "will delete N pages: …" summary, rewritten on every keystroke (BI-10).
+    "delrange-preview",
     // Live page counter shown in full-screen reading mode (BI-10).
     "present-page",
   ]);
