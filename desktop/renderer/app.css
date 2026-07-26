@@ -202,7 +202,11 @@ button.ghost { background: transparent; }
 .workspace { flex: 1; display: flex; min-height: 0; position: relative; }
 
 .sidebar {
-  width: 180px;
+  /* Bề rộng do người dùng kéo, lưu ở localStorage và đặt lại lúc khởi động
+     (app.js applySidebarWidth). Fallback 180px là mặc định cũ, cũng là giá trị
+     bấm-đúp-để-về. Dùng biến chứ không đặt thẳng style trên phần tử để chế độ
+     Toàn màn hình dùng lại đúng bề rộng đó cho lớp phủ. */
+  width: var(--sidebar-w, 180px);
   flex: 0 0 auto;
   background: var(--bg-2);
   border-right: 1px solid var(--line);
@@ -224,8 +228,31 @@ button.ghost { background: transparent; }
 .sidebar-toggle { padding: 2px 3px; display: inline-flex; }
 .sidebar-toggle .ic { width: 15px; height: 15px; margin: 0; color: var(--muted); }
 .sidebar-toggle:hover .ic { color: var(--fg); }
+/* Drag handle between the page list and the page view: a 5px strip in normal flex
+   flow (not absolute), so it needs no JS to stay glued to the panel edge. Invisible
+   until hovered, like every IDE splitter — thin enough not to eat layout, wide
+   enough to hit. */
+.sidebar-resizer {
+  flex: 0 0 auto;
+  width: 5px;
+  margin-left: -1px; /* sit on top of the sidebar's border, not beside it */
+  cursor: col-resize;
+  background: transparent;
+  transition: background 0.12s;
+}
+.sidebar-resizer:hover,
+body.resizing-sidebar .sidebar-resizer { background: var(--accent); }
+/* While dragging, the cursor must not flicker to text/grab over whatever the
+   pointer happens to cross, and nothing may start selecting. */
+body.resizing-sidebar,
+body.resizing-sidebar * { cursor: col-resize !important; user-select: none !important; }
+
 /* Collapsed: the thumbnail sidebar is hidden; a slim rail button re-opens it. */
 .workspace.sidebar-collapsed > .sidebar { display: none; }
+/* No panel, nothing to resize. Same in full screen, where the panel is an
+   auto-hiding overlay rather than a column. */
+.workspace.sidebar-collapsed > .sidebar-resizer,
+body.presenting .sidebar-resizer { display: none; }
 .sidebar-expand {
   position: absolute; left: 0; top: 10px; z-index: 15;
   width: 22px; height: 36px; padding: 0; border-radius: 0 8px 8px 0;
@@ -446,6 +473,22 @@ button.ghost { background: transparent; }
 /* drag-drop highlight on viewer */
 .viewer.dropping { outline: 3px dashed var(--accent); outline-offset: -10px; }
 
+/* ---- hand tool (pan) — renderer/pan.js ---- */
+/* `pan-ready` = a drag WOULD move the page (hand tool on, or space held).
+   The text layer has to stand down: its spans sit on top of the canvas with
+   `cursor: text` and would start a selection instead of a pan. Same trick the
+   two editors already use (see .text-layer rules at the end of this file). */
+body.pan-ready .viewer { cursor: grab; }
+body.pan-ready .text-layer { pointer-events: none; user-select: none; }
+/* `panning` = a drag is happening right now. This one must beat every other
+   cursor rule (.text-layer span, .capture-mode crosshair, .annot-layer) because
+   a middle-button pan is allowed from inside those modes. */
+body.panning .viewer,
+body.panning .viewer * { cursor: grabbing !important; }
+body.panning { user-select: none; }
+body.panning .text-layer { pointer-events: none; }
+#btn-hand.active { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
+
 /* ---- full-screen reading mode ---- */
 /* The window itself goes full screen from main (BaseWindow.setFullScreen) and the
    tab strip collapses there; this half hides the in-page chrome so the page really
@@ -454,8 +497,40 @@ button.ghost { background: transparent; }
 body.presenting > .toolbar,
 body.presenting > .breadcrumb,
 body.presenting > .statusbar,
-body.presenting .sidebar,
 body.presenting .sidebar-expand { display: none !important; }
+
+/* The page list survives full screen, but as an OVERLAY that slides in from the
+   left edge — never as a layout column.
+   INVARIANT: while presenting, the sidebar must not consume layout width. The
+   mode calls fitPage() once on the way in, measured against the full-width
+   viewer; a sidebar that took real width would make "trọn trang" quietly wrong
+   and would re-flow the page every time the rail opened. Hence position:absolute
+   + transform (both are outside layout) rather than a width transition.
+   A sidebar the user had already collapsed stays collapsed — .sidebar-collapsed
+   still wins, so F11 never resurrects a panel they had put away. */
+body.presenting .sidebar {
+  position: absolute;
+  left: 0; top: 0; bottom: 0;
+  z-index: 40;
+  /* Same width the user dragged for the normal panel — one setting, not two. */
+  transform: translateX(-100%);
+  transition: transform 0.18s ease;
+  box-shadow: 6px 0 22px rgba(0, 0, 0, 0.55);
+}
+body.presenting.rail-open .sidebar,
+body.presenting.rail-pinned .sidebar { transform: translateX(0); }
+/* "Collapse" is meaningless for a panel that already hides itself — and worse, it
+   would hide the panel in the one mode where the rail is the only way back to it. */
+body.presenting .sidebar-toggle { display: none; }
+/* Hover target along the screen edge. Inert (and invisible) outside full screen. */
+#present-rail { display: none; }
+body.presenting #present-rail {
+  display: block;
+  position: absolute;
+  left: 0; top: 0; bottom: 0;
+  width: 14px;
+  z-index: 39; /* under the sidebar, so an open rail can't re-trigger itself */
+}
 /* Tighter padding + no page gap shadow spill: the point of the mode is that one
    page fills the screen. */
 body.presenting .viewer { padding: 8px; gap: 10px; background: #000; }

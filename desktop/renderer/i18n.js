@@ -41,6 +41,8 @@
     "Lưu PDF (Ctrl+S)": "Save PDF (Ctrl+S)",
     "In": "Print",
     "In tài liệu (Ctrl+P)": "Print document (Ctrl+P)",
+    "Bàn tay — kéo để di chuyển trang (phím H; phím V quay lại chọn chữ; giữ Space để dùng tạm; kéo nút giữa chuột thì pan được mọi lúc)":
+      "Hand tool — drag to move the page (H; press V for text selection; hold Space to borrow it; middle-button drag pans at any time)",
     "Thu nhỏ (Ctrl+lăn chuột xuống)": "Zoom out (Ctrl+scroll down)",
     "Phóng to (Ctrl+lăn chuột lên)": "Zoom in (Ctrl+scroll up)",
     "Vừa bề ngang": "Fit width",
@@ -438,6 +440,10 @@
     "Sáng": "Light",
     "Ngôn ngữ": "Language",
     "Ngôn ngữ giao diện": "Interface language",
+    "Hiện đường dẫn file": "Show file path",
+    "Dải đường dẫn ngay dưới thanh công cụ — tắt đi để trang rộng thêm":
+      "The path strip under the toolbar — turn it off to give the page more room",
+    "Kéo để đổi bề rộng · bấm đúp để về mặc định": "Drag to resize · double-click to reset",
     "Mở lại phiên trước": "Reopen last session",
     "Khởi động lại app thì mở lại đúng các tab lần trước": "Reopen the same tabs the next time the app starts",
     // ("Tiếng Việt" / "Tiếng Anh" defined once in the translate-dialog block.)

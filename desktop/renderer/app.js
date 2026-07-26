@@ -350,10 +350,30 @@ async function checkRecovery() {
 
 // ---- breadcrumb (open file path) -----------------------------------------
 
+// Whether the path bar is shown at all (Settings). Default ON: the path is how
+// you tell two files with the same name apart. Stored renderer-side like the
+// theme, because nothing outside this window needs to know.
+const BREADCRUMB_KEY = "nabu-breadcrumb";
+function breadcrumbEnabled() {
+  try {
+    return localStorage.getItem(BREADCRUMB_KEY) !== "0"; // absent = on
+  } catch (_) {
+    return true; // unreadable storage must not hide the path bar
+  }
+}
+function setBreadcrumbEnabled(on) {
+  try {
+    localStorage.setItem(BREADCRUMB_KEY, on ? "1" : "0");
+  } catch (_) {
+    /* the toggle still applies to this session, it just won't be remembered */
+  }
+  renderBreadcrumb();
+}
+
 function renderBreadcrumb() {
   const bar = $("breadcrumb");
   if (!bar) return;
-  if (!state.bytes) {
+  if (!state.bytes || !breadcrumbEnabled()) {
     bar.hidden = true;
     bar.innerHTML = "";
     return;
@@ -2010,6 +2030,64 @@ function updateStatusBar() {
   }
 }
 
+// ---- sidebar width (drag to resize) --------------------------------------
+//
+// Acrobat/Foxit both let you widen the page list; a fixed 180px is the one place
+// this viewer was plainly behind them. Widening it makes the thumbnails big
+// enough to actually read a page from, which is the whole point of the panel.
+//
+// Deliberately single-column at every width. Reflowing into a grid (what Acrobat
+// does) would break the drag-to-insert cue: `wireThumb`'s dragover picks
+// above-vs-below from `e.clientY` against the thumb's vertical midpoint, and a
+// grid makes "above/below" the wrong question. Getting that wrong inserts pages
+// at the wrong index — see BI-26/BI-27 on how expensive page-position bugs are.
+const SIDEBAR_W_KEY = "nabu-sidebar-w";
+const SIDEBAR_W_DEFAULT = 180;
+const SIDEBAR_W_MIN = 130; // below this a thumbnail is too small to recognise
+// The ceiling is set by the THUMBNAIL RASTER, not by taste: renderThumbCanvas
+// rasterises every thumbnail 150px wide, so a wider panel just upscales that one
+// bitmap. At 300px the thumb draws ~252px (1.7× — soft but perfectly readable for
+// telling pages apart); much past that it turns mushy.
+// Raising the raster instead is NOT free: thumbnails are rendered lazily but are
+// never freed, so a doc with hundreds of pages pays for every one it has scrolled
+// past. Widening the raster to match a 420px panel would roughly quadruple that
+// bill. Sharper thumbnails at wide panels = re-rasterise on resize, deliberately
+// left as a follow-up rather than bundled into a layout change.
+const SIDEBAR_W_MAX = 300;
+
+// Clamp a requested width. The window ceiling matters on small laptops: a 420px
+// panel on a 1280px screen would leave the page a slot it can't be read in.
+function clampSidebarWidth(px) {
+  const ceiling = Math.min(SIDEBAR_W_MAX, Math.round(window.innerWidth * 0.4));
+  return Math.max(SIDEBAR_W_MIN, Math.min(ceiling, Math.round(px)));
+}
+
+function applySidebarWidth(px, persist) {
+  const w = clampSidebarWidth(px);
+  document.documentElement.style.setProperty("--sidebar-w", w + "px");
+  if (persist) {
+    try {
+      localStorage.setItem(SIDEBAR_W_KEY, String(w));
+    } catch (_) {
+      /* the width still applies to this session, it just won't be remembered */
+    }
+  }
+  return w;
+}
+
+// Restore on start. A stored width that is now too wide (smaller screen than last
+// time) is clamped rather than honoured, so the panel can never open bigger than
+// the window it has to fit in.
+function initSidebarWidth() {
+  let saved = null;
+  try {
+    saved = parseInt(localStorage.getItem(SIDEBAR_W_KEY) || "", 10);
+  } catch (_) {
+    /* unreadable storage — fall through to the default */
+  }
+  applySidebarWidth(saved && !isNaN(saved) ? saved : SIDEBAR_W_DEFAULT, false);
+}
+
 // Collapse / expand the thumbnail sidebar (toggle, or force a state).
 function toggleSidebar(collapse) {
   const ws = document.querySelector(".workspace");
@@ -2117,7 +2195,7 @@ async function fitPage() {
 // only main's reply flips the class here. That way leaving full screen by any
 // other route (window controls, OS gesture) can't leave the UI stranded with its
 // toolbar hidden.
-const present = { on: false, prevScale: null, prevCollapsed: null };
+const present = { on: false, prevScale: null };
 
 function presentAvailable() {
   const editing =
@@ -2151,16 +2229,16 @@ async function applyPresentation(on) {
   if (btn) btn.classList.toggle("active", present.on);
   if (present.on) {
     present.prevScale = state.scale;
-    const ws = document.querySelector(".workspace");
-    present.prevCollapsed = !!(ws && ws.classList.contains("sidebar-collapsed"));
-    toggleSidebar(true); // keep the collapsed flag consistent with the CSS
+    // The sidebar is deliberately NOT collapsed here any more: in this mode the
+    // CSS turns it into an off-screen overlay (position:absolute + transform), so
+    // it costs no layout width and fitPage() still measures the full window —
+    // while the page list stays one mouse-move away at the left edge.
     await fitPage();
     updatePresentHud();
   } else {
-    if (present.prevCollapsed === false) toggleSidebar(false);
+    document.body.classList.remove("rail-open", "rail-pinned");
     const back = present.prevScale;
     present.prevScale = null;
-    present.prevCollapsed = null;
     if (back) await zoomTo(back);
   }
 }
@@ -3193,6 +3271,7 @@ async function openSettings() {
   $("set-theme").value =
     document.documentElement.getAttribute("data-theme") === "light" ? "light" : "dark";
   if ($("set-lang") && window.I18N) $("set-lang").value = window.I18N.getLang();
+  if ($("set-breadcrumb")) $("set-breadcrumb").checked = breadcrumbEnabled();
   // "Reopen last session" lives in main (it has to be readable before any
   // renderer exists), so read it back rather than assuming a default.
   const restoreBox = $("set-restore-session");
@@ -3637,6 +3716,11 @@ function updateToolbar() {
     const b = $(id);
     if (b) b.classList.toggle("locked", blocked);
   }
+  // The hand cursor must disappear the moment a mode takes the left button back
+  // (and reappear on the way out). This is the one place that runs on every such
+  // change, so the pan module is re-synced from here rather than subscribing to
+  // four different mode toggles. Guarded call — see BI-14.
+  if (window.Pan && window.Pan.sync) window.Pan.sync();
 }
 
 // ---- wiring --------------------------------------------------------------
@@ -3740,6 +3824,63 @@ $("comments-close").onclick = () => toggleComments(false);
 // Thumbnail sidebar collapse/expand (button + F4).
 $("btn-sidebar").onclick = () => toggleSidebar(true);
 $("sidebar-expand").onclick = () => toggleSidebar(false);
+
+// Sidebar resize handle. Pointer capture keeps the drag alive when the cursor
+// runs past the handle (which it always does) and guarantees the pointerup even
+// if it happens outside the window.
+initSidebarWidth();
+if ($("sidebar-resizer")) {
+  const grip = $("sidebar-resizer");
+  let resizing = null; // { id, startX, startW }
+  grip.addEventListener("pointerdown", (e) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    const sb = $("sidebar");
+    resizing = { id: e.pointerId, startX: e.clientX, startW: sb ? sb.getBoundingClientRect().width : SIDEBAR_W_DEFAULT };
+    try {
+      grip.setPointerCapture(e.pointerId);
+    } catch (_) {
+      /* capture unavailable — the window listeners below still finish the drag */
+    }
+    document.body.classList.add("resizing-sidebar");
+  });
+  window.addEventListener("pointermove", (e) => {
+    if (!resizing || e.pointerId !== resizing.id) return;
+    // Persist only at the end: a write per mouse-move would hammer localStorage.
+    applySidebarWidth(resizing.startW + (e.clientX - resizing.startX), false);
+  });
+  const endResize = (e) => {
+    if (!resizing || (e && e.pointerId != null && e.pointerId !== resizing.id)) return;
+    try {
+      grip.releasePointerCapture(resizing.id);
+    } catch (_) {
+      /* already released */
+    }
+    resizing = null;
+    document.body.classList.remove("resizing-sidebar");
+    const sb = $("sidebar");
+    applySidebarWidth(sb ? sb.getBoundingClientRect().width : SIDEBAR_W_DEFAULT, true);
+  };
+  window.addEventListener("pointerup", endResize);
+  window.addEventListener("pointercancel", endResize);
+  grip.addEventListener("dblclick", () => applySidebarWidth(SIDEBAR_W_DEFAULT, true));
+}
+
+// Full-screen page list: the left-edge strip slides the thumbnail sidebar in over
+// the page, and it slides back out when the pointer leaves. The close is delayed
+// because the pointer has to cross the gap between the strip and the panel; a
+// zero delay makes the panel flicker shut in that gap. F4 pins it (see keydown).
+let railHideTimer = null;
+function showRail(on) {
+  clearTimeout(railHideTimer);
+  if (on) document.body.classList.add("rail-open");
+  else railHideTimer = setTimeout(() => document.body.classList.remove("rail-open"), 220);
+}
+if ($("present-rail")) $("present-rail").addEventListener("pointerenter", () => showRail(true));
+if ($("sidebar")) {
+  $("sidebar").addEventListener("pointerenter", () => showRail(true));
+  $("sidebar").addEventListener("pointerleave", () => showRail(false));
+}
 
 $("btn-ocr").onclick = openExtractPanel;
 $("btn-searchable").onclick = makeSearchable;
@@ -3868,6 +4009,11 @@ if ($("set-lang")) {
   $("set-lang").onchange = (e) => {
     if (window.I18N) window.I18N.setLang(e.target.value);
   };
+}
+// Path-bar visibility. Applies immediately so the checkbox shows its own effect
+// with the dialog still open.
+if ($("set-breadcrumb")) {
+  $("set-breadcrumb").onchange = (e) => setBreadcrumbEnabled(e.target.checked);
 }
 // Reopen-last-session toggle. Persisted by main, which is the only side that can
 // act on it (it reads the flag at launch, before any renderer exists).
@@ -4002,10 +4148,21 @@ window.addEventListener("keydown", (e) => {
     }
     return;
   }
-  // F4 toggles the thumbnail sidebar (Foxit-style), unless typing.
+  // F4 toggles the thumbnail sidebar (Foxit-style), unless typing. In full screen
+  // the sidebar is a hover-out overlay instead of a column, so the same key pins
+  // it open there — same intent ("show me the page list"), same key.
   if (e.key === "F4" && !isTyping()) {
     e.preventDefault();
-    toggleSidebar();
+    if (present.on) {
+      // Pinning must also un-collapse: a sidebar the user had put away before
+      // going full screen is `display:none`, so pinning it alone would be a key
+      // that visibly does nothing — and the hover rail can't rescue it either.
+      const pin = !document.body.classList.contains("rail-pinned");
+      if (pin) toggleSidebar(false);
+      document.body.classList.toggle("rail-pinned", pin);
+    } else {
+      toggleSidebar();
+    }
     return;
   }
   // F11 = full-screen reading mode (also on the View menu). Handled here rather

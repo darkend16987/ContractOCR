@@ -65,6 +65,7 @@
         <symbol id="ic-signature" viewBox="0 0 24 24"><path d="M3 17c2.5 0 3-9 4.5-9S9 15 10.5 15 12 9 13.5 9 15 13 17 13"/><path d="M3 21h18"/><path d="M17 13c1.5 0 2-2 3-2"/></symbol>
         <symbol id="ic-convert" viewBox="0 0 24 24"><path d="M4 8h11l-3-3M20 16H9l3 3"/></symbol>
         <symbol id="ic-chevron" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></symbol>
+        <symbol id="ic-hand" viewBox="0 0 24 24"><path d="M6 12V7.5a1.5 1.5 0 0 1 3 0V11"/><path d="M9 11V5.5a1.5 1.5 0 0 1 3 0V11"/><path d="M12 11V6.5a1.5 1.5 0 0 1 3 0V12"/><path d="M15 12V9a1.5 1.5 0 0 1 3 0v5a7 7 0 0 1-7 7h-1a6 6 0 0 1-5.2-3l-1.9-3.3a1.5 1.5 0 0 1 2.5-1.6L6 16"/></symbol>
         <symbol id="ic-fit" viewBox="0 0 24 24"><path d="M3 8V5a2 2 0 0 1 2-2h3"/><path d="M16 3h3a2 2 0 0 1 2 2v3"/><path d="M21 16v3a2 2 0 0 1-2 2h-3"/><path d="M8 21H5a2 2 0 0 1-2-2v-3"/><path d="M8 12h8"/><path d="m10 9-3 3 3 3"/><path d="m14 9 3 3-3 3"/></symbol>
         <symbol id="ic-fit-h" viewBox="0 0 24 24"><path d="M3 8V5a2 2 0 0 1 2-2h3"/><path d="M16 3h3a2 2 0 0 1 2 2v3"/><path d="M21 16v3a2 2 0 0 1-2 2h-3"/><path d="M8 21H5a2 2 0 0 1-2-2v-3"/><path d="M12 8v8"/><path d="m9 10 3-3 3 3"/><path d="m9 14 3 3 3-3"/></symbol>
         <symbol id="ic-fit-page" viewBox="0 0 24 24"><path d="M3 8V5a2 2 0 0 1 2-2h3"/><path d="M16 3h3a2 2 0 0 1 2 2v3"/><path d="M21 16v3a2 2 0 0 1-2 2h-3"/><path d="M8 21H5a2 2 0 0 1-2-2v-3"/><rect x="8" y="7.5" width="8" height="9" rx="1"/></symbol>
@@ -96,6 +97,10 @@
         <div class="sep"></div>
 
         <div class="group" data-needs-doc>
+          <!-- Bàn tay sống chung nhóm với zoom: cùng họ "ngắm tài liệu", và gộp
+               vào đây thì không tốn thêm một dải phân cách trên hàng 1.
+               Logic ở renderer/pan.js (có lưới test: npm run test:pan). -->
+          <button id="btn-hand" class="icon-only" disabled title="Bàn tay — kéo để di chuyển trang (phím H; phím V quay lại chọn chữ; giữ Space để dùng tạm; kéo nút giữa chuột thì pan được mọi lúc)"><svg class="ic"><use href="#ic-hand"/></svg></button>
           <button id="btn-zoom-out" class="icon-only" disabled title="Thu nhỏ (Ctrl+lăn chuột xuống)"><svg class="ic"><use href="#ic-minus"/></svg></button>
           <input id="zoom-input" class="zoom-input" type="text" value="100%" disabled title="Gõ tỷ lệ zoom (40–300) rồi Enter" spellcheck="false" />
           <button id="btn-zoom-in" class="icon-only" disabled title="Phóng to (Ctrl+lăn chuột lên)"><svg class="ic"><use href="#ic-plus"/></svg></button>
@@ -326,7 +331,15 @@
         </div>
         <div class="thumbs" id="thumbs"></div>
       </aside>
+      <!-- Kéo để đổi bề rộng danh sách trang; bấm đúp để về mặc định. Là phần tử
+           trong dòng chảy flex (không phải absolute) nên nó tự nằm đúng mép, khỏi
+           phải đồng bộ vị trí bằng JS. -->
+      <div id="sidebar-resizer" class="sidebar-resizer" role="separator" aria-orientation="vertical" title="Kéo để đổi bề rộng · bấm đúp để về mặc định"></div>
       <button id="sidebar-expand" class="sidebar-expand" title="Hiện danh sách trang (F4)" hidden><svg class="ic chev-right"><use href="#ic-chevron"/></svg></button>
+      <!-- Vùng cảm ứng mép trái, CHỈ sống trong chế độ Toàn màn hình: rê chuột
+           vào đây thì dải thumbnail trượt ra đè lên trang (F4 để ghim). Xem
+           app.css §full-screen — dải đó không được chiếm chiều rộng layout. -->
+      <div id="present-rail" aria-hidden="true"></div>
 
       <section class="viewer" id="viewer">
         <div class="empty" id="empty-state">
@@ -989,6 +1002,15 @@
         <hr class="set-div" />
         <div class="set-row-between">
           <div>
+            <b>Hiện đường dẫn file</b>
+            <p class="cmp-note" style="margin:2px 0 0">Dải đường dẫn ngay dưới thanh công cụ — tắt đi để trang rộng thêm</p>
+          </div>
+          <input type="checkbox" id="set-breadcrumb" checked />
+        </div>
+
+        <hr class="set-div" />
+        <div class="set-row-between">
+          <div>
             <b>Mở lại phiên trước</b>
             <p class="cmp-note" style="margin:2px 0 0">Khởi động lại app thì mở lại đúng các tab lần trước</p>
           </div>
@@ -1163,6 +1185,10 @@
     <script src="i18n.js"></script>
     <script src="page-range.js"></script>
     <script src="app.js"></script>
+    <!-- pan.js must load AFTER app.js ($ / state / isTyping come from it) and
+         BEFORE editor.js / capture.js, so its capture-phase viewer listener is
+         registered first. -->
+    <script src="pan.js"></script>
     <script src="editor.js"></script>
     <script src="text-edit.js"></script>
     <script src="compare.js"></script>

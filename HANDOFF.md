@@ -4,7 +4,36 @@
 > [DESIGN.md](DESIGN.md) (kiến trúc), [ROADMAP.md](ROADMAP.md) (tiến độ chi tiết),
 > [SETUP.md](SETUP.md) (dựng môi trường).
 
-_Cập nhật: 2026-07-26 · v0.2.44_
+_Cập nhật: 2026-07-27 · v0.2.45_
+
+> v0.2.45 — **Bàn tay (pan) + dải thumbnail trong Toàn màn hình + kéo giãn danh sách trang**
+> (chỉ renderer + tài liệu — **sidecar KHÔNG đổi, không cần rebuild**):
+> - **Bàn tay / pan** — file mới [`renderer/pan.js`](desktop/renderer/pan.js). Trước đây
+>   `#viewer` chỉ là một `overflow:auto`: zoom 250% vào bản vẽ A1 xong **không có cách nào
+>   kéo trang** ngoài thanh cuộn. Làm đúng bộ chuẩn mà Acrobat / Foxit / pdf.js đều dùng:
+>   nút Bàn tay + **phím H** (V quay lại chọn chữ) · **giữ Space** = mượn bàn tay một nhịp
+>   rồi tự trả về công cụ cũ · **kéo nút giữa chuột** = pan mọi lúc, kể cả đang Chú thích.
+>   Con trỏ `grab`/`grabbing`; lớp chọn chữ đứng yên khi bàn tay bật. Công cụ được **nhớ
+>   qua các lần mở app** (`localStorage`, giống theme).
+> - **Logic giành chuột tách riêng thành hàm thuần** → `npm run test:pan` (57 ca). Đây là
+>   file renderer **thứ hai** có lưới tự động, vì quyết định “cử chỉ này có phải pan không”
+>   đọc **6 mẩu trạng thái của 4 module khác** — đúng loại thứ hỏng trong im lặng.
+> - **Dải thumbnail trong Toàn màn hình (F11)**: trước đây sidebar bị `display:none`. Giờ nó
+>   là **lớp phủ tự-ẩn** trượt ra khi rê chuột vào mép trái (kiểu Reading Mode của Acrobat),
+>   F4 để ghim. **Bất biến:** nó tuyệt đối không chiếm chiều rộng layout, vì `fitPage()` đã
+>   đo một lần lúc vào — **BI-32**.
+> - **Hai lỗi thật do chạy probe trong Chromium mới lòi ra** (đọc code không thấy):
+>   `Object.assign` **sao chép GIÁ TRỊ của getter**, nên `window.Pan.tool` đông cứng ở giá
+>   trị lúc nạp file; và `stopPropagation()` **không chặn listener khác trên cùng phần tử**
+>   → cửa chặn của `capture.js` vẫn chạy, phải đổi sang `stopImmediatePropagation` — **BI-30**.
+> - **Kéo giãn được danh sách trang** (`#sidebar-resizer`, biến CSS `--sidebar-w`): 130–300px,
+>   bấm đúp tay nắm về 180, nhớ qua các lần mở app, dùng chung bề rộng đó cho lớp phủ F11.
+>   **Cố ý giữ MỘT CỘT** ở mọi bề rộng: gợi ý chèn khi kéo–thả PDF vào dải thumbnail chọn
+>   trên/dưới bằng `e.clientY`, xếp lưới là chèn nhầm vị trí trang trong im lặng — **BI-33**.
+>   Trần 300px do **raster thumbnail cố định 150px** quyết định, không phải thẩm mỹ — **BI-34**.
+> - **Tuỳ chọn hiện/ẩn dải đường dẫn** trong Cài đặt (`set-breadcrumb`), **mặc định bật**.
+>   Lưu ở `localStorage` phía renderer như theme, vì ngoài cửa sổ này không ai cần biết.
+> - Bất biến mới **BI-30/31/32/33/34** + 4 dòng ma trận trong [`docs/REGRESSION-GUARD.md`](docs/REGRESSION-GUARD.md).
 
 > v0.2.44 — **Tác vụ trang trong tầm tay + xoá theo khoảng + tách bạch trạng thái OCR / API**
 > (chỉ renderer + tài liệu — **sidecar KHÔNG đổi, không cần rebuild**):

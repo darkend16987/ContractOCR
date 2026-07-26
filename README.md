@@ -12,7 +12,9 @@ watermark · redact (che thông tin chọn màu) · **sửa chữ gốc trong PD
 tạo PDF tìm-kiếm-được · **dịch PDF (AI) giữ layout** (PDF có text thật, **giữ đúng cột/căn lề trong bảng**, xuất file mới) · **xuất PDF → Office (Word/Excel/CSV)** ·
 **mở nhiều tài liệu bằng tab trong một cửa sổ** (kéo sắp xếp thứ tự · **kéo tách tab ra thành cửa sổ riêng, hoặc thả sang cửa sổ khác** · Ctrl+T/Ctrl+W/Ctrl+Tab/Ctrl+1–9) · mở nhiều cửa sổ · **"Open with Nabu PDF"** (mở PDF trực tiếp từ Windows) · **copy/paste ảnh trong trang** ·
 **mở lại phiên trước** (bật app là có lại đúng bộ tab lần trước) ·
-**xem toàn màn hình (F11)** — trọn trang nằm gọn trong màn hình, ẩn hết thanh công cụ; kèm **"vừa cả trang"** cho cả khổ lớn A0–A1 ·
+**xem toàn màn hình (F11)** — trọn trang nằm gọn trong màn hình, ẩn hết thanh công cụ, **dải thumbnail tự hiện khi rê chuột vào mép trái** (F4 để ghim); kèm **"vừa cả trang"** cho cả khổ lớn A0–A1 ·
+**công cụ Bàn tay (pan)** — kéo để di chuyển trang khi phóng to (phím **H**, **V** để quay lại chọn chữ, **giữ Space** để dùng tạm, **kéo nút giữa chuột** thì pan được mọi lúc) ·
+**danh sách trang kéo giãn được** (bấm đúp tay nắm để về mặc định) và **tuỳ chọn ẩn dải đường dẫn file** ·
 **tự lưu & khôi phục khi sự cố** (máy tắt đột ngột / quên lưu → mở lại mời khôi phục) ·
 **ký số bằng USB token** (VNPT-CA / Viettel-CA / FPT-CA / BKAV… qua kho chứng thư Windows — chữ ký nhìn thấy + dấu thời gian TSA) ·
 kèm **OCR + bóc tách hợp đồng** bằng AI. Giao diện **song ngữ Việt / Anh**, kèm

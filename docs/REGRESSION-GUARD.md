@@ -16,6 +16,7 @@ tài liệu này chỉ có giá trị nếu được cập nhật.
 | `desktop/renderer/editor.js` | ~3340 | Overlay annotation, bake, form. Diff lớn nhất mỗi lần release. |
 | `desktop/src/main.js` + `src/tabs.js` | — | Tầng cửa sổ/tab — **hệ con mới nhất, ít va đập thực tế nhất** (ra mắt v0.2.41). Có lưới tự động `npm run test:tabs` cho phần logic thuần. |
 | `desktop/renderer/page-range.js` | ~120 | Số học khoảng trang. Rủi ro **thấp** vì có lưới `npm run test:pages`, nhưng hậu quả sai là **mất trang tài liệu** → xem BI-27. |
+| `desktop/renderer/pan.js` | ~370 | Bàn tay/pan. Rủi ro **trung bình**: nó giành sự kiện chuột **trên cùng phần tử** với `editor.js`/`capture.js`. Nửa logic có lưới `npm run test:pan`; nửa DOM thì không → xem BI-30/31. |
 | `api.py` + `src/pdf/*.py` | — | Có lưới test tự động (`run_tests.py`) → rủi ro thấp hơn renderer. |
 
 > Renderer gần như **không có** test tự động — ngoại lệ duy nhất là `page-range.js`
@@ -26,12 +27,15 @@ tài liệu này chỉ có giá trị nếu được cập nhật.
 
 ## 2. Kiến trúc phải nhớ trước khi sửa
 
-- 8 file JS của renderer (`i18n, page-range, app, editor, text-edit, compare, capture, sign`)
+- 9 file JS của renderer (`i18n, page-range, app, pan, editor, text-edit, compare, capture, sign`)
   nạp bằng `<script>` **classic**, dùng chung **một scope**. `state`, `toast`, `sidecarFetch`,
   `showOverlay`… là biến toàn cục dùng chéo, **không phải module** → đổi tên một hàm
   trong `app.js` có thể làm `editor.js` chết mà không hề có cảnh báo lúc build.
   (`page-range.js` là ngoại lệ có chủ ý: nó **chỉ** phơi ra `window.PageRange`, không thả
-  tên trần nào vào scope chung, nên cũng `require()` được từ node để chạy test.)
+  tên trần nào vào scope chung, nên cũng `require()` được từ node để chạy test.
+  `pan.js` theo cùng khuôn nhưng **nửa vời có chủ ý**: nửa trên là logic thuần
+  `require()` được, nửa dưới đụng DOM và nằm sau cửa `typeof document === "undefined"`
+  → node nạp được nửa trên, trình duyệt chạy cả hai.)
 - **Mỗi tab = một renderer riêng** (`WebContentsView`, process riêng). `state` **không**
   chia sẻ giữa các tab. Cái chia sẻ là: main process, sidecar Python, thư mục recovery.
   → Mọi singleton ở main process là nguy cơ xung đột đa tab.
@@ -295,6 +299,64 @@ Mỗi mục: **bất biến → ở đâu → vì sao → dấu hiệu vỡ.**
 - **Vỡ khi:** console đầy `TypeError: … is not a function` lúc đang chú thích · hoặc code
   mới thêm vào cuối handler đó không bao giờ chạy khi đang chú thích.
 
+### BI-30 · Bàn tay giành chuột bằng `stopImmediatePropagation`, KHÔNG phải `stopPropagation`
+- `pan.js` `onPointerDown` + cửa `mousedown`/`click`.
+- `editor.js` (`viewer.addEventListener("mousedown", onDown)`) và `capture.js`
+  (`v.addEventListener("mousedown", onDown, true)`) nghe trên **CÙNG phần tử
+  `#viewer`** với pan. `stopPropagation()` chỉ chặn sự kiện **đi sang nút tiếp
+  theo**, **không** chặn các listener khác **trên chính nút đang đứng** → cửa của
+  capture.js vẫn chạy. Đã đo được bằng probe: `stopPropagation` cho lọt, đổi sang
+  `stopImmediatePropagation` mới sạch.
+- Đừng đổi ngược lại “cho nhẹ”. Cũng đừng dựa vào việc `preventDefault()` trên
+  `pointerdown` tự dập `mousedown` (đúng theo spec, nhưng **không kiểm chứng được
+  bằng sự kiện tổng hợp** — sự kiện dispatch tay không sinh mouse event tương thích).
+  Vì vậy cửa `mousedown` tường minh là **lớp bảo đảm chính**, không phải dự phòng.
+- **Vỡ khi:** kéo bàn tay lúc đang Chú thích lại vẽ ra một hình · hoặc kéo chuột
+  giữa trong chế độ Copy ảnh lại kéo ra khung marquee.
+
+### BI-31 · Nút chuột GIỮA là tài nguyên chưa ai chiếm — đó là lý do pan chạy được mọi lúc
+- `pan.js` `shouldPan` nhánh `button === MIDDLE`.
+- `editor.js` `onDown`, `capture.js` `onDown` đều mở đầu bằng `e.button !== 0` →
+  nút giữa **không thuộc về ai**. Chính điều đó cho phép “pan cả khi đang chú thích”
+  mà không phải giành giật gì.
+- **Luật:** đừng gắn hành vi mới vào nút giữa trong `#viewer`. Nếu buộc phải, phải
+  sửa `shouldPan` **cùng lúc**, không thì hai tính năng chạy chồng nhau im lặng.
+
+### BI-32 · Toàn màn hình: dải thumbnail **không được chiếm chiều rộng layout**
+- `app.css` khối `body.presenting .sidebar` (`position:absolute` + `transform`) +
+  `app.js` `applyPresentation`.
+- Chế độ này gọi `fitPage()` **một lần** lúc vào, đo trên `#viewer` rộng nguyên
+  màn hình. Nếu dải thumbnail chiếm chiều rộng thật thì “trọn trang” sai âm thầm,
+  và mỗi lần rê chuột mở dải là cả trang nhảy layout.
+- Vì vậy dải trượt bằng `transform`, **không** bằng `width`. Lưới đo trực tiếp
+  bất biến này (`viewer.clientWidth` trước/sau khi mở dải phải **bằng nhau**).
+- `applyPresentation` **không còn** ép `toggleSidebar(true)` như trước: CSS lo việc
+  ẩn. Ai thêm lại lệnh ép đó sẽ giết luôn dải thumbnail.
+- Sidebar mà người dùng **đã tự thu** trước khi vào F11 thì vẫn thu (`.sidebar-collapsed`
+  thắng) — F4 trong F11 vì thế phải **vừa mở lại vừa ghim**, không thì nó là phím bấm
+  không ra gì.
+- **Vỡ khi:** F11 xong trang không còn vừa màn hình · hoặc rê chuột mép trái thì
+  trang co lại/nhảy.
+
+### BI-33 · Dải thumbnail phải ở **MỘT CỘT** ở mọi bề rộng
+- `app.css` `.thumbs` (flex column) + `app.js` `wireThumb` nhánh `dragover`.
+- Kéo rộng sidebar được rồi thì phản xạ tiếp theo là “cho nó dàn thành lưới như
+  Acrobat”. **Đừng.** Gợi ý chèn khi kéo–thả PDF từ ngoài vào chọn *trên hay dưới*
+  bằng `e.clientY` so với **đường giữa dọc** của thumbnail. Xếp thành lưới thì
+  “trên/dưới” thành câu hỏi sai ⇒ chèn nhầm vị trí trang, im lặng.
+- Muốn làm lưới thật thì phải sửa **cả** gợi ý chèn sang trục ngang **trước**.
+
+### BI-34 · Trần bề rộng sidebar bị quy định bởi **raster thumbnail**, không phải thẩm mỹ
+- `app.js` `SIDEBAR_W_MAX` + `renderThumbCanvas` (`150 / base.width`).
+- Thumbnail luôn rasterise ở **150px ngang**; panel rộng hơn chỉ là **phóng to**
+  đúng bitmap đó. 300px ⇒ vẽ ~252px (1,7× — mềm nhưng vẫn nhận ra trang);
+  vượt xa nữa thì nhoè.
+- Nâng raster lên cho nét **không miễn phí**: thumbnail render lười nhưng **không
+  bao giờ được giải phóng**, nên tài liệu vài trăm trang trả tiền cho mọi trang đã
+  cuộn qua. Raster hợp với panel 420px sẽ **gấp ~4 lần** hoá đơn đó.
+- **Luật:** đổi `SIDEBAR_W_MAX` thì phải trả lời câu hỏi raster + bộ nhớ, không
+  chỉ nhìn cho đẹp.
+
 ### BI-14 · Gọi hàm chéo module theo kiểu “tên trần” là điểm gãy im lặng
 - `rerenderChanged` (gọi từ `editor.js:2521`, `text-edit.js:519`) và
   `showOverlay`/`hideOverlay` (gọi từ 4 module) **không** có `window.` và **không** có guard.
@@ -344,6 +406,10 @@ Mỗi mục: **bất biến → ở đâu → vì sao → dấu hiệu vỡ.**
 | `pdfJsonBody` hay bất kỳ chỗ gọi sidecar nào có PDF | Mở file **lớn** (≥100MB) rồi: Sửa nội dung · Nén · So sánh 2 file · Tách — không tab nào chết vì hết bộ nhớ (BI-24) |
 | Chọn font ở `/edit-text` hay `src/pdf/fonts.py` | `test_edit_text_font.py` **và** `test_edit_text_rounds.py` · mở 1 hoá đơn Times New Roman thật, sửa 1 dòng với “Giữ nguyên” → **không** đổi sang DejaVu, **không** ra □ (BI-21) |
 | Toàn màn hình (`setPresentation`, `_layout`, `.presenting`) | `npm run test:tabs` (10 ca cuối) · F11 vào/ra · Esc ra · thoát bằng nút cửa sổ → thanh công cụ phải quay lại · chuyển tab khi đang toàn màn hình · thử bật lúc đang Chú thích (phải từ chối) — BI-22 |
+| `pan.js` hay bất kỳ listener chuột nào trên `#viewer` | `cd desktop ; npm run test:pan` (57 ca) · bật Bàn tay → kéo trang chạy, **không** bôi đen chữ · tắt Bàn tay → bôi đen chữ lại được · giữ Space kéo rồi thả → về đúng công cụ cũ · kéo chuột giữa lúc **đang Chú thích** → trang chạy, **không** vẽ ra hình · lúc **đang Copy ảnh** → trang chạy, **không** ra khung marquee · bấm vào ghi chú (note marker) khi Bàn tay bật → popup vẫn mở (BI-30, BI-31) |
+| Toàn màn hình / dải thumbnail (`applyPresentation`, `body.presenting .sidebar`, `#present-rail`) | F11 → trang vẫn vừa trọn màn hình · rê chuột mép trái → dải trượt ra mà trang **không nhúc nhích** · F4 ghim/bỏ ghim · thu sidebar rồi mới F11 → F4 vẫn gọi lại được dải · thoát F11 → sidebar về đúng trạng thái cũ (BI-32, BI-22) |
+| Bề rộng sidebar (`--sidebar-w`, `applySidebarWidth`, `#sidebar-resizer`) | Kéo rộng/hẹp → dừng đúng ở 130/300 · **kéo–thả 1 PDF từ ngoài vào giữa dải thumbnail → chèn đúng vị trí** (BI-33) · bấm đúp tay nắm → về 180 · đóng mở app → nhớ bề rộng · thu sidebar (F4) → tay nắm biến mất · F11 → lớp phủ đúng bề rộng đã kéo (BI-34) |
+| Tuỳ chọn hiện đường dẫn (`set-breadcrumb`, `breadcrumbEnabled`) | Tắt → dải đường dẫn biến mất **ngay**, mở lại app vẫn tắt · bật lại → hiện · mặc định máy mới = **bật** · đổi VI↔EN → dòng cài đặt đổi theo |
 | `i18n.js` | Đổi VI↔EN khi đang mở tài liệu, đang chú thích, đang sửa nội dung |
 | `api.py` / `src/pdf/*` | `.venv\Scripts\python run_tests.py` **và** rebuild sidecar trước khi đóng gói |
 
@@ -356,6 +422,8 @@ Mỗi mục: **bất biến → ở đâu → vì sao → dấu hiệu vỡ.**
    (lưới cho logic sắp xếp tab + định tuyến phím trong `src/tabs.js`).
 2b. `cd desktop ; npm run test:pages` → phải `N pass, 0 fail`
    (lưới cho số học khoảng trang trong `renderer/page-range.js`).
+2c. `cd desktop ; npm run test:pan` → phải `N pass, 0 fail`
+   (lưới cho logic giành chuột của bàn tay trong `renderer/pan.js`).
 3. `node --check` mọi file JS đã sửa (renderer **không** có test tự động).
 4. Nếu đụng `*.py` hoặc `sidecar.spec` → **rebuild sidecar**, nếu không OTA giao bản cũ.
 5. Chạy `npm start`, test tay các mục ở §5 tương ứng với thứ vừa sửa.
