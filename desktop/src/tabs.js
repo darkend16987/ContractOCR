@@ -57,6 +57,10 @@ class TabbedWindow {
     });
     this.tabs = []; // [{ id, view, title, dirty, path, pendingPath }]
     this.activeId = null;
+    // Full-screen reading mode: the tab strip gives up its band so the document
+    // really gets the whole screen. Mirrors the OS full-screen state, which can
+    // also change without us (window controls) — see the listeners below.
+    this._presenting = false;
     // tabId -> { promise, resolve } while a close decision is in flight.
     this._pendingClose = new Map();
     this._forceClose = false;
@@ -90,6 +94,11 @@ class TabbedWindow {
     });
     this.base.on("close", (e) => this._onClose(e));
     this.base.on("closed", () => this._onClosed());
+    // Full screen can also be left without asking us (window controls, OS
+    // gesture, Esc handled by the platform). Following the real state is what
+    // stops a renderer being stranded with its toolbar hidden.
+    this.base.on("enter-full-screen", () => this._applyPresentation(true));
+    this.base.on("leave-full-screen", () => this._applyPresentation(false));
 
     tabbedWindows.add(this);
     _focused = this;
@@ -104,10 +113,50 @@ class TabbedWindow {
   _layout() {
     if (this.base.isDestroyed()) return;
     const { w, h } = this._contentSize();
-    this.strip.setBounds({ x: 0, y: 0, width: w, height: TAB_STRIP_H });
+    // Reading mode collapses the strip to nothing rather than detaching it: the
+    // view stays in the tree with every listener intact, so leaving the mode is a
+    // pure resize and can't lose the strip's state.
+    const stripH = this._presenting ? 0 : TAB_STRIP_H;
+    this.strip.setBounds({ x: 0, y: 0, width: w, height: stripH });
     const tab = this._active();
     if (tab) {
-      tab.view.setBounds({ x: 0, y: TAB_STRIP_H, width: w, height: Math.max(0, h - TAB_STRIP_H) });
+      tab.view.setBounds({ x: 0, y: stripH, width: w, height: Math.max(0, h - stripH) });
+    }
+  }
+
+  // ---- full-screen reading mode -------------------------------------------
+
+  // Enter/leave full screen for this window. Main owns the flag; renderers are
+  // told afterwards so their chrome matches what the window is actually doing.
+  setPresentation(on) {
+    const want = !!on;
+    if (this.base.isDestroyed()) return false;
+    if (want !== this.base.isFullScreen()) {
+      try {
+        this.base.setFullScreen(want);
+      } catch (_) {
+        return false; // platform refused — leave everything as it was
+      }
+    }
+    this._applyPresentation(want);
+    return true;
+  }
+
+  _applyPresentation(on) {
+    if (this._presenting === !!on) return;
+    this._presenting = !!on;
+    this._layout();
+    // Every tab, not just the active one: switching tabs inside the mode must not
+    // land on a renderer that still thinks it has a toolbar.
+    for (const t of this.tabs) this._sendPresentation(t);
+  }
+
+  _sendPresentation(tab) {
+    if (!tab || !tab.view || tab.view.webContents.isDestroyed()) return;
+    try {
+      tab.view.webContents.send("window:presentation", this._presenting);
+    } catch (_) {
+      /* renderer gone */
     }
   }
 
@@ -212,6 +261,9 @@ class TabbedWindow {
       pendingPath: deferred && openPath ? openPath : null,
     };
     this.tabs.push(tab);
+    // A tab born while the window is in reading mode must start with matching
+    // chrome, and it isn't listening yet at this point.
+    if (this._presenting) wc.once("did-finish-load", () => this._sendPresentation(tab));
     if (background) this._emit();
     else this.activateTab(id);
     return tab;
@@ -235,6 +287,7 @@ class TabbedWindow {
     this.activeId = id;
     this.base.contentView.addChildView(next.view);
     this._layout();
+    this._sendPresentation(next); // its chrome must match this window's mode
     this._wakeDeferred(next);
     try {
       next.view.webContents.focus();

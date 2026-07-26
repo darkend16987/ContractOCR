@@ -81,17 +81,29 @@ def _dejavu_variant(base_path: str, bold: bool, italic: bool) -> str | None:
     return str(cand) if cand.is_file() else None
 
 
-def _font_covers(text: str, *, fontfile: str | None = None, fontname: str | None = None) -> bool:
+def _font_covers(
+    text: str,
+    *,
+    fontfile: str | None = None,
+    fontname: str | None = None,
+    fontbuffer: bytes | None = None,
+) -> bool:
     """True if the font has a real glyph for every char in `text`.
 
-    Guards the text-edit redraw: a Base-14 builtin (helv/tiro/cour) or a mis-resolved
-    local TTF may lack Vietnamese diacritics, in which case insert_text SILENTLY draws
-    notdef boxes (□) instead of raising — so we must check coverage up front and fall
-    back to the bundled DejaVu when any glyph is missing.
+    Guards the text-edit redraw: a Base-14 builtin (helv/tiro/cour), a mis-resolved
+    local TTF, or a SUBSET font program lifted out of the source PDF may lack the
+    glyphs we are about to draw, in which case insert_text SILENTLY draws notdef
+    boxes (□) instead of raising — so we must check coverage up front and fall back
+    to the bundled DejaVu when any glyph is missing.
     """
     try:
         import fitz
-        f = fitz.Font(fontfile=fontfile) if fontfile else fitz.Font(fontname=fontname)
+        if fontbuffer:
+            f = fitz.Font(fontbuffer=fontbuffer)
+        elif fontfile:
+            f = fitz.Font(fontfile=fontfile)
+        else:
+            f = fitz.Font(fontname=fontname)
     except Exception:
         return False
     try:
@@ -169,6 +181,58 @@ def _norm_fam(s: str) -> str:
     return _re.sub(r"[^a-z0-9]", "", s.lower())
 
 
+# Style words a PDF font name glues onto its family, with or without a separator:
+# "TimesNewRomanBold", "Arial-BoldMT", "SVN-Times New Roman Bold". Stripping them
+# is what turns such a name into something the machine's font index can match.
+#
+# "Roman" is deliberately NOT in this list: it is part of the family name
+# "Times New Roman", not a style — stripping it would leave "Times New", which
+# matches nothing, and the whole lookup would fall back to DejaVu again.
+_STYLE_TOKENS = (
+    "BoldItalic|BoldOblique|SemiBold|DemiBold|ExtraBold|UltraBold|Demi|Bold|"
+    "Italic|Oblique|Regular|Normal|Book|Light|Medium|Black|Heavy|Thin|"
+    "Condensed|Narrow|PSMT|PS|MT|Std|Pro"
+)
+_STYLE_SUFFIX_RE = _re.compile(rf"[\s_-]*(?:{_STYLE_TOKENS})$", _re.IGNORECASE)
+
+
+def _strip_style_suffix(name: str) -> str:
+    """Drop trailing style words from a font name ("TimesNewRomanBold" → "TimesNewRoman").
+
+    Repeats so compound tails come off too ("...PS-BoldMT" → "..."). Never returns
+    an empty string: if a name is nothing but style words, the original is kept.
+    """
+    cur = name
+    while True:
+        nxt = _STYLE_SUFFIX_RE.sub("", cur).strip(" -_")
+        if not nxt or nxt == cur:
+            return cur
+        cur = nxt
+
+
+def _family_candidates(name: str) -> list[str]:
+    """Family names to try for a PDF font name, most-trusted first.
+
+    1. `_clean_font_name` — the historical behaviour, so every name that resolved
+       before still resolves to exactly the same file.
+    2. the same name with its style suffix stripped — this is what rescues
+       "TimesNewRomanBold" (style glued on with no separator, so rule 1's
+       `split("-")` can't see it).
+    3. the raw name minus the subset prefix — for families that legitimately
+       contain a hyphen ("SVN-Times New Roman"), which rule 1 truncates to "SVN".
+    """
+    raw = name or ""
+    if "+" in raw and len(raw.split("+", 1)[0]) == 6:
+        raw = raw.split("+", 1)[1]
+    raw = raw.split(",")[0].strip()
+    out: list[str] = []
+    for c in (_clean_font_name(name or ""), _strip_style_suffix(raw), raw):
+        c = (c or "").strip()
+        if c and c not in out:
+            out.append(c)
+    return out
+
+
 def _family_index() -> dict[str, str]:
     global _FAM_INDEX
     if _FAM_INDEX is None:
@@ -197,25 +261,83 @@ def _resolve_local_font(name: str, bold: bool, italic: bool) -> str | None:
     try:
         from matplotlib import font_manager as fm
 
-        cleaned = _clean_font_name(name)
-        # Map the cleaned name onto a real installed family when possible (handles
-        # space-collapsed PDF names like "TimesNewRoman" -> "Times New Roman").
-        family = _family_index().get(_norm_fam(cleaned), cleaned)
-        fp = fm.FontProperties(
-            family=family,
-            weight="bold" if bold else "normal",
-            style="italic" if italic else "normal",
-        )
-        found = fm.findfont(fp, fallback_to_default=False)
-        # findfont returns a FontPath (a str subclass carrying a face index) that
-        # PyMuPDF's insert_font rejects as "bad fontfile" — coerce to a plain str.
-        if found and Path(found).is_file():
-            path = str(found)
-    except Exception as fe:  # ValueError when no family matches
+        index = _family_index()
+        # Map each candidate onto a real installed family (handles space-collapsed
+        # PDF names like "TimesNewRoman" -> "Times New Roman"). Candidate order is
+        # what keeps this backwards-compatible: the historical cleaned name is
+        # tried first, so names that already resolved are unaffected.
+        cands = _family_candidates(name)
+        families = []
+        for c in cands:
+            fam = index.get(_norm_fam(c))
+            if fam and fam not in families:
+                families.append(fam)
+        # Last resort: hand the cleaned name to findfont as-is (fontconfig aliases
+        # on Linux, generic families). Same call the old code made.
+        if cands and cands[0] not in families:
+            families.append(cands[0])
+        for family in families:
+            try:
+                fp = fm.FontProperties(
+                    family=family,
+                    weight="bold" if bold else "normal",
+                    style="italic" if italic else "normal",
+                )
+                found = fm.findfont(fp, fallback_to_default=False)
+            except Exception:  # ValueError when no family matches
+                continue
+            # findfont returns a FontPath (a str subclass carrying a face index) that
+            # PyMuPDF's insert_font rejects as "bad fontfile" — coerce to a plain str.
+            if found and Path(found).is_file():
+                path = str(found)
+                break
+    except Exception as fe:
         logger.debug("resolve local font '%s' failed: %s", name, fe)
         path = ""
     _LOCAL_FONT_CACHE[key] = path
     return path or None
+
+
+def _page_font_buffers(doc, page) -> dict[str, bytes]:
+    """The font programs a page already embeds, keyed by normalised family name.
+
+    Used by /edit-text as the second-choice way to "keep the original font": when
+    the family isn't installed on this machine (corporate/CAD faces, SVN-*, .Vn*),
+    the PDF itself is carrying the only copy that exists.
+
+    MUST be called BEFORE Page.apply_redactions(): removing the last glyphs drawn
+    with a font can take its resource off the page, and then there is nothing left
+    to extract.
+
+    The buffers are almost always SUBSETS — they hold only the glyphs the document
+    happened to use — so every caller has to verify coverage (`_font_covers`) before
+    drawing with one, or it redraws notdef boxes (□). Best-effort throughout: any
+    font that won't extract is simply absent from the result.
+    """
+    out: dict[str, bytes] = {}
+    try:
+        fonts = page.get_fonts(full=False)
+    except Exception as fe:
+        logger.debug("get_fonts failed: %s", fe)
+        return out
+    for f in fonts:
+        try:
+            xref = int(f[0])
+            basefont = str(f[3])
+        except Exception:
+            continue
+        key = _norm_fam(_clean_font_name(basefont))
+        if not key or key in out:
+            continue
+        try:
+            _name, ext, _subtype, buf = doc.extract_font(xref)
+        except Exception as fe:
+            logger.debug("extract_font %s failed: %s", basefont, fe)
+            continue
+        # "n/a" = a Base-14 font with no embedded program (nothing to reuse).
+        if buf and len(buf) > 4 and str(ext).lower() in ("ttf", "otf", "cff", "ttc"):
+            out[key] = bytes(buf)
+    return out
 
 
 def _list_local_font_families() -> list[str]:

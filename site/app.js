@@ -17,13 +17,14 @@ const I = {
   ruler: '<path d="M21.3 15.3a2.4 2.4 0 0 1 0 3.4l-2.6 2.6a2.4 2.4 0 0 1-3.4 0L2.7 8.7a2.41 2.41 0 0 1 0-3.4l2.6-2.6a2.41 2.41 0 0 1 3.4 0Z"/><path d="m14.5 12.5 2-2"/><path d="m11.5 9.5 2-2"/><path d="m8.5 6.5 2-2"/><path d="m17.5 15.5 2-2"/>',
   history: '<path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l3.5 2"/>',
   signature: '<path d="M3 17c2.5 0 3-9 4.5-9S9 15 10.5 15 12 9 13.5 9 15 13 17 13"/><path d="M3 21h18"/><path d="M17 13c1.5 0 2-2 3-2"/>',
+  fullscreen: '<path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M21 8V5a2 2 0 0 0-2-2h-3"/><path d="M3 16v3a2 2 0 0 0 2 2h3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/>',
 };
 
 const FEATURES = [
   { i: "ai", t: "Bóc tách dữ liệu bằng AI", d: "OCR tiếng Việt + AI đọc mọi loại văn bản (hợp đồng, hóa đơn, biểu mẫu…), bóc tách các trường rồi xuất Excel/JSON. Tự khai báo trường tùy chỉnh cần bóc tách." },
   { i: "translate", t: "Dịch PDF bằng AI (giữ layout)", d: "Dịch tài liệu sang ngôn ngữ khác mà giữ nguyên bố cục, xuất ra PDF mới. Giữ nguyên số/ngày/email/mã không dịch. Dành cho PDF có text thật (cần Gemini API key)." },
   { i: "combine", t: "Gộp nhiều PDF thành một", d: "Chọn nhiều file cùng lúc, kéo–thả sắp xếp thứ tự rồi gộp thành một PDF — không cần mở file nào trước." },
-  { i: "type", t: "Sửa nội dung gốc của PDF", d: "Chỉnh trực tiếp văn bản thật trong PDF, dùng cả font hệ thống của máy — không phải vẽ đè. Tự OCR lấy lại chữ tiếng Việt bị lỗi font (font .Vn cổ, bản vẽ CAD/Revit mã hóa hỏng)." },
+  { i: "type", t: "Sửa nội dung gốc của PDF", d: "Chỉnh trực tiếp văn bản thật trong PDF — không phải vẽ đè. Giữ nguyên font gốc, đúng cỡ chữ và nền ô bảng: chữ sửa xong đứng đúng chỗ, không dài ra đè chữ bên cạnh, không để lại vệt trắng. Tự OCR lấy lại chữ tiếng Việt bị lỗi font (font .Vn cổ, bản vẽ CAD/Revit mã hóa hỏng)." },
   { i: "pages", t: "Ghép · Tách · Chèn · Số trang", d: "Quản lý trang linh hoạt: kéo-thả sắp xếp, ghép/chèn từ file khác, tách trang chọn hoặc tách thành nhiều file (theo N trang / khoảng trang), thêm trang trắng, đánh số trang." },
   { i: "compare", t: "So sánh & chồng lớp bản vẽ", d: "So sánh 2 file PDF theo từng dòng/từ; so sánh bản vẽ CAD/Revit bằng diff hình ảnh (chỉ ra vùng thêm/xóa/sửa, tick chọn từng vùng để khoanh mây rồi xuất bản đánh dấu); và chồng lớp (overlay) 2 bản vẽ lên nhau — tự căn chỉnh + tô màu khác biệt để soi thay đổi giữa 2 phiên bản." },
   { i: "pen", t: "Chú thích & đánh dấu", d: "Hộp văn bản (font, cỡ, đậm/nghiêng/gạch chân), ghi chú và mũi tên đều sửa & di chuyển lại được cả sau khi đã áp dụng; mũi tên chọn đặt nhãn ở đầu (mũi nhọn) hoặc ở cuối (gốc), tô sáng, khoanh mây revision (chữ nhật hoặc vẽ tự do, cỡ vòng tùy chỉnh), che thông tin (redact an toàn, chọn màu), watermark, điền form, đóng dấu ảnh/chữ ký lên nhiều trang, ghi chú dạng chuỗi bình luận kèm bảng danh sách ghi chú toàn tài liệu (bấm để nhảy tới)." },
@@ -35,7 +36,8 @@ const FEATURES = [
   { i: "shield", t: "Khóa & mã hóa", d: "Đặt mật khẩu, mã hóa, trích xuất ảnh — bảo vệ tài liệu nhạy cảm." },
   { i: "signature", t: "Ký số bằng USB token", d: "Ký số PKI bằng chứng thư trên token USB (VNPT-CA, Viettel-CA, FPT-CA, BKAV…) qua kho chứng thư Windows — như Foxit/Acrobat. Chữ ký nhìn thấy (khung + tên/ngày/lý do + ảnh con dấu) kèm dấu thời gian (TSA). Khoá bí mật không rời token." },
   { i: "convert", t: "Chuyển đổi PDF ↔ ảnh", d: "Tạo PDF từ ảnh, xuất từng trang ra ảnh, gộp ảnh thành tài liệu theo thứ tự." },
-  { i: "combine", t: "Nhiều cửa sổ & thao tác nhanh", d: "Mở nhiều tài liệu song song trên các cửa sổ riêng, \"Open with Nabu PDF\" từ Explorer, copy/paste & chèn ảnh, menu chuột phải (sao chép/dán/chọn) — làm việc mượt như app gốc." },
+  { i: "combine", t: "Tab đa tài liệu & khôi phục phiên", d: "Mở nhiều tài liệu bằng tab trong một cửa sổ: kéo sắp xếp, kéo tách tab ra cửa sổ riêng hoặc thả sang cửa sổ khác, Ctrl+T/Ctrl+W/Ctrl+Tab/Ctrl+1–9. Bật app lại là có đúng bộ tab lần trước. Kèm \"Open with Nabu PDF\" từ Explorer, copy/paste & chèn ảnh, menu chuột phải." },
+  { i: "fullscreen", t: "Đọc toàn màn hình (F11)", d: "Trọn trang nằm gọn trong màn hình, ẩn hết thanh công cụ và danh sách trang — để trình bày hoặc đọc kỹ. Kèm \"vừa cả trang\" chạy được với cả khổ lớn A0–A1." },
 ];
 
 document.getElementById("feature-grid").innerHTML = FEATURES.map((f) => `

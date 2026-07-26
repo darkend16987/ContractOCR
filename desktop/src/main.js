@@ -217,7 +217,7 @@ const MENU_STR = {
     zoomIn: "Phóng to",
     zoomOut: "Thu nhỏ",
     zoomReset: "Cỡ gốc (100%)",
-    fullscreen: "Toàn màn hình",
+    fullscreen: "Toàn màn hình (trọn trang)",
     help: "Trợ giúp",
     settings: "Cài đặt…",
   },
@@ -259,7 +259,7 @@ const MENU_STR = {
     zoomIn: "Zoom In",
     zoomOut: "Zoom Out",
     zoomReset: "Actual Size (100%)",
-    fullscreen: "Toggle Full Screen",
+    fullscreen: "Full Screen (fit page)",
     help: "Help",
     settings: "Settings…",
   },
@@ -359,7 +359,12 @@ function buildMenu(lang) {
         { label: L.zoomOut, accelerator: "CmdOrCtrl+-", registerAccelerator: false, click: send("zoomOut") },
         { label: L.zoomReset, accelerator: "CmdOrCtrl+0", registerAccelerator: false, click: send("zoomReset") },
         { type: "separator" },
-        { role: "togglefullscreen", label: L.fullscreen },
+        // Not role:"togglefullscreen": that only stretches the window — the
+        // toolbars, the sidebar and the tab strip stay, and the page keeps its
+        // zoom, so the document does NOT end up whole on screen. Our own mode
+        // does all four. registerAccelerator:false leaves F11 to the renderer's
+        // key handler (same pattern as Ctrl+P) so it can't fire twice.
+        { label: L.fullscreen, accelerator: "F11", registerAccelerator: false, click: send("presentation") },
         ...(isDev ? [{ type: "separator" }, { role: "reload" }, { role: "toggleDevTools" }] : []),
       ],
     },
@@ -758,6 +763,15 @@ ipcMain.handle("clipboard:read-image", () => {
 ipcMain.handle("window:new", () => {
   Tabs.createTabbedWindow();
   return true;
+});
+
+// Full-screen reading mode for the window that owns the calling tab. Routed
+// through main because the window and the tab strip are main's to change; the
+// renderer only hides its own chrome, and only once main confirms.
+ipcMain.handle("window:set-presentation", (e, on) => {
+  const d = Tabs.findDoc(e.sender);
+  if (!d) return false;
+  return d.tw.setPresentation(!!on);
 });
 
 // ---- IPC: tab strip (shell.html) -----------------------------------------

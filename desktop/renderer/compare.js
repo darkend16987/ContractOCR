@@ -111,22 +111,14 @@
     );
     try {
       const endpoint = mode === "drawing" ? "/compare-drawings" : "/compare";
-      const body =
-        mode === "drawing"
-          ? {
-              pdf_a_b64: u8ToB64(cmp.a.bytes),
-              pdf_b_b64: u8ToB64(cmp.b.bytes),
-              sensitivity: el("cmp2-sens").value || "normal",
-            }
-          : {
-              pdf_a_b64: u8ToB64(cmp.a.bytes),
-              pdf_b_b64: u8ToB64(cmp.b.bytes),
-              mode,
-            };
+      // Two whole documents in one request — the heaviest payload in the app, so
+      // it goes through pdfJsonBody (Blob, no giant JS strings) like the rest.
+      const fields =
+        mode === "drawing" ? { sensitivity: el("cmp2-sens").value || "normal" } : { mode };
       const res = await sidecarFetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
+        body: pdfJsonBody({ pdf_a_b64: cmp.a.bytes, pdf_b_b64: cmp.b.bytes }, fields),
       });
       // The server may return a non-JSON body on an unexpected 500; read text
       // first and parse defensively so the user sees a real reason, not a raw
@@ -553,11 +545,7 @@
       const res = await sidecarFetch("/compare-drawings/export", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          pdf_b64: u8ToB64(cmp.b.bytes),
-          boxes,
-          style: "cloud",
-        }),
+        body: pdfJsonBody(cmp.b.bytes, { boxes, style: "cloud" }),
       });
       const raw = await res.text();
       let data;
@@ -659,7 +647,7 @@
       const res = await sidecarFetch("/overlay-drawings", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ pdf_a_b64: u8ToB64(cmp.a.bytes), pdf_b_b64: u8ToB64(cmp.b.bytes) }),
+        body: pdfJsonBody({ pdf_a_b64: cmp.a.bytes, pdf_b_b64: cmp.b.bytes }, {}),
       });
       const raw = await res.text();
       let data;

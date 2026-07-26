@@ -209,7 +209,13 @@ function updateUndoRedo() {
 
 // Expose pushUndo so the editor / text-edit modules (separate scripts that also
 // reassign state.bytes) record a history step before their own mutations.
-window.History = { pushUndo };
+//
+// NOT `window.History`: that name is the DOM's own History constructor, so it is
+// always truthy — `if (window.History)` was a guard that could never fail, and a
+// typo'd or missing export would have surfaced as a TypeError inside a try/catch
+// (the edit silently not applying) instead of a skipped call. BI-14 in
+// docs/REGRESSION-GUARD.md is about exactly this class of silent break.
+window.DocHistory = { pushUndo };
 
 // ---- unsaved-changes tracking + crash recovery ---------------------------
 //
@@ -467,7 +473,7 @@ async function unlockEncrypted(u8) {
       const res = await sidecarFetch("/decrypt", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ pdf_b64: u8ToB64(u8), password: pw }),
+        body: pdfJsonBody(u8, { password: pw }),
       });
       if (res.status === 401) {
         toast("Sai mật khẩu — thử lại.", "bad");
@@ -1837,11 +1843,19 @@ function toggleSidebar(collapse) {
   if (exp) exp.hidden = !c;
 }
 
+// Floor for the "fit …" commands only. Free zoom keeps its 40% floor (typing 10%
+// by accident should not be possible), but a fit is an explicit request for a
+// computed scale: on A0/A1 drawings the whole page simply does not fit above 40%,
+// and clamping there silently failed to do what the button says.
+const FIT_MIN_SCALE = 0.08;
+
 // Zoom to an absolute scale. `anchor` = client {x,y} to keep visually fixed
 // (Ctrl+wheel zooms toward the cursor); defaults to the viewer centre.
-async function zoomTo(next, anchor) {
+// `opts.min` lowers the floor for the fit commands (see FIT_MIN_SCALE).
+async function zoomTo(next, anchor, opts) {
   if (zooming || !state.bytes) return;
-  next = Math.min(3, Math.max(0.4, +(+next).toFixed(2)));
+  const min = opts && opts.min ? opts.min : 0.4;
+  next = Math.min(3, Math.max(min, +(+next).toFixed(2)));
   if (!next || next === state.scale) {
     syncZoomInput();
     return;
@@ -1875,24 +1889,110 @@ async function zoomReset() {
   await zoomTo(1);
 }
 
+// Largest page dimensions at scale 1 ({w,h}), or null when nothing is loaded.
+// pageMetas holds viewports at the CURRENT scale, hence the division.
+function maxPageSize1() {
+  if (!state.bytes || !state.pageMetas || !state.pageMetas.length) return null;
+  let w = 0;
+  let h = 0;
+  for (const m of state.pageMetas) {
+    w = Math.max(w, m.vp.width / state.scale);
+    h = Math.max(h, m.vp.height / state.scale);
+  }
+  return w && h ? { w, h } : null;
+}
+
 // Fit the widest page to the viewer width (like the compare view).
 async function fitWidth() {
-  if (!state.bytes || !state.pageMetas || !state.pageMetas.length) return;
-  let maxW1 = 0; // widest page at scale 1
-  for (const m of state.pageMetas) maxW1 = Math.max(maxW1, m.vp.width / state.scale);
-  if (!maxW1) return;
+  const m = maxPageSize1();
+  if (!m) return;
   const pad = 48; // page margins + scrollbar allowance
-  await zoomTo(($("viewer").clientWidth - pad) / maxW1);
+  await zoomTo(($("viewer").clientWidth - pad) / m.w, null, { min: FIT_MIN_SCALE });
 }
 
 // Fit the tallest page to the viewer height (handy for landscape docs).
 async function fitHeight() {
-  if (!state.bytes || !state.pageMetas || !state.pageMetas.length) return;
-  let maxH1 = 0; // tallest page at scale 1
-  for (const m of state.pageMetas) maxH1 = Math.max(maxH1, m.vp.height / state.scale);
-  if (!maxH1) return;
+  const m = maxPageSize1();
+  if (!m) return;
   const pad = 48; // top/bottom margins allowance
-  await zoomTo(($("viewer").clientHeight - pad) / maxH1);
+  await zoomTo(($("viewer").clientHeight - pad) / m.h, null, { min: FIT_MIN_SCALE });
+}
+
+// Fit a WHOLE page inside the viewer — both dimensions, so nothing is cut off.
+// This is what "xem trọn trang" means, and what full-screen reading mode uses.
+async function fitPage() {
+  const m = maxPageSize1();
+  if (!m) return;
+  const v = $("viewer");
+  const cs = getComputedStyle(v);
+  const padX = (parseFloat(cs.paddingLeft) || 0) + (parseFloat(cs.paddingRight) || 0) + 8;
+  const padY = (parseFloat(cs.paddingTop) || 0) + (parseFloat(cs.paddingBottom) || 0) + 8;
+  const s = Math.min((v.clientWidth - padX) / m.w, (v.clientHeight - padY) / m.h);
+  await zoomTo(s, null, { min: FIT_MIN_SCALE });
+}
+
+// ---- full-screen reading mode -------------------------------------------
+//
+// Two halves that must stay in step:
+//   • main (src/tabs.js) puts the WINDOW full screen and collapses the tab strip;
+//   • this file hides the in-page chrome and fits a whole page on screen.
+// Main is the single source of truth — every entry point asks main to toggle, and
+// only main's reply flips the class here. That way leaving full screen by any
+// other route (window controls, OS gesture) can't leave the UI stranded with its
+// toolbar hidden.
+const present = { on: false, prevScale: null, prevCollapsed: null };
+
+function presentAvailable() {
+  const editing =
+    !!(window.Editor && window.Editor.active) || !!(window.TextEdit && window.TextEdit.active);
+  return !!state.bytes && state.numPages > 0 && !editing;
+}
+
+// Ask main to toggle. Returns silently when the bridge is missing (browser tests).
+async function togglePresentation(on) {
+  const want = on === undefined ? !present.on : !!on;
+  if (want && !presentAvailable()) return;
+  if (!window.desktop || !window.desktop.setPresentation) {
+    applyPresentation(want); // no main process (test harness) — do it locally
+    return;
+  }
+  try {
+    await window.desktop.setPresentation(want);
+  } catch (_) {
+    /* main will not answer; leave the UI as it is rather than guessing */
+  }
+}
+
+// Apply what main says the window is doing now.
+async function applyPresentation(on) {
+  if (present.on === !!on) return;
+  present.on = !!on;
+  document.body.classList.toggle("presenting", present.on);
+  const hud = $("present-hud");
+  if (hud) hud.hidden = !present.on;
+  const btn = $("btn-presentation");
+  if (btn) btn.classList.toggle("active", present.on);
+  if (present.on) {
+    present.prevScale = state.scale;
+    const ws = document.querySelector(".workspace");
+    present.prevCollapsed = !!(ws && ws.classList.contains("sidebar-collapsed"));
+    toggleSidebar(true); // keep the collapsed flag consistent with the CSS
+    await fitPage();
+    updatePresentHud();
+  } else {
+    if (present.prevCollapsed === false) toggleSidebar(false);
+    const back = present.prevScale;
+    present.prevScale = null;
+    present.prevCollapsed = null;
+    if (back) await zoomTo(back);
+  }
+}
+
+// Page counter inside the floating chip (the status bar is hidden in this mode).
+function updatePresentHud() {
+  if (!present.on) return;
+  const el = $("present-page");
+  if (el) el.textContent = `${currentPageIndex() + 1} / ${state.numPages}`;
 }
 
 // Parse whatever is in the zoom box ("150", "150%", " 150 ") and apply it.
@@ -1902,6 +2002,10 @@ function applyZoomInput() {
     syncZoomInput();
     return;
   }
+  // Already showing the current scale (the box was focused and left untouched):
+  // do nothing. Without this, a "fit" that landed below the typed floor of 40%
+  // would be snapped back up by a stray blur.
+  if (n === Math.round(state.scale * 100)) return;
   zoomTo(n / 100);
 }
 
@@ -1929,6 +2033,11 @@ async function rasterize(indices, scale = 2) {
 
 async function loadTemplates() {
   if (templatesLoaded || sidecar.state !== "ready" || !sidecar.base) return;
+  // Claim the slot BEFORE awaiting. applySidecar() runs twice at boot (the initial
+  // getSidecarStatus and the pushed status event), and a guard that is only set
+  // after the await lets both calls through — two /templates round-trips for one
+  // list. Cleared again on failure so a later open still retries.
+  templatesLoaded = true;
   try {
     const res = await sidecarFetch("/templates");
     const data = await res.json();
@@ -1944,9 +2053,8 @@ async function loadTemplates() {
     co.value = "custom";
     co.textContent = "Tùy chỉnh…";
     sel.appendChild(co);
-    templatesLoaded = true;
   } catch (_) {
-    /* sidecar may not be ready; retry on next open */
+    templatesLoaded = false; // sidecar may not be ready; retry on next open
   }
 }
 
@@ -2177,6 +2285,52 @@ function u8ToB64(u8) {
   }
   return btoa(s);
 }
+// Build the JSON request body for a sidecar call that carries the whole PDF,
+// WITHOUT ever holding the payload as one JS string.
+//
+// The obvious `JSON.stringify({ pdf_b64: u8ToB64(bytes), ...fields })` costs three
+// full-size copies on the renderer heap: the binary string inside u8ToB64, the
+// base64 it returns, and stringify's copy of that base64 into the final body. On a
+// 134 MB document that is ~500 MB of transient strings on top of state.bytes and
+// the undo history — the same heap exhaustion v0.2.40 fixed for the DOWNLOAD
+// direction and left standing here.
+//
+// A Blob assembled from pieces keeps its bytes in Blink's blob store (spillable to
+// disk), not on the JS heap, so only one 48 KB chunk is ever live as a string. The
+// wire format is unchanged — the sidecar still receives ordinary JSON — so this is
+// purely a renderer-side memory fix with no API surface to keep in step.
+//
+// The chunk size MUST stay a multiple of 3: base64 only pads at the end of a
+// stream, so chunking on a 3-byte boundary lets the pieces be concatenated
+// verbatim. (49152 is also under the ~65535 argument ceiling of Function.apply.)
+//
+// `bins` is either a Uint8Array (sent as "pdf_b64") or an object of
+// field-name → Uint8Array, for the compare endpoints that carry two documents at
+// once — the heaviest call in the app, and the one that most needs this.
+function pdfJsonBody(bins, fields) {
+  const map = bins instanceof Uint8Array ? { pdf_b64: bins } : bins || {};
+  const chunk = 49152;
+  const parts = ["{"];
+  let first = true;
+  for (const name of Object.keys(map)) {
+    const u8 = map[name];
+    if (!u8) continue;
+    parts.push((first ? "" : ",") + JSON.stringify(name) + ':"');
+    first = false;
+    for (let i = 0; i < u8.length; i += chunk) {
+      parts.push(btoa(String.fromCharCode.apply(null, u8.subarray(i, i + chunk))));
+    }
+    parts.push('"');
+  }
+  for (const k of Object.keys(fields || {})) {
+    const v = fields[k];
+    if (v === undefined) continue;
+    parts.push((first ? "" : ",") + JSON.stringify(k) + ":" + JSON.stringify(v));
+    first = false;
+  }
+  parts.push("}");
+  return new Blob(parts, { type: "application/json" });
+}
 // Inverse of u8ToB64: decode a base64 PDF payload to bytes with a plain indexed
 // loop. Do NOT use Uint8Array.from(atob(b64), c => c.charCodeAt(0)) — its
 // iterator+callback path allocates ~one temp object per byte and blows the V8
@@ -2207,7 +2361,7 @@ async function makeSearchable() {
     const res = await sidecarFetch("/searchable", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ pdf_b64: u8ToB64(state.bytes) }),
+      body: pdfJsonBody(state.bytes, {}),
     });
     const data = await res.json();
     if (!data.success) {
@@ -2269,8 +2423,7 @@ async function runTranslate() {
     const res = await sidecarFetch("/translate-pdf", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        pdf_b64: u8ToB64(state.bytes),
+      body: pdfJsonBody(state.bytes, {
         source_lang: source,
         target_lang: target,
         scope,
@@ -2336,7 +2489,7 @@ async function runOffice() {
     const res = await sidecarFetch("/pdf-to-office", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ pdf_b64: u8ToB64(state.bytes), format: fmt, scope }),
+      body: pdfJsonBody(state.bytes, { format: fmt, scope }),
     });
     const data = await res.json();
     if (!data.success) {
@@ -2387,7 +2540,7 @@ async function runCompress() {
     const res = await sidecarFetch("/compress", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ pdf_b64: u8ToB64(state.bytes), preset }),
+      body: pdfJsonBody(state.bytes, { preset }),
     });
     const data = await res.json();
     if (!data.success) {
@@ -2459,8 +2612,7 @@ async function runEncrypt() {
     const res = await sidecarFetch("/encrypt", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        pdf_b64: u8ToB64(state.bytes),
+      body: pdfJsonBody(state.bytes, {
         user_password: pw,
         allow_print: $("enc-print").checked,
         allow_copy: $("enc-copy").checked,
@@ -2493,7 +2645,7 @@ async function extractImages() {
     const res = await sidecarFetch("/extract-images", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ pdf_b64: u8ToB64(state.bytes) }),
+      body: pdfJsonBody(state.bytes, {}),
     });
     const data = await res.json();
     if (!data.success) {
@@ -2527,7 +2679,7 @@ async function runPdfToImages() {
     const res = await sidecarFetch("/pdf-to-images", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ pdf_b64: u8ToB64(state.bytes), dpi, format }),
+      body: pdfJsonBody(state.bytes, { dpi, format }),
     });
     const data = await res.json();
     if (!data.success) {
@@ -2559,16 +2711,18 @@ function openSplit() {
 
 async function runSplit() {
   const mode = $("split-mode").value || "every";
-  const body = { pdf_b64: u8ToB64(state.bytes), mode };
+  // Options only. The bytes are read AFTER bakePending() below — reading them here
+  // would split the document as it was before the pending annotations were baked in.
+  const fields = { mode };
   if (mode === "ranges") {
     const ranges = ($("split-ranges").value || "").trim();
     if (!ranges) {
       toast("Nhập khoảng trang (vd: 1-3,5,8-10).", "bad");
       return;
     }
-    body.ranges = ranges;
+    fields.ranges = ranges;
   } else {
-    body.size = Math.max(1, parseInt($("split-size").value, 10) || 1);
+    fields.size = Math.max(1, parseInt($("split-size").value, 10) || 1);
   }
   $("split-modal").hidden = true;
   if (window.Editor) await window.Editor.bakePending();
@@ -2577,7 +2731,7 @@ async function runSplit() {
     const res = await sidecarFetch("/split", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
+      body: pdfJsonBody(state.bytes, fields),
     });
     const data = await res.json();
     if (!data.success) {
@@ -2816,7 +2970,7 @@ async function runPageNumbers() {
     const res = await sidecarFetch("/add-page-numbers", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ pdf_b64: u8ToB64(state.bytes), fmt, position, start_at, skip_first, font_size, color }),
+      body: pdfJsonBody(state.bytes, { fmt, position, start_at, skip_first, font_size, color }),
     });
     const data = await res.json();
     if (!data.success) {
@@ -3179,6 +3333,9 @@ function updateToolbar() {
   const bsg = $("btn-sign");
   if (bsg) bsg.disabled = !has || editing;
   if (editing) closeAllMenus();
+  // Annotating / text-editing needs its toolbar, which full-screen reading mode
+  // hides — so the two modes can't overlap. Editing wins (it may be mid-edit).
+  if (editing && present.on) togglePresentation(false);
   // Contextual bars (#edit-bar / #tedit-bar) REPLACE the tools row rather than
   // stacking above it — everything in that row is disabled while editing anyway,
   // so keeping it visible only costs vertical space. Ghi chú deliberately lives in
@@ -3235,6 +3392,14 @@ $("btn-zoom-in").onclick = () => zoom(0.2);
 $("btn-zoom-out").onclick = () => zoom(-0.2);
 $("btn-fit-width").onclick = fitWidth;
 $("btn-fit-height").onclick = fitHeight;
+$("btn-fit-page").onclick = fitPage;
+$("btn-presentation").onclick = () => togglePresentation();
+$("present-exit").onclick = () => togglePresentation(false);
+// Main is the authority on whether the window is full screen (it can also leave
+// via the window controls), so the class is only ever flipped from its message.
+if (window.desktop && window.desktop.onPresentation) {
+  window.desktop.onPresentation((on) => applyPresentation(!!on));
+}
 // Editable zoom %: Enter/blur applies, Escape reverts.
 $("zoom-input").addEventListener("keydown", (e) => {
   e.stopPropagation();
@@ -3264,7 +3429,10 @@ $("viewer").addEventListener(
 let pageScrollTimer;
 $("viewer").addEventListener("scroll", () => {
   clearTimeout(pageScrollTimer);
-  pageScrollTimer = setTimeout(syncPageInput, 80);
+  pageScrollTimer = setTimeout(() => {
+    syncPageInput();
+    updatePresentHud(); // the status bar is hidden in full screen; the chip isn't
+  }, 80);
 });
 $("btn-page-prev").onclick = () => gotoPageNumber(currentPageIndex());       // 1-based (idx)+1-1
 $("btn-page-next").onclick = () => gotoPageNumber(currentPageIndex() + 2);   // (idx)+1+1
@@ -3545,6 +3713,32 @@ window.addEventListener("keydown", (e) => {
     toggleSidebar();
     return;
   }
+  // F11 = full-screen reading mode (also on the View menu). Handled here rather
+  // than as a menu accelerator so it can't fire twice.
+  if (e.key === "F11" && !isTyping()) {
+    e.preventDefault();
+    togglePresentation();
+    return;
+  }
+  // Esc leaves full screen — but only when nothing nearer owns the key: the
+  // compare/overlay views, modals and the editors all close on Esc first, and
+  // they stop propagation or are checked here. Copy-image mode is checked
+  // explicitly: its listener is on the CAPTURE phase and only preventDefaults,
+  // so without this one Esc would exit both modes at once.
+  if (
+    e.key === "Escape" &&
+    present.on &&
+    !isTyping() &&
+    !(window.Capture && window.Capture.active) &&
+    $("overlay").hidden &&
+    !document.querySelector(".modal:not([hidden])") &&
+    ($("compare-view") ? $("compare-view").hidden : true) &&
+    ($("overlay-view") ? $("overlay-view").hidden : true)
+  ) {
+    e.preventDefault();
+    togglePresentation(false);
+    return;
+  }
   // ↑/↓ and PageUp/PageDown jump to the previous/next page (instead of the
   // browser's tiny scroll), but only in the plain page view — never while typing,
   // in an editor overlay, or with a modal open (those own these keys themselves).
@@ -3601,6 +3795,7 @@ window.desktop.onMenuCommand((cmd) => {
     zoomIn: () => zoom(0.2),
     zoomOut: () => zoom(-0.2),
     zoomReset,
+    presentation: () => togglePresentation(),
     settings: openSettings,
     encrypt: openEncrypt,
     extractImages: extractImages,

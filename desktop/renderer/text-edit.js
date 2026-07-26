@@ -342,7 +342,7 @@
       const res = await sidecarFetch("/text-spans", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ pdf_b64: u8ToB64(state.bytes), page }),
+        body: pdfJsonBody(state.bytes, { page }),
       });
       data = await res.json();
     } catch (e) {
@@ -398,7 +398,7 @@
       const res = await sidecarFetch("/ocr-span", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ pdf_b64: u8ToB64(state.bytes), page: te.page, bbox: sp.bbox }),
+        body: pdfJsonBody(state.bytes, { page: te.page, bbox: sp.bbox }),
       });
       data = await res.json();
     } catch (e) {
@@ -453,9 +453,15 @@
     // (the backend cleans/looks it up); every other value passes through unchanged.
     const edits = Object.keys(te.edits).map((id) => {
       const ed = { ...te.edits[id] };
-      if (ed.font === "__keep__") {
-        const sp = te.spans.find((s) => String(s.id) === id);
-        ed.font = (sp && sp.font) || "default";
+      const sp = te.spans.find((s) => String(s.id) === id);
+      if (ed.font === "__keep__") ed.font = (sp && sp.font) || "default";
+      // The span as it stands on the page. The backend measures these to reproduce
+      // the geometry the document drew it at: without them a replacement in a
+      // substituted face comes out both too long (collides with the next span) and
+      // too tall (visibly out of step with the untouched lines around it).
+      if (sp) {
+        ed.orig_text = sp.text;
+        ed.orig_size = sp.size;
       }
       return ed;
     });
@@ -472,7 +478,7 @@
       const res = await sidecarFetch("/edit-text?raw=1", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ pdf_b64: u8ToB64(state.bytes), edits }),
+        body: pdfJsonBody(state.bytes, { edits }),
       });
       const ct = res.headers.get("content-type") || "";
       if (!res.ok || ct.includes("json")) {
@@ -485,7 +491,7 @@
         return;
       }
       const buf = await res.arrayBuffer();
-      if (window.History) window.History.pushUndo();
+      if (window.DocHistory) window.DocHistory.pushUndo();
       state.bytes = new Uint8Array(buf);
       const n = edits.length;
       await exit(new Set([te.page])); // only the edited page changed — repaint just it

@@ -45,6 +45,10 @@
     "Phóng to (Ctrl+lăn chuột lên)": "Zoom in (Ctrl+scroll up)",
     "Vừa bề ngang": "Fit width",
     "Vừa chiều dọc (văn bản ngang)": "Fit height (landscape docs)",
+    "Vừa cả trang — trọn trang nằm trong khung nhìn": "Fit whole page — the entire page inside the view",
+    "Toàn màn hình — trọn trang trong màn hình, ẩn thanh công cụ (F11, Esc để thoát)":
+      "Full screen — whole page on screen, toolbars hidden (F11; Esc to exit)",
+    "Thoát toàn màn hình (Esc)": "Exit full screen (Esc)",
     "Gõ tỷ lệ zoom (40–300) rồi Enter": "Type a zoom % (40–300) then Enter",
     "Tìm trong tài liệu…": "Find in document…",
     "Kết quả trước (Shift+Enter)": "Previous match (Shift+Enter)",
@@ -477,6 +481,8 @@
     "thumbs", "breadcrumb", "ext-fields", "ext-class", "ext-custom-rows",
     "ext-raw-out", "form-fields", "toast", "overlay-msg",
     "ed-hint", "te-hint",
+    // Live page counter shown in full-screen reading mode (BI-10).
+    "present-page",
   ]);
 
   let lang = "vi";

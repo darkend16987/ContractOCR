@@ -417,6 +417,32 @@ button.ghost { background: transparent; }
 /* drag-drop highlight on viewer */
 .viewer.dropping { outline: 3px dashed var(--accent); outline-offset: -10px; }
 
+/* ---- full-screen reading mode ---- */
+/* The window itself goes full screen from main (BaseWindow.setFullScreen) and the
+   tab strip collapses there; this half hides the in-page chrome so the page really
+   does have the whole screen. Purely additive: every hidden element keeps its own
+   state, so leaving the mode restores exactly what was there. */
+body.presenting > .toolbar,
+body.presenting > .breadcrumb,
+body.presenting > .statusbar,
+body.presenting .sidebar,
+body.presenting .sidebar-expand { display: none !important; }
+/* Tighter padding + no page gap shadow spill: the point of the mode is that one
+   page fills the screen. */
+body.presenting .viewer { padding: 8px; gap: 10px; background: #000; }
+body.presenting .viewer .page-wrap { box-shadow: none; }
+
+.present-hud {
+  position: fixed; right: 14px; top: 10px; z-index: 60;
+  display: flex; align-items: center; gap: 8px;
+  padding: 4px 6px 4px 12px; border-radius: 999px;
+  background: var(--bg-2); border: 1px solid var(--line);
+  font-size: 12px; color: var(--muted);
+  opacity: 0.28; transition: opacity 0.15s ease;
+}
+.present-hud:hover { opacity: 1; }
+.present-hud button { padding: 4px; }
+
 /* ---- P4 overlay editor ---- */
 .edit-bar {
   display: flex;

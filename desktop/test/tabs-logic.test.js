@@ -385,5 +385,68 @@ try {
   /* temp dir cleanup is best-effort */
 }
 
+// ---------------------------------------------------------------------------
+console.log("\n-- chế độ toàn màn hình (đọc) --");
+// The half of reading mode that lives in main: the tab strip gives up its band so
+// the document view really covers the screen, and every tab is told, because
+// switching tabs inside the mode must not land on a renderer that still thinks it
+// has a toolbar.
+
+// NB: not `mkWin` — that name is already taken above, and a second function
+// declaration would hoist over it and quietly break the detach tests.
+function mkPresentWin(ids, { presenting = false, fullScreen = false } = {}) {
+  const w = Object.create(P);
+  w.tabs = ids.map((id) => ({ id, view: { setBounds: (b) => (w._bounds[id] = b), webContents: { isDestroyed: () => false, send: (ch, v) => w._sent.push([id, ch, v]) } } }));
+  w.activeId = ids[0];
+  w._presenting = presenting;
+  w._bounds = {};
+  w._sent = [];
+  w._stripBounds = null;
+  w._fullScreen = fullScreen;
+  w.strip = { setBounds: (b) => (w._stripBounds = b) };
+  w.base = {
+    isDestroyed: () => false,
+    getContentBounds: () => ({ x: 0, y: 0, width: 1200, height: 800 }),
+    isFullScreen: () => w._fullScreen,
+    setFullScreen: (v) => {
+      w._fullScreen = v;
+    },
+  };
+  return w;
+}
+
+let pw = mkPresentWin([1, 2]);
+pw._layout();
+check("bình thường: strip chiếm 40px", [pw._stripBounds.height, pw._bounds[1].y, pw._bounds[1].height], [40, 40, 760]);
+
+pw = mkPresentWin([1, 2], { presenting: true });
+pw._layout();
+check("toàn màn hình: strip 0px, tài liệu full", [pw._stripBounds.height, pw._bounds[1].y, pw._bounds[1].height], [0, 0, 800]);
+
+pw = mkPresentWin([1, 2, 3]);
+pw._applyPresentation(true);
+check("bật → mọi tab được báo", pw._sent.map((s) => [s[0], s[2]]), [[1, true], [2, true], [3, true]]);
+check("bật → strip thu về 0", pw._stripBounds.height, 0);
+
+pw._sent.length = 0;
+pw._applyPresentation(true); // already on
+check("bật lại khi đang bật → không phát lại", pw._sent, []);
+
+pw._applyPresentation(false);
+check("tắt → mọi tab được báo", pw._sent.map((s) => [s[0], s[2]]), [[1, false], [2, false], [3, false]]);
+check("tắt → strip lấy lại 40px", pw._stripBounds.height, 40);
+
+pw = mkPresentWin([1]);
+pw.setPresentation(true);
+check("setPresentation bật cửa sổ + cờ nội bộ", [pw._fullScreen, pw._presenting], [true, true]);
+pw.setPresentation(false);
+check("setPresentation tắt cả hai", [pw._fullScreen, pw._presenting], [false, false]);
+
+// The OS can leave full screen on its own (window controls); the window's own
+// event drives _applyPresentation, so the renderers follow without a round trip.
+pw = mkPresentWin([1], { presenting: true, fullScreen: true });
+pw._applyPresentation(false);
+check("OS thoát toàn màn hình → renderer được báo", [pw._presenting, pw._sent[0][2]], [false, false]);
+
 console.log(`\n${pass} pass, ${fail} fail`);
 process.exit(fail ? 1 : 0);

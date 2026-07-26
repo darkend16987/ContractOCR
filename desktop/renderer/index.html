@@ -64,6 +64,9 @@
         <symbol id="ic-chevron" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></symbol>
         <symbol id="ic-fit" viewBox="0 0 24 24"><path d="M3 8V5a2 2 0 0 1 2-2h3"/><path d="M16 3h3a2 2 0 0 1 2 2v3"/><path d="M21 16v3a2 2 0 0 1-2 2h-3"/><path d="M8 21H5a2 2 0 0 1-2-2v-3"/><path d="M8 12h8"/><path d="m10 9-3 3 3 3"/><path d="m14 9 3 3-3 3"/></symbol>
         <symbol id="ic-fit-h" viewBox="0 0 24 24"><path d="M3 8V5a2 2 0 0 1 2-2h3"/><path d="M16 3h3a2 2 0 0 1 2 2v3"/><path d="M21 16v3a2 2 0 0 1-2 2h-3"/><path d="M8 21H5a2 2 0 0 1-2-2v-3"/><path d="M12 8v8"/><path d="m9 10 3-3 3 3"/><path d="m9 14 3 3 3-3"/></symbol>
+        <symbol id="ic-fit-page" viewBox="0 0 24 24"><path d="M3 8V5a2 2 0 0 1 2-2h3"/><path d="M16 3h3a2 2 0 0 1 2 2v3"/><path d="M21 16v3a2 2 0 0 1-2 2h-3"/><path d="M8 21H5a2 2 0 0 1-2-2v-3"/><rect x="8" y="7.5" width="8" height="9" rx="1"/></symbol>
+        <symbol id="ic-fullscreen" viewBox="0 0 24 24"><path d="M4 9V5a1 1 0 0 1 1-1h4"/><path d="M15 4h4a1 1 0 0 1 1 1v4"/><path d="M20 15v4a1 1 0 0 1-1 1h-4"/><path d="M9 20H5a1 1 0 0 1-1-1v-4"/></symbol>
+        <symbol id="ic-fullscreen-exit" viewBox="0 0 24 24"><path d="M9 4v4a1 1 0 0 1-1 1H4"/><path d="M15 4v4a1 1 0 0 0 1 1h4"/><path d="M15 20v-4a1 1 0 0 1 1-1h4"/><path d="M9 20v-4a1 1 0 0 0-1-1H4"/></symbol>
       </defs>
     </svg>
 
@@ -95,6 +98,8 @@
           <button id="btn-zoom-in" class="icon-only" disabled title="Phóng to (Ctrl+lăn chuột lên)"><svg class="ic"><use href="#ic-plus"/></svg></button>
           <button id="btn-fit-width" class="icon-only" disabled title="Vừa bề ngang"><svg class="ic"><use href="#ic-fit"/></svg></button>
           <button id="btn-fit-height" class="icon-only" disabled title="Vừa chiều dọc (văn bản ngang)"><svg class="ic"><use href="#ic-fit-h"/></svg></button>
+          <button id="btn-fit-page" class="icon-only" disabled title="Vừa cả trang — trọn trang nằm trong khung nhìn"><svg class="ic"><use href="#ic-fit-page"/></svg></button>
+          <button id="btn-presentation" class="icon-only" disabled title="Toàn màn hình — trọn trang trong màn hình, ẩn thanh công cụ (F11, Esc để thoát)"><svg class="ic"><use href="#ic-fullscreen"/></svg></button>
         </div>
 
         <div class="sep"></div>
@@ -426,6 +431,14 @@
       <span class="sb-spacer"></span>
       <span id="sb-zoom"></span>
     </footer>
+
+    <!-- Full-screen reading mode. The whole toolbar is hidden in that mode, so this
+         floating chip is the only visible way back out — it must never be hidden by
+         .presenting rules. Dim until hovered so it doesn't sit on top of the page. -->
+    <div class="present-hud" id="present-hud" hidden>
+      <span id="present-page" class="present-page"></span>
+      <button id="present-exit" class="icon-only" title="Thoát toàn màn hình (Esc)"><svg class="ic"><use href="#ic-fullscreen-exit"/></svg></button>
+    </div>
 
     <!-- Watermark dialog -->
     <div class="modal" id="wm-modal" hidden>

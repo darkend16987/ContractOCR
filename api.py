@@ -54,6 +54,7 @@ from src.pdf.fonts import (
     _fresh_fontname,
     _list_local_font_families,
     _norm_fam,
+    _page_font_buffers,
     _resolve_local_font,
     _vietnamese_font,
 )
@@ -1582,6 +1583,11 @@ class TextEdit(BaseModel):
     italic: bool = False
     underline: bool = False
     font: str | None = None  # family key: "default"(DejaVu/Vietnamese)|"times"|"helv"|"courier"
+    # The text and size this span had BEFORE the edit. Used only to recover the
+    # geometry the document drew it at (see the hscale/vscale block in edit_text);
+    # both optional, so an older renderer keeps working with no scaling applied.
+    orig_text: str | None = None
+    orig_size: float | None = None
 
 
 class EditTextRequest(BaseModel):
@@ -1636,10 +1642,37 @@ async def edit_text(req: EditTextRequest, raw: bool = False):
     try:
         for pno, edits in by_page.items():
             page = doc[pno]
-            # 1. Physically remove the old glyphs under each box.
+            # 0. Lift the page's own font programs out FIRST. apply_redactions can
+            #    drop a font resource once its last glyphs are gone, and these
+            #    buffers are the only way to keep a face that isn't installed on
+            #    this machine (see embed_page_font below).
+            page_font_buffers = _page_font_buffers(doc, page)
+            # 1. Physically remove the old glyphs under each box — and NOTHING else.
+            #    The box is the text's own bbox, so everything it overlaps (a shaded
+            #    table cell, the rule under a heading, a scanned letterhead) was
+            #    drawn by the document, not by the text we are replacing:
+            #      * no `fill`, or an opaque rectangle lands on the page — invisible
+            #        on white paper, a white patch on a shaded cell. `fill` stays in
+            #        the API for callers that really do want the area painted over.
+            #      * IMAGE_NONE, or the pixels of a picture under the box are blanked.
+            #      * LINE_ART_NONE, or vector art the box *covers* is deleted, which
+            #        is exactly how Word draws an underline.
+            #    Same bargain /translate already makes; see test_edit_text_layout.py.
             for e in edits:
-                page.add_redact_annot(fitz.Rect(*e.bbox), fill=_norm_color(e.fill) if e.fill is not None else (1, 1, 1))
-            page.apply_redactions()
+                page.add_redact_annot(
+                    fitz.Rect(*e.bbox),
+                    fill=_norm_color(e.fill) if e.fill is not None else False,
+                )
+            try:
+                page.apply_redactions(
+                    images=fitz.PDF_REDACT_IMAGE_NONE,
+                    graphics=fitz.PDF_REDACT_LINE_ART_NONE,
+                )
+            except TypeError:
+                # PyMuPDF predating the `graphics` parameter (requirements allow back
+                # to 1.24.0). There a covered underline is still dropped — cosmetic;
+                # the glyphs go either way, which is the job.
+                page.apply_redactions(images=fitz.PDF_REDACT_IMAGE_NONE)
 
             # 2. Redraw the new text in the same box. Embed Vietnamese-capable
             #    fonts lazily — one PyMuPDF fontname per style variant we actually
@@ -1686,6 +1719,26 @@ async def edit_text(req: EditTextRequest, raw: bool = False):
                     local_embedded[key] = None
                 return local_embedded[key]
 
+            # Re-embed the font program the SOURCE PDF already carries for this
+            # family — the last resort before giving up on the original look, and
+            # the only one that works for faces nobody has installed (CAD/corporate
+            # fonts, SVN-*, .Vn*). Returns (fontname, buffer) or None.
+            # Callers MUST have checked glyph coverage first: these buffers are
+            # subsets, so an unchecked reuse redraws notdef boxes (□).
+            page_embedded: dict[str, tuple[str, bytes] | None] = {}
+
+            def embed_page_font(key: str, buf: bytes):
+                if key in page_embedded:
+                    return page_embedded[key]
+                fn = _fresh_fontname(page, "src")
+                try:
+                    page.insert_font(fontname=fn, fontbuffer=buf)
+                    page_embedded[key] = (fn, buf)
+                except Exception as fe:
+                    logger.debug("insert_font page-font %s failed: %s", key, fe)
+                    page_embedded[key] = None
+                return page_embedded[key]
+
             for e in edits:
                 txt = e.new_text or ""
                 if not txt.strip():
@@ -1718,6 +1771,7 @@ async def edit_text(req: EditTextRequest, raw: bool = False):
 
                 fontname = None
                 fontfile = None  # set when using an embedded TTF (for width calc)
+                fontbuffer = None  # set when reusing the source PDF's own font program
                 faux_bold = False
                 faux_italic = False
 
@@ -1748,6 +1802,24 @@ async def edit_text(req: EditTextRequest, raw: bool = False):
                     fontname = None
                     fontfile = None
 
+                # Nothing installed matched (or it failed the coverage check): try
+                # the font program the source PDF itself embeds for this name. This
+                # is what keeps a CAD/corporate face that exists nowhere else on the
+                # machine. Only for a real font name — "default" means the user
+                # explicitly asked for the Vietnamese fallback, and the Base-14
+                # builtins have nothing to extract.
+                #
+                # The coverage check here is UNCONDITIONAL (not just for
+                # needs_unicode): these buffers are subsets carrying only the glyphs
+                # the document already used, so even plain ASCII can be missing —
+                # exactly the shape of the v0.2.34 □ regression.
+                if fontname is None and fam != "default" and not builtin:
+                    buf = page_font_buffers.get(_norm_fam(_clean_font_name(fam_raw)))
+                    if buf and _font_covers(txt, fontbuffer=buf):
+                        pe = embed_page_font(_norm_fam(_clean_font_name(fam_raw)), buf)
+                        if pe:
+                            fontname, fontbuffer = pe
+
                 # Fallback to bundled DejaVu (real bold/italic variant) when nothing
                 # above resolved; faux styling only as the final resort.
                 if fontname is None:
@@ -1763,13 +1835,92 @@ async def edit_text(req: EditTextRequest, raw: bool = False):
                         faux_bold = bool(e.bold)
                         faux_italic = bool(e.italic)
 
+                # ---- match the geometry of the face we are replacing --------------
+                #
+                # The original face is very often unavailable: the PDF carries it as a
+                # subset with no usable cmap (see the coverage guard above), so we draw
+                # in a substitute. A substitute with the same NAME is not the same
+                # DESIGN — measured on the invoice that prompted this, the embedded
+                # "TimesNewRomanBold" sits at 0.83 of Windows Times New Roman Bold's
+                # width and 0.91 of its height, with per-glyph advances differing in
+                # both directions (T narrower, o wider). No single point size can fix
+                # that, which is why there are two independent corrections here.
+                #
+                # Both are no-ops (dead band) when the substitute IS the original face,
+                # so ordinary documents are untouched.
+                fobj = None
+                try:
+                    if fontbuffer:
+                        fobj = fitz.Font(fontbuffer=fontbuffer)
+                    elif fontfile:
+                        fobj = fitz.Font(fontfile=fontfile)
+                    else:
+                        fobj = fitz.Font(fontname=fontname)
+                except Exception as fe:
+                    logger.debug("metric probe: no font object: %s", fe)
+
+                # 1. HEIGHT. Scale the point size so the substitute's line box
+                #    (ascender..descender) matches the line box the PDF declared for
+                #    the original font — the same rule a viewer uses when it has to
+                #    substitute, and the CSS `font-size-adjust` idea. `bbox` is the
+                #    span's box as /text-spans reported it, so bbox_h / orig_size is
+                #    the original's line box in em. Applied as a RATIO, so an explicit
+                #    size the user typed is corrected the same way and stays consistent
+                #    with the text around it.
+                if fobj and e.orig_size and e.orig_size > 0:
+                    try:
+                        line_em = fobj.ascender - fobj.descender
+                        if line_em > 0.1:
+                            v = ((y1 - y0) / float(e.orig_size)) / line_em
+                            if 0.6 <= v <= 1.6 and abs(v - 1.0) > 0.02:
+                                size *= v
+                    except Exception as ve:
+                        logger.debug("vscale probe failed: %s", ve)
+
+                # 2. WIDTH. insert_text always draws at the font's natural advances, so
+                #    a wider substitute — or text the document drew CONDENSED via a Tz
+                #    in the content stream — comes out longer than the line it replaces
+                #    and runs into whatever follows. Measure the ORIGINAL string in the
+                #    font we are about to draw with and scale x by whatever factor puts
+                #    it back at the width it had. Derived from the OLD text only, so a
+                #    longer replacement still grows normally rather than being squeezed
+                #    into the old box — this is not fit-to-box.
+                #
+                #    Must come after the height correction: text_length scales with
+                #    size, so the two are independent and compose exactly.
+                #
+                #    Measure the WHOLE original string, whitespace included: the bbox
+                #    being divided by is the box that whole string produced, and a
+                #    trailing space carries a real advance. Stripping the probe while
+                #    keeping the full bbox mismatches the two and leaves the redraw
+                #    measurably wide (median 1.03, worst 1.08 across this page).
+                hscale = 1.0
+                probe = e.orig_text or ""
+                if fobj and probe.strip() and (x1 - x0) > 1:
+                    try:
+                        natural = fobj.text_length(probe, fontsize=size)
+                        if natural > 1:
+                            r = (x1 - x0) / natural
+                            # Outside this range the measurement is not credible (a
+                            # one-glyph span, a rotated matrix, a broken bbox) — leave
+                            # the text alone rather than distort it on a bad reading.
+                            if 0.5 <= r <= 2.0 and abs(r - 1.0) > 0.02:
+                                hscale = r
+                    except Exception as he:
+                        logger.debug("hscale probe failed: %s", he)
+
                 # Faux-bold via fill+stroke (render_mode 2); faux-italic via a
                 # horizontal shear. Only used when no real variant was found.
                 render_mode = 2 if faux_bold else 0
                 border_width = max(0.3, size * 0.03) if faux_bold else 0
+                # One matrix carries both the shear and the squeeze; morphing about the
+                # baseline origin keeps the text starting exactly where the old text did.
                 morph = None
-                if faux_italic:
-                    morph = (fitz.Point(ox, oy), fitz.Matrix(1, 0, 0.25, 1, 0, 0))
+                if faux_italic or hscale != 1.0:
+                    morph = (
+                        fitz.Point(ox, oy),
+                        fitz.Matrix(hscale, 0, 0.25 if faux_italic else 0, 1, 0, 0),
+                    )
 
                 try:
                     page.insert_text(
@@ -1788,12 +1939,15 @@ async def edit_text(req: EditTextRequest, raw: bool = False):
                 # Underline: a line just under the baseline, width = drawn-text width.
                 if e.underline:
                     try:
-                        if fontfile:
+                        if fontbuffer:
+                            tw = fitz.Font(fontbuffer=fontbuffer).text_length(txt, fontsize=size)
+                        elif fontfile:
                             tw = fitz.Font(fontfile=fontfile).text_length(txt, fontsize=size)
                         else:
                             tw = fitz.Font(fontname=fontname).text_length(txt, fontsize=size)
                     except Exception:
                         tw = x1 - x0
+                    tw *= hscale  # the drawn glyphs were squeezed; the rule must match
                     uy = oy + size * 0.12
                     try:
                         page.draw_line(fitz.Point(ox, uy), fitz.Point(ox + tw, uy),

@@ -2511,7 +2511,7 @@
         // so it's no longer in ed.annots) must repaint too.
         for (const k of ed._managedPages) changed.add(k);
       }
-      if (window.History) window.History.pushUndo(); // one doc-level undo step per bake
+      if (window.DocHistory) window.DocHistory.pushUndo(); // one doc-level undo step per bake
       state.bytes = bytes;
       ed.annots = {};
       ed.watermark = null;
@@ -2718,7 +2718,7 @@
         else if (kind === "radio" && input.value) f.select(input.value);
       }
       if ($("form-flatten").checked) ed._formDoc.getForm().flatten();
-      if (window.History) window.History.pushUndo();
+      if (window.DocHistory) window.DocHistory.pushUndo();
       state.bytes = await ed._formDoc.save();
       ed._form = null;
       ed._formDoc = null;

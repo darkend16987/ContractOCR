@@ -137,6 +137,91 @@ Mỗi mục: **bất biến → ở đâu → vì sao → dấu hiệu vỡ.**
   đang chết dở làm thứ để khôi phục.
 - **Vỡ khi:** đóng cửa sổ đang có 5 tab, mở lại chỉ còn 1 tab (hoặc không tab nào).
 
+### BI-21 · “Giữ nguyên font” là một THANG BA BẬC — bậc nào cũng phải qua cửa kiểm tra glyph
+- `api.py` `/edit-text` (khối chọn font) + `src/pdf/fonts.py`.
+- Thứ tự **bắt buộc**: (1) font hệ thống theo họ (`_resolve_local_font`, thử lần lượt
+  `_family_candidates`) → (2) chính font **nhúng trong PDF nguồn**
+  (`_page_font_buffers` + `embed_page_font`) → (3) DejaVu bó sẵn.
+- Bậc 1 hỏng ở tên kiểu **“TimesNewRomanBold”** (kiểu chữ dính liền, không dấu gạch)
+  → rơi thẳng xuống DejaVu, người dùng thấy **đổi font trong im lặng** dù đã chọn
+  “Giữ nguyên”. Đó là lỗi đã sửa 2026-07-26.
+- Bậc 2 dùng **font con (subset)** — chỉ chứa glyph tài liệu từng vẽ. Cửa kiểm tra
+  `_font_covers` ở bậc này phải chạy **KHÔNG điều kiện**, không được gắn vào
+  `needs_unicode`: chữ ASCII thuần cũng có thể thiếu glyph → ra ô vuông (□) đúng
+  kiểu hồi quy v0.2.34.
+- `_page_font_buffers` phải gọi **TRƯỚC `apply_redactions()`**.
+- **Vỡ khi:** sửa chữ xong đổi sang font khác hẳn · hoặc ra □.
+- Lưới: `.venv\Scripts\python test_edit_text_font.py` (8 ca) + `test_edit_text_rounds.py`.
+
+### BI-22 · Toàn màn hình: MAIN là nguồn sự thật, renderer chỉ phản ứng
+- `src/tabs.js` (`setPresentation` / `_applyPresentation` / `_layout`) + `main.js`
+  (`window:set-presentation`) + `renderer/app.js` (`togglePresentation` /
+  `applyPresentation`).
+- Renderer **không bao giờ** tự bật cờ `.presenting`; nó xin main, main đổi cửa sổ
+  rồi phát `window:presentation` ngược lại cho **mọi tab** của cửa sổ đó. Vì cửa sổ
+  có thể rời toàn màn hình bằng đường khác (nút cửa sổ, cử chỉ OS) — sự kiện
+  `leave-full-screen` là cái kéo UI về đúng chỗ.
+- **Vỡ khi:** thoát toàn màn hình bằng nút cửa sổ → app mất luôn thanh công cụ,
+  không có đường quay lại; hoặc chuyển tab trong lúc trình chiếu thì tab kia vẫn
+  còn nguyên thanh công cụ.
+- Chế độ này **loại trừ** Chú thích/Sửa nội dung (hai chế độ đó cần thanh công cụ
+  mà nó ẩn) — xem `updateToolbar()`.
+
+### BI-23 · Redaction của `/edit-text` chỉ được lấy đi **chữ**, không lấy gì khác
+- `api.py` `/edit-text` bước 1: `add_redact_annot(..., fill=False)` +
+  `apply_redactions(images=PDF_REDACT_IMAGE_NONE, graphics=PDF_REDACT_LINE_ART_NONE)`.
+- Hộp redaction là **bbox của chữ**, nên mọi thứ nó chồng lên (nền ô bảng, đường kẻ
+  dưới tiêu đề, ảnh scan letterhead) là do **tài liệu** vẽ, không phải do chữ:
+  - còn `fill` mặc định (1,1,1) → tô một hình chữ nhật đục lên trang: **vô hình trên
+    giấy trắng, thành vệt trắng trên ô có nền**;
+  - `images` mặc định `PDF_REDACT_IMAGE_PIXELS` → **xoá pixel** của ảnh dưới hộp;
+  - `graphics` mặc định → **xoá nét vector bị hộp phủ trọn**, đúng kiểu Word vẽ gạch chân.
+- `fill` **vẫn còn trong API** cho ai cố ý muốn tô đè — chỉ đổi giá trị mặc định.
+- **Vỡ khi:** sửa 1 chữ trong ô bảng có nền → hiện vệt trắng; hoặc mất đường kẻ.
+- Lưới: `.venv\Scripts\python test_edit_text_layout.py` (5 ca, **kiểm theo PIXEL** —
+  nét vector vẫn “tồn tại” dưới lớp fill nên đếm object sẽ pass trong khi trang hỏng).
+- `/translate` đã theo đúng luật này từ trước (`test_translate_layout.py`) — hai đường
+  phải giữ giống nhau.
+
+### BI-25 · Vẽ lại chữ phải bám **hình học** của face bị thay, không chỉ tên font
+- `api.py` `/edit-text` (khối “match the geometry”), `TextEdit.orig_text` + `orig_size`,
+  `text-edit.js` `apply()`.
+- Font gốc thường **không dùng lại được**: PDF nhúng nó dạng subset mất cmap nên cửa
+  kiểm tra glyph từ chối (BI-21) → buộc phải thay bằng font hệ thống. **Cùng tên
+  không có nghĩa cùng thiết kế**: đo trên hoá đơn VNPT, “TimesNewRomanBold” nhúng
+  chỉ bằng **0.83 bề rộng** và **0.91 chiều cao** của Times New Roman Bold của
+  Windows, advance từng chữ lệch **ngược chiều nhau** (T hẹp hơn, o rộng hơn) → **không
+  một cỡ chữ nào chỉnh được cả hai**, phải hai phép hiệu chỉnh độc lập:
+  1. **Cao**: nhân cỡ chữ sao cho line box (ascender..descender) của font thay khớp
+     line box PDF khai cho font gốc — `(bbox_h / orig_size) / (asc − desc)`.
+  2. **Rộng**: đo **nguyên chuỗi gốc** trong font sắp vẽ rồi ép scale x bằng
+     `bbox_w / text_length`. Áp bằng `morph` quanh gốc baseline, **sau** bước cao
+     (text_length tỉ lệ với cỡ chữ nên hai phép độc lập và ghép chính xác).
+- ⚠️ **Đo nguyên chuỗi, KHÔNG `strip()`**: bbox đang chia là bbox của **cả chuỗi**, dấu
+  cách cuối có advance thật. Cắt chuỗi mà giữ nguyên bbox là lệch cặp → vẫn rộng
+  (đo được: median 1.03, tệ nhất 1.08). Đúng cặp thì ra **0.9994 / 0.9996**.
+- Cả hai đều có **vùng chết ±2%** và kẹp biên độ tin cậy → tài liệu bình thường
+  (font thay = font gốc) **không bị đụng vào**.
+- **Vỡ khi:** sửa 1 dòng thì dòng đó dài ra đè sang chữ bên cạnh, hoặc chữ cao hơn
+  hẳn các dòng chưa sửa.
+- Lưới: `.venv\Scripts\python test_edit_text_metrics.py` (7 ca; có ca **canh gác**
+  chứng minh không sửa thì thật sự tràn).
+- Ghi nhớ khi đọc số: PyMuPDF trả `size` của span là **trung bình nhân** của ma trận
+  chữ, nên một cú nén ngang 0.84 hiện ra thành `size × sqrt(0.84)` — nửa cú nén đã
+  nằm sẵn trong cỡ chữ.
+
+### BI-24 · Không bao giờ dựng payload PDF thành **một chuỗi JS**
+- `pdfJsonBody()` (`app.js`) — dùng ở **14 chỗ gọi** trong `app.js`/`text-edit.js`/`compare.js`.
+- `JSON.stringify({pdf_b64: u8ToB64(bytes), …})` tốn **ba bản sao cỡ đầy đủ** trên heap
+  renderer (chuỗi nhị phân trong `u8ToB64`, base64 nó trả về, và bản sao của
+  `stringify`) ⇒ ~500MB rác tạm cho file 134MB, chồng lên `state.bytes` + lịch sử undo.
+  Đúng loại hết-heap mà v0.2.40 đã vá cho chiều **tải về** và bỏ sót chiều **gửi lên**.
+- `pdfJsonBody` ghép `Blob` theo mảnh → byte nằm trong blob store của Blink (tràn ra đĩa
+  được), mỗi lúc chỉ có **một mảnh 48KB** là chuỗi JS. **Định dạng trên dây không đổi.**
+- **Kích thước mảnh phải là bội của 3** — base64 chỉ chèn `=` ở cuối luồng, chia đúng
+  mốc 3 byte thì các mảnh nối thẳng được. Đổi thành số khác là hỏng payload **im lặng**.
+- Nhận cả `Uint8Array` (→ `pdf_b64`) lẫn object `{tên: bytes}` cho `/compare` (2 tài liệu).
+
 ### BI-14 · Gọi hàm chéo module theo kiểu “tên trần” là điểm gãy im lặng
 - `rerenderChanged` (gọi từ `editor.js:2521`, `text-edit.js:519`) và
   `showOverlay`/`hideOverlay` (gọi từ 4 module) **không** có `window.` và **không** có guard.
@@ -151,7 +236,8 @@ Mỗi mục: **bất biến → ở đâu → vì sao → dấu hiệu vỡ.**
 |---|---|---|
 | `toast()` | `app.js:58` | cả 6 module, ~172 chỗ |
 | `sidecarFetch()` | `app.js:49` | 4 module (~28 chỗ) — điểm duy nhất gắn token `X-Sidecar-Token` |
-| `pushUndo()` | `app.js:148` | 3 module, 10 chỗ — xem BI-3 |
+| `pushUndo()` | `app.js:148` | 3 module, 10 chỗ — xem BI-3. Phơi ra ngoài bằng **`window.DocHistory`**, **không** phải `window.History` (tên đó là constructor của DOM → guard `if (window.History)` không bao giờ sai được) |
+| `pdfJsonBody()` | `app.js:2278` | 3 module, 14 chỗ — xem BI-24 |
 | `renderAll()` | `app.js:486` | 13 chỗ |
 | `rerenderChanged()` | `app.js:1138` | **chỉ** module khác gọi — xem BI-14 |
 | `updateToolbar()` | `app.js:3084` | 3 module, 11 chỗ — chứa BI-2 và BI-9 |
@@ -174,6 +260,11 @@ Mỗi mục: **bất biến → ở đâu → vì sao → dấu hiệu vỡ.**
 | Guard đóng | BI-6: nút X vs menu Thoát vs Ctrl+Q — cả 3 đường |
 | Recovery/autosave | BI-7: mở 2 tab, chỉ tab đầu được hỏi khôi phục |
 | Thêm nút tính năng mới | BI-9: khoá bản quyền có ăn không · BI-10: đổi VI/EN không mất chữ |
+| Cỡ/hình học chữ vẽ lại (`hscale`, `vscale`, `orig_text`, `orig_size`) | `test_edit_text_metrics.py` · sửa 1 dòng trên hoá đơn thật → **không** dài ra đè chữ bên cạnh, **không** cao hơn dòng chưa sửa (BI-25) |
+| Redaction / `add_redact_annot` / `apply_redactions` | `test_edit_text_layout.py` **và** `test_translate_layout.py` · sửa 1 chữ trong ô bảng **có nền** → không vệt trắng, không mất đường kẻ (BI-23) |
+| `pdfJsonBody` hay bất kỳ chỗ gọi sidecar nào có PDF | Mở file **lớn** (≥100MB) rồi: Sửa nội dung · Nén · So sánh 2 file · Tách — không tab nào chết vì hết bộ nhớ (BI-24) |
+| Chọn font ở `/edit-text` hay `src/pdf/fonts.py` | `test_edit_text_font.py` **và** `test_edit_text_rounds.py` · mở 1 hoá đơn Times New Roman thật, sửa 1 dòng với “Giữ nguyên” → **không** đổi sang DejaVu, **không** ra □ (BI-21) |
+| Toàn màn hình (`setPresentation`, `_layout`, `.presenting`) | `npm run test:tabs` (10 ca cuối) · F11 vào/ra · Esc ra · thoát bằng nút cửa sổ → thanh công cụ phải quay lại · chuyển tab khi đang toàn màn hình · thử bật lúc đang Chú thích (phải từ chối) — BI-22 |
 | `i18n.js` | Đổi VI↔EN khi đang mở tài liệu, đang chú thích, đang sửa nội dung |
 | `api.py` / `src/pdf/*` | `.venv\Scripts\python run_tests.py` **và** rebuild sidecar trước khi đóng gói |
 

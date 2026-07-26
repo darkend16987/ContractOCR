@@ -4,7 +4,73 @@
 > [DESIGN.md](DESIGN.md) (kiến trúc), [ROADMAP.md](ROADMAP.md) (tiến độ chi tiết),
 > [SETUP.md](SETUP.md) (dựng môi trường).
 
-_Cập nhật: 2026-07-26 · v0.2.42_
+_Cập nhật: 2026-07-26 · v0.2.43_
+
+> v0.2.43 — **Sửa chữ giữ đúng font, đúng cỡ, đúng nền + Toàn màn hình đọc trọn trang**
+> (renderer + main + **sidecar CÓ ĐỔI → đã rebuild khi đóng gói**):
+> - **Font gốc bị thay trong im lặng** ([`src/pdf/fonts.py`](src/pdf/fonts.py), [`api.py`](api.py)):
+>   tên font trong PDF hay dính kiểu chữ vào họ **không có dấu gạch** —
+>   `TimesNewRomanBold` (hoá đơn/biên lai in qua driver hay thế). `_clean_font_name` chỉ
+>   cắt ở `-` nên tên tới matplotlib là một họ **không ai cài**, `findfont` ném lỗi, và
+>   bản vẽ lại rơi xuống **DejaVu Sans** — không lỗi, không cảnh báo. Thêm
+>   `_family_candidates()`: thử tên cũ **trước** (nên mọi tên đang chạy được giữ nguyên
+>   đường resolve), rồi tới tên đã bỏ hậu tố kiểu chữ, rồi tên đầy đủ (cho họ có gạch
+>   thật như `SVN-Times New Roman`). ⚠️ **"Roman" KHÔNG phải từ kiểu chữ** — cắt nó là
+>   hỏng "Times New Roman".
+> - **Bậc 2 mới — dùng lại chính font nhúng trong PDF** ([`_page_font_buffers`](src/pdf/fonts.py)):
+>   font công ty/CAD (SVN-*, UTM-*, .Vn*) không có trên máy nào cả; bản duy nhất nằm
+>   trong tài liệu. Trích ra **trước `apply_redactions()`** rồi nhúng lại. Vì đó là
+>   **font con**, cửa `_font_covers` ở bậc này chạy **không điều kiện** (kể cả ASCII) —
+>   thả lỏng là quay lại đúng lỗi ô vuông □ của v0.2.34.
+> - **Không phải hồi quy của bản vá hôm qua**: `git diff 10bbccf..HEAD -- api.py src/pdf/`
+>   cho thấy backend font **y hệt v0.2.39**; v0.2.40 chỉ đổi đường truyền (`?raw=1`).
+>   Lỗi này luôn có với dạng tên đó — file test của user là ca đầu tiên chạm vào.
+> - **Toàn màn hình đọc (F11)** ([`tabs.js`](desktop/src/tabs.js), [`app.js`](desktop/renderer/app.js)):
+>   trước chỉ có `role:"togglefullscreen"` của Electron — giãn cửa sổ nhưng **giữ nguyên
+>   thanh công cụ, sidebar, thanh tab và mức zoom**, nên trang **không** nằm trọn màn hình.
+>   Nay: main phóng cửa sổ + thu thanh tab về 0, renderer ẩn chrome + `fitPage()`.
+>   **Main giữ cờ, renderer chỉ phản ứng** (BI-22) — bám `leave-full-screen` để thoát bằng
+>   nút cửa sổ không bỏ lại một UI mất thanh công cụ. Thêm nút **"Vừa cả trang"**.
+> - **Sàn zoom cho lệnh "vừa…"**: `zoomTo` chặn ở 40%, nên "vừa trang/ngang/dọc" trên khổ
+>   A0–A1 **không bao giờ vừa được**. Ba lệnh fit nay dùng sàn riêng 8% (zoom tay vẫn 40%).
+> - **Sửa chữ không còn để lại vệt trắng** ([`api.py`](api.py), BI-23): hộp redaction là
+>   bbox của **chữ**, mà `/edit-text` lại tô `fill=(1,1,1)` + để mặc định `images`/`graphics`
+>   → sửa 1 chữ trong ô bảng **có nền** thì thủng một mảng trắng đúng bằng hộp chữ cũ, che
+>   luôn đường kẻ dưới. `/translate` đã xử đúng từ trước; nay `/edit-text` theo cùng luật
+>   (`fill=False` + `IMAGE_NONE` + `LINE_ART_NONE`). `fill` **vẫn còn trong API** cho ai cố
+>   ý muốn tô đè. Lưới mới `test_edit_text_layout.py` (5 ca) **kiểm theo pixel** — nét vector
+>   vẫn “còn” dưới lớp fill nên đếm object sẽ pass trong khi trang đã hỏng.
+> - **Hết đường OOM chiều GỬI LÊN** ([`app.js`](desktop/renderer/app.js) `pdfJsonBody`, BI-24):
+>   v0.2.40 chỉ vá chiều tải về; mỗi lần gọi vẫn dựng `JSON.stringify({pdf_b64: u8ToB64(…)})`
+>   = **ba bản sao cỡ đầy đủ** trên heap renderer (~500MB rác tạm cho file 134MB). Nay ghép
+>   `Blob` theo mảnh 48KB (bội của 3 — base64 chỉ pad ở cuối luồng), byte nằm trong blob
+>   store của Blink. **Định dạng trên dây KHÔNG đổi** → sidecar không phải sửa gì. Áp cho cả
+>   **14 chỗ gọi**, gồm `/compare` mang **2 tài liệu** một lúc (payload nặng nhất app).
+> - **Vá kèm khi đụng tới**: `runSplit()` mã hoá `state.bytes` **trước** `bakePending()` →
+>   tách file bằng bản chưa nướng chú thích đang chờ; nay đọc bytes sau. `loadTemplates()`
+>   đặt cờ sau `await` → boot gọi `/templates` 2 lần. `window.History` (che constructor của
+>   DOM, guard không bao giờ sai được) → đổi thành **`window.DocHistory`** ở cả 4 chỗ.
+>   Esc lúc vừa bật Copy ảnh vừa toàn màn hình → nay Copy ảnh được ưu tiên.
+> - **Chữ sửa xong không còn to ra** ([`api.py`](api.py), BI-25): sửa đúng font rồi mới lộ ra
+>   lỗi thứ hai — chữ vẽ lại **rộng hơn ~24%** (đè sang chữ bên cạnh) và **cao hơn ~10%**.
+>   Nguyên nhân **không phải** cỡ chữ sai: font gốc là subset **mất cmap** nên cửa glyph từ
+>   chối (BI-21) và buộc thay bằng font hệ thống — mà “TimesNewRomanBold” nhúng trong file
+>   chỉ bằng **0.83 bề rộng / 0.91 chiều cao** Times New Roman Bold của Windows, advance từng
+>   chữ còn lệch **ngược chiều** (T hẹp hơn, o rộng hơn). Không cỡ chữ nào chỉnh được cả hai,
+>   nên thêm **hai** phép hiệu chỉnh độc lập: cỡ chữ khớp **line box**, rồi `morph` ép **scale
+>   x** theo bề rộng chuỗi gốc. Renderer gửi kèm `orig_text` + `orig_size` (đều optional).
+>   ⚠️ Phải đo **nguyên chuỗi, không `strip()`** — bbox đang chia là bbox của cả chuỗi
+>   (cắt chuỗi mà giữ bbox: median 1.03, tệ nhất 1.08). Đo trên 10 span thật của hoá đơn:
+>   **rộng 0.9994× (0.985–1.000), cao 0.9996×**. Vùng chết ±2% ⇒ tài liệu bình thường không đụng.
+> - **Verify**: Python **11/11** (mới: `test_edit_text_font.py` 8 ca, `test_edit_text_metrics.py`
+>   7 ca, `test_edit_text_layout.py`
+>   5 ca) · **round-trip thật qua HTTP** với sidecar dev: `/text-spans` 200 (132 span),
+>   `/edit-text?raw=1` 200 → PDF hợp lệ nhúng `Times New Roman Bold`, `/compare` 200 —
+>   tất cả bằng body `Blob` kiểu mới · `npm run test:tabs`
+>   **89/89** (thêm 10 ca tầng cửa sổ) · `node --check` sạch · renderer chạy thật ngoài
+>   Electron: F11 vào/Esc ra, chrome ẩn/hiện đúng, khoá khi đang sửa nội dung, A0 fit 12%,
+>   đổi VI/EN không mất số trang · file hoá đơn của user: sửa 1 dòng → nhúng
+>   `Times New Roman Bold` (trước: `DejaVu Sans Bold`). **Chưa test GUI tương tác.**
 
 > v0.2.42 — **Tách tab thành cửa sổ riêng (Lớp 2b) + khôi phục phiên** (renderer + main; **sidecar KHÔNG đổi**, không cần rebuild):
 > - **Kéo tách tab thành cửa sổ riêng** ([`src/tabs.js`](desktop/src/tabs.js), [`renderer/shell.js`](desktop/renderer/shell.js), [`main.js`](desktop/src/main.js)): `detachTab`/`adoptTab` là đường **chuyển nhà**, tách bạch hoàn toàn với `destroyTab` (**khai tử**) — trộn hai đường này là mất tài liệu của user (BI-15/16). Kéo thả ra ngoài thanh tab → cửa sổ mới tại chỗ thả; thả vào thanh tab cửa sổ khác → tab **nhập** vào đó (nối cuối); nguồn hết tab thì tự đóng. Thêm **menu chuột phải trên tab** (Tách ra cửa sổ riêng · Chuyển tới cửa sổ ▸ · Đóng tab) làm đường vào chắc chắn 100%, không phụ thuộc cử chỉ.

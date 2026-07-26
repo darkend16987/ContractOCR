@@ -90,6 +90,19 @@ contextBridge.exposeInMainWorld("desktop", {
     apply: (payload) => ipcRenderer.invoke("sign:apply", payload),
   },
 
+  // --- full-screen reading mode ---
+  // Ask main to put THIS tab's window in (or out of) full screen. Main also
+  // collapses the tab strip, then broadcasts the new state back through
+  // onPresentation — the renderer never assumes it succeeded.
+  setPresentation: (on) => ipcRenderer.invoke("window:set-presentation", !!on),
+  // Current full-screen state of this tab's window. Fires on our own toggle AND
+  // when the window leaves full screen by any other route (window controls, OS).
+  onPresentation: (cb) => {
+    const handler = (_e, on) => cb(on);
+    ipcRenderer.on("window:presentation", handler);
+    return () => ipcRenderer.removeListener("window:presentation", handler);
+  },
+
   // --- multi-window / tabs ---
   // Open a new empty document window.
   newWindow: () => ipcRenderer.invoke("window:new"),
