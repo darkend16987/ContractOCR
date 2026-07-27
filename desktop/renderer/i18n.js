@@ -553,6 +553,8 @@
     "ed-hint", "te-hint",
     // Live "will delete N pages: …" summary, rewritten on every keystroke (BI-10).
     "delrange-preview",
+    // Same, for "Áp ảnh / chữ ký cho nhiều trang" (BI-10).
+    "imgpages-hint",
     // Live page counter shown in full-screen reading mode (BI-10).
     "present-page",
   ]);

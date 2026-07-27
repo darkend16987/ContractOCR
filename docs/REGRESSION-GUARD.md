@@ -287,6 +287,22 @@ Mỗi mục: **bất biến → ở đâu → vì sao → dấu hiệu vỡ.**
   thoại Lưu. Trần tính trên **chuỗi cuối cùng**, không tính theo số trang: `baseName`
   là dữ liệu người dùng, dài bao nhiêu không biết trước. Thứ tự cắt: thu gọn phần
   trang trước (rẻ hơn), cắt phần tên gốc sau cùng.
+- **Bản sao duy nhất còn sót đã hợp nhất 2026-07-28**: `editor.js` từng có
+  `parsePageRanges()` riêng cho hộp thoại “Áp ảnh / chữ ký cho nhiều trang”, viết
+  **trước** khi có luật này. Nó khác `parseSpec` theo hướng chỉ gây hại: gạch en
+  (`1–3` — thứ Word/Excel sinh ra) và dấu chấm phẩy bị coi là **rác**, và **một**
+  token hỏng làm **hỏng cả chuỗi**. Nay dùng chung `window.PageRange.parseSpec`.
+  Đi kèm **hai thay đổi hành vi có chủ ý**, không được coi là hồi quy:
+  1. token rác bị **bỏ qua** thay vì từ chối cả chuỗi;
+  2. số vượt trang cuối bị **kẹp** về trang cuối thay vì biến mất.
+  Điều kiện để hai thay đổi đó chấp nhận được là **người dùng nhìn thấy kết quả
+  trước khi bấm**: `syncImgPages()` viết bản xem trước vào `#imgpages-hint` mỗi lần
+  gõ và **khoá nút Áp dụng** khi không còn trang nào — đúng khuôn `syncDeleteRange()`
+  của hộp thoại xoá. **Bỏ bản xem trước đi là làm hai thay đổi trên thành lỗi im lặng**
+  (gõ `99` trên tài liệu 10 trang sẽ đóng dấu chữ ký lên trang 10 mà không ai biết).
+  Ba tình huống hỏng có **ba câu thông báo riêng** — “chưa nhận ra trang nào” khác
+  hẳn “chỉ gõ đúng trang ảnh đang nằm”; trước đây hai cái dùng chung một câu sai.
+  `#imgpages-hint` vì thế phải nằm trong `SKIP_IDS` (BI-10).
 - `app.js` gọi qua `window.PageRange.*` (có tên gọi rõ ràng), **không** gọi tên trần — xem BI-14.
 - **Vỡ khi:** gõ “từ 5 đến 12, trừ 7” mà trang 7 vẫn biến mất · hoặc “Chọn tất cả” rồi
   Tách ra file mới thì hộp thoại Lưu hiện tên file rác/dài lê thê.
@@ -450,6 +466,7 @@ Mỗi mục: **bất biến → ở đâu → vì sao → dấu hiệu vỡ.**
 | Thêm nút tính năng mới | BI-9: khoá bản quyền có ăn không · BI-10: đổi VI/EN không mất chữ |
 | Menu chuột phải trên thumbnail (`openThumbMenu`) | BI-26 · chuột phải **ngoài** vùng đang chọn → chỉ chọn trang đó · chuột phải **trong** vùng đang chọn → giữ nguyên nhiều trang · đang Chú thích/Sửa nội dung → **không** ra menu · chọn hết trang → mục Xoá phải mờ |
 | `page-range.js` hay hộp thoại xoá theo khoảng | `cd desktop ; npm run test:pages` · gõ “từ 5 đến 12, trừ 7” trên tài liệu thật → trang 7 **còn nguyên** · Ctrl+Z quay lại đủ trang (BI-27, BI-3) |
+| Hộp thoại “Áp ảnh / chữ ký cho nhiều trang” (`imgPagesSpec`, `syncImgPages`) | `npm run test:pages` · chèn 1 ảnh rồi Áp nhiều trang: gõ `1-3` → dòng gợi ý ghi đúng “Sẽ áp sang N trang: …” và nút Áp dụng **mở** · dán `1–3` (gạch en, copy từ Word) → **vẫn nhận** · gõ `abc` → “Chưa nhận ra trang nào”, nút Áp dụng **khoá** · gõ đúng số trang ảnh đang nằm → “Chỉ có đúng trang ảnh đang nằm”, nút **khoá** · gõ số lớn hơn số trang → gợi ý cho thấy nó **kẹp về trang cuối** trước khi bấm · Ctrl+Z hoàn tác được (BI-27, BI-10) |
 | Tên file gợi ý khi Tách trang (`extractFileName`) | `npm run test:pages` · mở PDF ≥200 trang → Chọn tất cả bỏ 1 trang → Tách → tên trong hộp thoại Lưu **ngắn, đọc được**, lưu thành công (BI-27) |
 | Badge trạng thái (`renderSidecarBadge`, `setApiBadge`, `/config`) | Mở app lúc engine chưa lên → OCR chấm rỗng, API “…” · engine lên & chưa có key → API chấm rỗng vàng · nhập key → chuyển xanh **ngay**, không cần khởi động lại · bấm badge API → mở Cài đặt đúng ô nhập · đổi VI↔EN → cả hai badge đổi theo (BI-29) |
 | Bất kỳ điều kiện nào đọc `Editor.active` / `TextEdit.active` | Vào Chú thích rồi bấm ↑/↓/PageUp/PageDown/Delete → **không** có lỗi trong console, trang không bị xoá · thoát Chú thích → Delete xoá lại được (BI-28) |

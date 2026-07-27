@@ -4,7 +4,21 @@
 > [DESIGN.md](DESIGN.md) (kiến trúc), [ROADMAP.md](ROADMAP.md) (tiến độ chi tiết),
 > [SETUP.md](SETUP.md) (dựng môi trường).
 
-_Cập nhật: 2026-07-28 · v0.2.46_
+_Cập nhật: 2026-07-28 · v0.2.47_
+
+> v0.2.47 — **hotfix: hợp nhất số học khoảng trang trong hộp thoại "Áp ảnh/chữ ký cho
+> nhiều trang"** (chỉ renderer — **sidecar KHÔNG đổi, không cần rebuild**):
+> - `editor.js` có một bản sao riêng của số học khoảng trang, viết **trước** khi
+>   BI-27 (docs/REGRESSION-GUARD.md) bắt số học đó phải sống ở
+>   [`page-range.js`](desktop/renderer/page-range.js). Bản cũ chỉ gây hại: gạch en
+>   `1–3` (thứ Word/Excel dán vào) và dấu chấm phẩy bị coi là rác, một token hỏng
+>   làm hỏng **cả chuỗi**. Nay dùng chung `window.PageRange.parseSpec`.
+> - Đi kèm hai thay đổi hành vi **có chủ ý**: token rác bị bỏ qua thay vì từ chối cả
+>   chuỗi, số vượt trang cuối bị kẹp thay vì biến mất. Cả hai chỉ chấp nhận được vì
+>   hộp thoại giờ có **bản xem trước sống** trước khi bấm Áp dụng (`syncImgPages`,
+>   cùng khuôn hộp thoại xoá theo khoảng) + khoá nút khi không còn trang nào áp được.
+> - Kiểm chứng bằng probe cắt thẳng hai hàm từ `editor.js` lúc chạy (không copy tay),
+>   chạy với `page-range.js` thật: 22/22 pass, gồm 4 ca tái tạo đúng lỗi cũ.
 
 > v0.2.46 — **Mở file vào tab hay cửa sổ (tuỳ chọn) + vá OOM Ảnh→PDF + hai lưới test mới**
 > (chỉ renderer/main + tài liệu — **sidecar KHÔNG đổi, không cần rebuild**):

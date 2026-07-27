@@ -1786,27 +1786,52 @@
     return true;
   }
 
-  // Parse a page-range string like "1-3, 5, 8-10" into a Set of 0-based page
-  // indices within [0, count). Returns null on any malformed token; out-of-range
-  // numbers are silently dropped. Page numbers in the string are 1-based.
-  function parsePageRanges(str, count) {
-    const out = new Set();
-    for (const partRaw of String(str || "").split(",")) {
-      const part = partRaw.trim();
-      if (!part) continue;
-      const m = /^(\d+)\s*-\s*(\d+)$/.exec(part);
-      if (m) {
-        let a = +m[1], b = +m[2];
-        if (a > b) [a, b] = [b, a];
-        for (let n = a; n <= b; n++) if (n >= 1 && n <= count) out.add(n - 1);
-      } else if (/^\d+$/.test(part)) {
-        const n = +part;
-        if (n >= 1 && n <= count) out.add(n - 1);
-      } else {
-        return null;
-      }
+  // What the current "Áp nhiều trang" input resolves to.
+  //
+  // The arithmetic is deliberately NOT reimplemented here: `window.PageRange.parseSpec`
+  // is the app's ONE page-spec parser (BI-27), the same one behind "Xoá nhiều trang
+  // theo khoảng" and mirroring the sidecar's `_parse_ranges` — so "1-3, 5" means the
+  // same pages everywhere a user can type it.
+  //
+  // This file used to carry its own copy, written before that rule existed, and it
+  // differed in ways that only ever hurt: an en dash ("1–3", what Word and Excel
+  // produce) counted as junk, a semicolon was junk, and ONE bad token threw the whole
+  // string away. Merging brings two behaviour changes with it — a junk token is now
+  // skipped instead of failing the spec, and a number past the last page clamps to it
+  // instead of vanishing. Neither is allowed to be a surprise: `syncImgPages` shows the
+  // resolved pages BEFORE the user commits, which is also how the delete-range dialog
+  // has always worked (app.js `syncDeleteRange`).
+  //
+  // Returns { count, hit, raw, targets }: `raw` is what the text parsed to, `targets`
+  // is that minus the page the image already sits on, sorted.
+  function imgPagesSpec() {
+    const hit = ed.sel != null ? findAnnot(ed.sel) : null;
+    const count = (state.pdf && state.pdf.numPages) || 0;
+    const raw = window.PageRange.parseSpec($("imgpages-input").value, count);
+    const targets = new Set(raw);
+    if (hit) targets.delete(hit.page); // the source page already carries the image
+    return { count, hit, raw, targets: [...targets].sort((a, b) => a - b) };
+  }
+
+  // Live preview + OK gate. Three distinct outcomes get three distinct sentences —
+  // "you typed nothing we recognise" and "you named only the page it is already on"
+  // are different problems and used to share one misleading message.
+  // #imgpages-hint is rewritten on every keystroke, so it is in i18n's SKIP_IDS (BI-10).
+  function syncImgPages() {
+    const hint = $("imgpages-hint");
+    const ok = $("imgpages-ok");
+    const s = imgPagesSpec();
+    if (ok) ok.disabled = !s.targets.length;
+    if (!hint) return;
+    if (!$("imgpages-input").value.trim()) {
+      hint.textContent = `Tài liệu có ${s.count} trang. Ảnh đang ở trang ${s.hit ? s.hit.page + 1 : 1}.`;
+    } else if (!s.raw.size) {
+      hint.textContent = "Chưa nhận ra trang nào — vd: 1-3, 5, 8-10.";
+    } else if (!s.targets.length) {
+      hint.textContent = "Chỉ có đúng trang ảnh đang nằm — chọn thêm trang khác.";
+    } else {
+      hint.textContent = `Sẽ áp sang ${s.targets.length} trang: ${window.PageRange.formatList(s.targets)}.`;
     }
-    return out;
   }
 
   function openImgPages() {
@@ -1819,9 +1844,8 @@
       toast("Chỉ áp được cho ảnh / chữ ký đang chọn.", "bad");
       return;
     }
-    const count = (state.pdf && state.pdf.numPages) || 0;
     $("imgpages-input").value = "";
-    $("imgpages-hint").textContent = `Tài liệu có ${count} trang. Ảnh đang ở trang ${hit.page + 1}.`;
+    syncImgPages(); // fills the hint and starts with OK disabled (nothing typed yet)
     $("imgpages-modal").hidden = false;
     setTimeout(() => $("imgpages-input").focus(), 0);
   }
@@ -1832,21 +1856,17 @@
       $("imgpages-modal").hidden = true;
       return;
     }
-    const count = (state.pdf && state.pdf.numPages) || 0;
-    const set = parsePageRanges($("imgpages-input").value, count);
-    if (set === null) {
-      toast("Khoảng trang không hợp lệ. Ví dụ: 1-3, 5, 8-10", "bad");
-      return;
-    }
-    set.delete(hit.page); // the source page already carries the image
-    if (!set.size) {
-      toast("Không có trang hợp lệ để áp (ngoài trang hiện tại).", "warn");
+    const { targets } = imgPagesSpec();
+    // Unreachable via the OK button (syncImgPages disables it), but Enter in the
+    // field lands here too, so the guard stays.
+    if (!targets.length) {
+      toast("Chưa có trang hợp lệ để áp. Ví dụ: 1-3, 5, 8-10", "bad");
       return;
     }
     pushEdUndo();
     const src = hit.a;
     let added = 0;
-    for (const idx of set) {
+    for (const idx of targets) {
       annotsFor(idx).push({
         id: ed.seq++,
         kind: "image",
@@ -2933,6 +2953,7 @@
   $("ed-img-pages").onclick = openImgPages;
   $("imgpages-ok").onclick = applyImgPages;
   $("imgpages-cancel").onclick = () => ($("imgpages-modal").hidden = true);
+  $("imgpages-input").addEventListener("input", syncImgPages);
   $("imgpages-input").addEventListener("keydown", (e) => {
     if (e.key === "Enter") {
       e.preventDefault();
