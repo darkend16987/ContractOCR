@@ -1011,6 +1011,18 @@
         <hr class="set-div" />
         <div class="set-row-between">
           <div>
+            <b>Mở file mới trong</b>
+            <p class="cmp-note" style="margin:2px 0 0">Áp dụng khi tab hiện tại đã có tài liệu · chọn nhiều file cùng lúc thì cả loạt vào chung một cửa sổ mới</p>
+          </div>
+          <select id="set-open-in">
+            <option value="tab">Tab mới</option>
+            <option value="window">Cửa sổ mới</option>
+          </select>
+        </div>
+
+        <hr class="set-div" />
+        <div class="set-row-between">
+          <div>
             <b>Mở lại phiên trước</b>
             <p class="cmp-note" style="margin:2px 0 0">Khởi động lại app thì mở lại đúng các tab lần trước</p>
           </div>
@@ -1184,6 +1196,9 @@
     <script src="vendor/pdf.min.js"></script>
     <script src="i18n.js"></script>
     <script src="page-range.js"></script>
+    <!-- wire.js must load BEFORE app.js / text-edit.js / compare.js: they call
+         pdfJsonBody / b64ToU8 by bare name out of the shared script scope. -->
+    <script src="wire.js"></script>
     <script src="app.js"></script>
     <!-- pan.js must load AFTER app.js ($ / state / isTyping come from it) and
          BEFORE editor.js / capture.js, so its capture-phase viewer listener is

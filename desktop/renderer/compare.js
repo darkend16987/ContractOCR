@@ -13,8 +13,9 @@
  * both panes to the pages it touches.
  *
  * Reuses globals from app.js (classic scripts share global scope): sidecarFetch,
- * toast, showOverlay, hideOverlay, u8ToB64, toU8, sidecar, pdfjsLib. Nothing here
- * touches the main viewer `state`, so existing tools are unaffected.
+ * toast, showOverlay, hideOverlay, toU8, sidecar, pdfjsLib — plus pdfJsonBody and
+ * b64ToU8, which come from wire.js (same shared scope; it loads first). Nothing
+ * here touches the main viewer `state`, so existing tools are unaffected.
  */
 (function () {
   const el = (id) => document.getElementById(id);

@@ -448,5 +448,102 @@ pw = mkPresentWin([1], { presenting: true, fullScreen: true });
 pw._applyPresentation(false);
 check("OS thoát toàn màn hình → renderer được báo", [pw._presenting, pw._sent[0][2]], [false, false]);
 
+// ---------------------------------------------------------------------------
+console.log("\n-- prefs.js (tuỳ chọn phía main) --");
+// The "Mở file mới trong" setting has to be readable before any renderer exists
+// (Explorer "Open with" arrives with no window), so it lives on disk in main.
+
+const Prefs = require(path.join(__dirname, "..", "src", "prefs.js"));
+const prefsFile = path.join(fsx.mkdtempSync(path.join(os.tmpdir(), "nabu-prefs-")), "prefs.json");
+
+Prefs.configure({ file: prefsFile });
+check("chưa có file → mặc định 'tab' (hành vi cũ)", Prefs.getOpenIn(), "tab");
+
+check("đặt 'window' trả về đúng giá trị đã lưu", Prefs.setOpenIn("window"), "window");
+check("… và ghi ra đĩa", JSON.parse(fsx.readFileSync(prefsFile, "utf8")), { v: 1, openIn: "window" });
+Prefs.configure({ file: prefsFile });
+check("… đọc lại sau khi khởi động lại", Prefs.getOpenIn(), "window");
+
+// The value crosses an IPC boundary from the renderer, so it is untrusted input:
+// anything outside the whitelist must land on the default, not in window routing.
+check("giá trị lạ → về mặc định", Prefs.setOpenIn("popup"), "tab");
+check("null → về mặc định", Prefs.setOpenIn(null), "tab");
+check("object → về mặc định", Prefs.setOpenIn({ openIn: "window" }), "tab");
+
+fsx.writeFileSync(prefsFile, "{ not json");
+Prefs.configure({ file: prefsFile });
+check("file hỏng → mặc định, không ném lỗi", Prefs.getOpenIn(), "tab");
+fsx.writeFileSync(prefsFile, JSON.stringify({ v: 99, openIn: "window" }));
+Prefs.configure({ file: prefsFile });
+check("file phiên bản lạ → bỏ qua", Prefs.getOpenIn(), "tab");
+fsx.writeFileSync(prefsFile, JSON.stringify({ v: 1, openIn: "elsewhere" }));
+Prefs.configure({ file: prefsFile });
+check("giá trị hỏng trên đĩa → bỏ qua", Prefs.getOpenIn(), "tab");
+
+try {
+  fsx.rmSync(path.dirname(prefsFile), { recursive: true, force: true });
+} catch (_) {
+  /* temp dir cleanup is best-effort */
+}
+
+// ---------------------------------------------------------------------------
+console.log("\n-- planOpen (mở file vào đâu) --");
+// BI-8 lives here: no route may ever drop a document on top of one already open.
+// Every case below is checked for that as well as for the requested placement.
+
+const plan = (paths, opts) => Tabs.planOpen(paths, opts);
+const PA = "a.pdf";
+const PB = "b.pdf";
+
+check("mặc định: 1 file → tab mới ở cửa sổ này", plan([PA], { openIn: "tab" }), {
+  fill: null,
+  sameWindow: [PA],
+  newWindow: [],
+});
+check("tuỳ chọn cửa sổ: 1 file → cửa sổ mới", plan([PA], { openIn: "window" }), {
+  fill: null,
+  sameWindow: [],
+  newWindow: [PA],
+});
+check("tuỳ chọn cửa sổ: nhiều file → MỘT cửa sổ mới, không phải mỗi file một cửa sổ", plan([PA, PB], { openIn: "window" }), {
+  fill: null,
+  sameWindow: [],
+  newWindow: [PA, PB],
+});
+// An empty tab is the user filling THIS window; the preference is about adding a
+// document *alongside* one, so it stands down — otherwise the blank window they
+// are looking at stays blank and a second one appears.
+check("tab đang trống → nạp vào chính tab đó, kể cả khi chọn 'cửa sổ mới'", plan([PA], { fillCurrent: true, openIn: "window" }), {
+  fill: PA,
+  sameWindow: [],
+  newWindow: [],
+});
+check("tab trống + nhiều file → file đầu vào tab này, phần còn lại là tab ở cùng cửa sổ", plan([PA, PB], { fillCurrent: true, openIn: "window" }), {
+  fill: PA,
+  sameWindow: [PB],
+  newWindow: [],
+});
+check("tab trống + mặc định", plan([PA, PB], { fillCurrent: true, openIn: "tab" }), {
+  fill: PA,
+  sameWindow: [PB],
+  newWindow: [],
+});
+// BI-8: the asking tab only ever receives a document when it was declared empty.
+check("KHÔNG bao giờ đè lên tab đang có tài liệu (mặc định)", plan([PA, PB], { openIn: "tab" }).fill, null);
+check("KHÔNG bao giờ đè lên tab đang có tài liệu (cửa sổ mới)", plan([PA, PB], { openIn: "window" }).fill, null);
+// Junk in, nothing out — an empty batch must not create an empty window.
+check("danh sách rỗng", plan([], { openIn: "window" }), { fill: null, sameWindow: [], newWindow: [] });
+check("không phải mảng", plan(null, { openIn: "window" }), { fill: null, sameWindow: [], newWindow: [] });
+check("lọc phần tử rác", plan([PA, "", null, 7, PB], { openIn: "tab" }).sameWindow, [PA, PB]);
+check("tab trống nhưng danh sách rỗng → không nạp gì", plan([], { fillCurrent: true }), {
+  fill: null,
+  sameWindow: [],
+  newWindow: [],
+});
+// An unreadable preference must degrade to the behaviour that existed before the
+// setting did, never to "scatter the user's documents across new windows".
+check("thiếu tuỳ chọn → coi như 'tab'", plan([PA]), { fill: null, sameWindow: [PA], newWindow: [] });
+check("tuỳ chọn rác → coi như 'tab'", plan([PA], { openIn: "nonsense" }), { fill: null, sameWindow: [PA], newWindow: [] });
+
 console.log(`\n${pass} pass, ${fail} fail`);
 process.exit(fail ? 1 : 0);

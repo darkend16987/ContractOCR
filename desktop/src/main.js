@@ -6,6 +6,7 @@ const crypto = require("crypto");
 const { app, BrowserWindow, Menu, ipcMain, dialog, shell, session, clipboard, nativeImage, screen } = require("electron");
 const { startSidecar, stopSidecar } = require("./sidecar");
 const Session = require("./session");
+const Prefs = require("./prefs");
 const { initAutoUpdate } = require("./updater");
 const { initLicense } = require("./license");
 const { initSigning } = require("./signing");
@@ -73,12 +74,17 @@ function hardenNav(webContents) {
   });
 }
 
-// Open a PDF path in the app: as a new TAB in the focused window if one exists,
-// otherwise in a fresh window. Used by "Open with" / drag-onto-icon and the
-// second-instance handler (double-clicking more PDFs → more tabs).
+// Open a PDF path in the app: as a new TAB in the focused window, or in a fresh
+// window — whichever the "Mở file mới trong" setting says (default: tab, the
+// behaviour that predates the setting). Used by "Open with" / drag-onto-icon and
+// the second-instance handler (double-clicking more PDFs).
+//
+// This route is exactly why that preference has to live in main (src/prefs.js):
+// a file arriving from Explorer may find no window open at all, so there is no
+// renderer to ask.
 function openPathInApp(filePath) {
   const tw = Tabs.focusedTabbedWindow();
-  if (tw) {
+  if (tw && Prefs.getOpenIn() === "tab") {
     tw.createTab({ openPath: filePath });
     tw.focus();
   } else {
@@ -475,6 +481,10 @@ if (!app.requestSingleInstanceLock()) {
       anyClosing: Tabs.anyClosing,
     });
 
+    // Must come before the first window is created below: the launch path can
+    // already be routing a file handed over by Explorer.
+    Prefs.configure({ file: path.join(app.getPath("userData"), "prefs.json") });
+
     buildMenu(menuLang);
     // Open a file passed on the command line (Windows "Open with") or stashed by
     // a pre-ready macOS open-file event; otherwise reopen the previous session.
@@ -848,12 +858,16 @@ ipcMain.handle("tabs:open-paths", (e, { paths, fillCurrent } = {}) => {
   const found = Tabs.findDoc(e.sender);
   const tw = found ? found.tw : Tabs.focusedTabbedWindow();
   if (!tw || !Array.isArray(paths) || !paths.length) return false;
-  let start = 0;
-  if (fillCurrent) {
-    sendFileToView(e.sender, paths[0]);
-    start = 1;
+  // The placement decision is pure and tested (Tabs.planOpen, BI-8 + BI-35);
+  // this handler only carries it out.
+  const plan = Tabs.planOpen(paths, { fillCurrent, openIn: Prefs.getOpenIn() });
+  if (plan.fill) sendFileToView(e.sender, plan.fill);
+  for (const p of plan.sameWindow) tw.createTab({ openPath: p });
+  if (plan.newWindow.length) {
+    // One new window for the whole batch — the rest ride along as its tabs.
+    const nw = Tabs.createTabbedWindow(plan.newWindow[0]);
+    for (let i = 1; i < plan.newWindow.length; i++) nw.createTab({ openPath: plan.newWindow[i] });
   }
-  for (let i = start; i < paths.length; i++) tw.createTab({ openPath: paths[i] });
   return true;
 });
 
@@ -934,6 +948,15 @@ function hasRecoveryOrphans() {
 
 ipcMain.handle("session:get-restore", () => Session.isEnabled());
 ipcMain.handle("session:set-restore", (_e, on) => Session.setEnabled(on));
+
+// ---- IPC: main-side preferences ------------------------------------------
+
+// "Mở file mới trong: Tab mới / Cửa sổ mới". Both handlers return the value
+// actually stored, so the Settings dialog shows what main will really do rather
+// than what the renderer asked for (setOpenIn rejects anything off the list —
+// this crosses a process boundary, so the value is untrusted input).
+ipcMain.handle("prefs:get-open-in", () => Prefs.getOpenIn());
+ipcMain.handle("prefs:set-open-in", (_e, v) => Prefs.setOpenIn(v));
 
 ipcMain.handle("recovery:save", async (_e, { docId, bytes, name, srcPath } = {}) => {
   try {

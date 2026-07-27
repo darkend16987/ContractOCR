@@ -444,6 +444,11 @@
     "Dải đường dẫn ngay dưới thanh công cụ — tắt đi để trang rộng thêm":
       "The path strip under the toolbar — turn it off to give the page more room",
     "Kéo để đổi bề rộng · bấm đúp để về mặc định": "Drag to resize · double-click to reset",
+    "Mở file mới trong": "Open new files in",
+    "Áp dụng khi tab hiện tại đã có tài liệu · chọn nhiều file cùng lúc thì cả loạt vào chung một cửa sổ mới":
+      "Applies when the current tab already holds a document · picking several files at once puts the whole batch in one new window",
+    "Tab mới": "New tab",
+    "Cửa sổ mới": "New window",
     "Mở lại phiên trước": "Reopen last session",
     "Khởi động lại app thì mở lại đúng các tab lần trước": "Reopen the same tabs the next time the app starts",
     // ("Tiếng Việt" / "Tiếng Anh" defined once in the translate-dialog block.)

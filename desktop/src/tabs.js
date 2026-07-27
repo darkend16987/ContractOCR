@@ -810,6 +810,32 @@ function createTabbedWindow(openPath) {
   return tw;
 }
 
+// Where a batch of paths handed to an existing window should land. Kept pure and
+// exported because this routing IS the whole user-visible behaviour of the
+// "Mở file mới trong" setting, and getting it wrong is how BI-8 happened —
+// see test/tabs-logic.test.js.
+//
+//   fillCurrent  the asking tab is still empty, so it takes paths[0] rather than
+//                being left blank beside a new one
+//   openIn       "tab" (new tabs in the asking window) | "window" (one new
+//                window, the asking one untouched)
+//
+// Two rules worth stating out loud:
+//   · An EMPTY tab means the user is filling *this* window, not adding a document
+//     alongside one — so the preference stands down and the whole batch stays
+//     here. Otherwise picking 3 files in a blank window would leave that window
+//     blank and open another.
+//   · With "window" and several files picked at once, they become tabs of ONE new
+//     window. One window per file would mean one renderer process per file: a
+//     30-file selection would be a resource event, not a service.
+function planOpen(paths, { fillCurrent = false, openIn = "tab" } = {}) {
+  const list = (Array.isArray(paths) ? paths : []).filter((p) => typeof p === "string" && p);
+  const fill = fillCurrent && list.length ? list[0] : null;
+  const rest = fill ? list.slice(1) : list;
+  const toNewWindow = openIn === "window" && !fillCurrent;
+  return { fill, sameWindow: toNewWindow ? [] : rest, newWindow: toNewWindow ? rest : [] };
+}
+
 function count() {
   return tabbedWindows.size;
 }
@@ -830,6 +856,7 @@ function windowLabel(tw) {
 module.exports = {
   configure,
   createTabbedWindow,
+  planOpen,
   findDoc,
   findByStrip,
   focusedTabbedWindow,

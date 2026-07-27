@@ -4,7 +4,40 @@
 > [DESIGN.md](DESIGN.md) (kiến trúc), [ROADMAP.md](ROADMAP.md) (tiến độ chi tiết),
 > [SETUP.md](SETUP.md) (dựng môi trường).
 
-_Cập nhật: 2026-07-27 · v0.2.45_
+_Cập nhật: 2026-07-28 · v0.2.46_
+
+> v0.2.46 — **Mở file vào tab hay cửa sổ (tuỳ chọn) + vá OOM Ảnh→PDF + hai lưới test mới**
+> (chỉ renderer/main + tài liệu — **sidecar KHÔNG đổi, không cần rebuild**):
+> - **Tuỳ chọn “Mở file mới trong: Tab mới / Cửa sổ mới”** (Cài đặt, mặc định *Tab mới* =
+>   hành vi cũ). Điều đáng nhớ khi làm: **có BA đường mở file**, không phải một — nút Mở /
+>   Ctrl+O, kéo–thả PDF vào tab đang có tài liệu, và Explorer “Open with”. Nối tuỳ chọn
+>   vào mỗi nút Mở là ra đúng loại setting làm nửa vời. Vì đường thứ ba có thể tới lúc
+>   **chưa có cửa sổ nào** (không có renderer để hỏi), tuỳ chọn phải sống ở **main** —
+>   file mới [`src/prefs.js`](desktop/src/prefs.js), `userData/prefs.json`, cùng lý do
+>   `session.js` giữ cờ `restore` trên đĩa. Hai luật: **tab trống thắng tuỳ chọn** (không
+>   thì chọn 3 file trong cửa sổ trắng sẽ để nguyên cửa sổ trắng đó rồi mở cửa sổ thứ hai)
+>   và **nhiều file + “cửa sổ mới” = MỘT cửa sổ** chứa cả loạt (mỗi file một cửa sổ =
+>   mỗi file một tiến trình renderer). Quyết định nằm ở `Tabs.planOpen()` — thuần, có lưới.
+>   Xem **BI-35**.
+> - **Vá phình bộ nhớ “Ảnh → PDF”** — chỗ cuối cùng còn vi phạm BI-24, và nó phình **hai
+>   lần**: giữ base64 của *mọi* ảnh đã chọn suốt lúc hộp thoại mở, rồi `JSON.stringify` cả
+>   mảng đó thành một chuỗi nữa (100 ảnh 5MB ⇒ ~670MB tạm chồng lên ~670MB đang giữ). Nay
+>   giữ **byte thô**, mã hoá theo mảnh lúc gửi (`binArrayJsonBody`), xoá danh sách sau khi
+>   tạo xong — giữ lại khi lỗi để còn thử lại. **Xoá luôn `u8ToB64`**: sau khi vá nó là hàm
+>   chết, và là công cụ duy nhất dựng được payload thành một chuỗi JS — tức chính cái bẫy
+>   BI-24 sinh ra để chặn.
+> - **Hai lưới test mới cho renderer/main.** Tiêu chí chọn *không* phải “file to” mà là
+>   **“sai ở đây có im lặng không”**: (1) file mới [`renderer/wire.js`](desktop/renderer/wire.js)
+>   tách bộ mã hoá payload khỏi `app.js` → `npm run test:wire` (51 ca), có **ca canh gác**
+>   chứng minh chunk không bội của 3 thật sự làm hỏng payload; (2) `prefs.js` + `planOpen`
+>   vào `npm run test:tabs` (89 → 113 ca). `wire.js` **cố tình giữ tên trần** vì 16 chỗ gọi
+>   `pdfJsonBody`/`b64ToU8` có sẵn — đổi sang `window.Wire.*` là tự chuốc rủi ro BI-14.
+>   Đã probe trong Chromium thật (24/24) rằng tên trần nhìn thấy được từ script khác và
+>   `btoa` của Chromium ra y hệt node ở mọi mốc biên.
+> - Ngược lại, **lưới đầy đủ cho `app.js`/`editor.js`/`text-edit.js` bị bác bỏ có chủ ý**:
+>   ~11.000 dòng bám DOM/canvas/pdf.js, jsdom không chạy được pdf.js lẫn canvas → lưới dựng
+>   ra sẽ test phần vô hại và bỏ sót phần nguy hiểm. Công cụ đúng ở đó là probe trình duyệt.
+>   Ghi ở [docs/REGRESSION-GUARD.md](docs/REGRESSION-GUARD.md) §1.
 
 > v0.2.45 — **Bàn tay (pan) + dải thumbnail trong Toàn màn hình + kéo giãn danh sách trang**
 > (chỉ renderer + tài liệu — **sidecar KHÔNG đổi, không cần rebuild**):

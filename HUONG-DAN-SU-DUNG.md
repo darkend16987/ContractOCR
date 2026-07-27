@@ -12,10 +12,13 @@ Chỉ cần **một file duy nhất**, chọn 1 trong 2 kiểu:
 
 | Kiểu | File copy vào USB | Dùng khi |
 |------|-------------------|----------|
-| **Bản chạy thẳng (khuyên dùng)** | `NabuPDF-0.2.45-portable.exe` (~372 MB) | Cắm USB, chạy luôn, không cài. Tiện mang đi nhiều máy. |
-| **Bản cài đặt** | `NabuPDF-0.2.45-x64.exe` (~372 MB) | Cài cố định vào 1 máy (tạo shortcut, gỡ qua Control Panel). |
+| **Bản chạy thẳng (khuyên dùng)** | `NabuPDF-0.2.46-portable.exe` (~387 MB) | Cắm USB, chạy luôn, không cài. Tiện mang đi nhiều máy. |
+| **Bản cài đặt** | `NabuPDF-0.2.46-x64.exe` (~387 MB) | Cài cố định vào 1 máy (tạo shortcut, gỡ qua Control Panel). |
 
-Hai file này nằm ở: `D:\GitHub\ContractOCR\desktop\dist-app\`
+**Tải ở đâu:** trang phát hành — <https://github.com/darkend16987/NabuPDF/releases/latest>
+(kèm `SHA256SUMS.txt` để đối chiếu file tải về nếu cần).
+
+> Nếu bạn tự build trên máy phát triển thì hai file nằm ở `desktop\dist-app\` trong thư mục dự án.
 
 > **Không cần** copy thư mục `win-unpacked`, không cần cài Python, không cần `.venv`. Mọi thứ đã
 > gói sẵn trong file `.exe`.
@@ -25,12 +28,12 @@ Hai file này nằm ở: `D:\GitHub\ContractOCR\desktop\dist-app\`
 ## 2. Cách chạy
 
 ### Cách A — Bản chạy thẳng (portable)
-1. Copy `NabuPDF-0.2.45-portable.exe` vào USB (hoặc ổ cứng máy đích).
+1. Copy `NabuPDF-0.2.46-portable.exe` vào USB (hoặc ổ cứng máy đích).
 2. Nháy đúp để chạy. Lần đầu nó tự giải nén ra thư mục tạm (mất ~10–20 giây) rồi mở cửa sổ app.
 3. Xong. Không để lại gì trên máy (ngoài cache model, xem mục 4).
 
 ### Cách B — Bản cài đặt (installer)
-1. Copy `NabuPDF-0.2.45-x64.exe` vào máy đích.
+1. Copy `NabuPDF-0.2.46-x64.exe` vào máy đích.
 2. Nháy đúp → chọn thư mục cài → Next → Install.
 3. Chạy từ Start Menu / shortcut desktop. Gỡ qua **Settings → Apps** như phần mềm thường.
 
@@ -163,4 +166,4 @@ Nhập key **ngay trong app**, không cần đụng tới file hay biến môi t
 
 ---
 
-*Phiên bản: 0.2.45 · Đóng gói portable + installer cho Windows x64.*
+*Phiên bản: 0.2.46 · Đóng gói portable + installer cho Windows x64.*

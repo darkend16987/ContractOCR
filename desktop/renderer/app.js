@@ -2531,74 +2531,10 @@ async function runExport(fmt) {
 
 // ---- searchable PDF (sidecar; P3) ----------------------------------------
 
-// Encode a Uint8Array to base64 without blowing the call stack on big PDFs.
-function u8ToB64(u8) {
-  let s = "";
-  const chunk = 0x8000;
-  for (let i = 0; i < u8.length; i += chunk) {
-    s += String.fromCharCode.apply(null, u8.subarray(i, i + chunk));
-  }
-  return btoa(s);
-}
-// Build the JSON request body for a sidecar call that carries the whole PDF,
-// WITHOUT ever holding the payload as one JS string.
-//
-// The obvious `JSON.stringify({ pdf_b64: u8ToB64(bytes), ...fields })` costs three
-// full-size copies on the renderer heap: the binary string inside u8ToB64, the
-// base64 it returns, and stringify's copy of that base64 into the final body. On a
-// 134 MB document that is ~500 MB of transient strings on top of state.bytes and
-// the undo history — the same heap exhaustion v0.2.40 fixed for the DOWNLOAD
-// direction and left standing here.
-//
-// A Blob assembled from pieces keeps its bytes in Blink's blob store (spillable to
-// disk), not on the JS heap, so only one 48 KB chunk is ever live as a string. The
-// wire format is unchanged — the sidecar still receives ordinary JSON — so this is
-// purely a renderer-side memory fix with no API surface to keep in step.
-//
-// The chunk size MUST stay a multiple of 3: base64 only pads at the end of a
-// stream, so chunking on a 3-byte boundary lets the pieces be concatenated
-// verbatim. (49152 is also under the ~65535 argument ceiling of Function.apply.)
-//
-// `bins` is either a Uint8Array (sent as "pdf_b64") or an object of
-// field-name → Uint8Array, for the compare endpoints that carry two documents at
-// once — the heaviest call in the app, and the one that most needs this.
-function pdfJsonBody(bins, fields) {
-  const map = bins instanceof Uint8Array ? { pdf_b64: bins } : bins || {};
-  const chunk = 49152;
-  const parts = ["{"];
-  let first = true;
-  for (const name of Object.keys(map)) {
-    const u8 = map[name];
-    if (!u8) continue;
-    parts.push((first ? "" : ",") + JSON.stringify(name) + ':"');
-    first = false;
-    for (let i = 0; i < u8.length; i += chunk) {
-      parts.push(btoa(String.fromCharCode.apply(null, u8.subarray(i, i + chunk))));
-    }
-    parts.push('"');
-  }
-  for (const k of Object.keys(fields || {})) {
-    const v = fields[k];
-    if (v === undefined) continue;
-    parts.push((first ? "" : ",") + JSON.stringify(k) + ":" + JSON.stringify(v));
-    first = false;
-  }
-  parts.push("}");
-  return new Blob(parts, { type: "application/json" });
-}
-// Inverse of u8ToB64: decode a base64 PDF payload to bytes with a plain indexed
-// loop. Do NOT use Uint8Array.from(atob(b64), c => c.charCodeAt(0)) — its
-// iterator+callback path allocates ~one temp object per byte and blows the V8
-// heap on large (100 MB+) documents, which made an edit's re-render fail and
-// leave the page blank. This loop allocates only the binary string + the output
-// array. Shared with the sibling classic scripts (text-edit.js / compare.js).
-function b64ToU8(b64) {
-  const bin = atob(b64 || "");
-  const len = bin.length;
-  const out = new Uint8Array(len);
-  for (let i = 0; i < len; i++) out[i] = bin.charCodeAt(i);
-  return out;
-}
+// pdfJsonBody / binArrayJsonBody / b64ToU8 — and the 3-byte chunk rule behind
+// them — moved to renderer/wire.js so they could get an automated grid. Same
+// shared script scope, so the bare names used below are the same functions they
+// always were (BI-14/BI-24).
 
 async function makeSearchable() {
   if (gateProFeature()) return;
@@ -3005,7 +2941,9 @@ async function runSplit() {
 }
 
 // --- images → PDF ---
-let i2pImages = []; // [{ name, b64 }] picked by the user, in order
+// Picked images, in order. Held as RAW BYTES, not base64: the dialog can stay
+// open for a while, and base64 is 4/3 the size for no benefit until send time.
+let i2pImages = []; // [{ name, data: Uint8Array }]
 
 function openImagesToPdf() {
   if (!convertReady(false)) return; // no open doc needed — we build a new PDF
@@ -3026,7 +2964,7 @@ async function pickI2pImages() {
   const files = await window.desktop.openFiles({ multi: true });
   if (!files || !files.length) return;
   for (const f of files) {
-    i2pImages.push({ name: f.name, b64: u8ToB64(toU8(f.data)) });
+    i2pImages.push({ name: f.name, data: toU8(f.data) });
   }
   updateI2pUI();
 }
@@ -3043,16 +2981,20 @@ async function runImagesToPdf() {
     const res = await sidecarFetch("/images-to-pdf", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ images: i2pImages.map((x) => x.b64), page_size }),
+      body: binArrayJsonBody("images", i2pImages.map((x) => x.data), { page_size }),
     });
     const data = await res.json();
     if (!data.success) {
       toast("Tạo PDF lỗi: " + (data.error || data.detail || "không rõ"), "bad");
-      return;
+      return; // keep the picked images so the user can just retry
     }
     const bytes = b64ToU8(data.data_b64);
     const r = await window.desktop.savePdf(bytes, "images-to-pdf.pdf");
     if (r.saved) toast(`Đã tạo PDF ${data.pages} trang từ ảnh: ` + r.path, "good");
+    // Done with them — a photo batch is hundreds of MB to sit on until the
+    // dialog is next opened (which is the only other place this is reset).
+    i2pImages = [];
+    updateI2pUI();
   } catch (err) {
     toast("Lỗi tạo PDF: " + err.message, "bad");
   } finally {
@@ -3279,6 +3221,16 @@ async function openSettings() {
     window.desktop.session
       .getRestore()
       .then((on) => (restoreBox.checked = !!on))
+      .catch(() => {});
+  }
+  // Same deal for "Mở file mới trong" — main owns it (prefs.json), so read it
+  // back rather than assuming. On failure the select keeps its markup default
+  // ("tab"), which is also what main falls back to.
+  const openInSel = $("set-open-in");
+  if (openInSel && window.desktop.prefs) {
+    window.desktop.prefs
+      .getOpenIn()
+      .then((v) => (openInSel.value = v === "window" ? "window" : "tab"))
       .catch(() => {});
   }
   loadLicense();
@@ -4014,6 +3966,20 @@ if ($("set-lang")) {
 // with the dialog still open.
 if ($("set-breadcrumb")) {
   $("set-breadcrumb").onchange = (e) => setBreadcrumbEnabled(e.target.checked);
+}
+// "Mở file mới trong" — persisted by main, which is also the side that acts on
+// it: this renderer only asks to open a path, main decides tab vs window (see
+// tabs:open-paths / openPathInApp). Settle the select on what main stored, so a
+// rejected value doesn't leave the dialog showing something untrue.
+if ($("set-open-in")) {
+  $("set-open-in").onchange = (e) => {
+    if (!window.desktop.prefs) return;
+    const sel = e.target;
+    window.desktop.prefs
+      .setOpenIn(sel.value)
+      .then((v) => (sel.value = v === "window" ? "window" : "tab"))
+      .catch(() => {});
+  };
 }
 // Reopen-last-session toggle. Persisted by main, which is the only side that can
 // act on it (it reads the flag at launch, before any renderer exists).

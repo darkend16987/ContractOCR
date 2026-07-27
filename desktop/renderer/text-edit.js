@@ -17,7 +17,7 @@
  * exactly the pdf.js scale-1 viewport space — so on screen they're just `* scale`
  * (same convention as editor.js). Shares app.js globals (classic-script scope):
  * state, $, toast, showOverlay/hideOverlay, renderAll, updateToolbar, scrollToPage,
- * sidecarFetch, u8ToB64, sidecar.
+ * sidecarFetch, sidecar — plus pdfJsonBody from wire.js (same shared scope).
  */
 
 (function () {

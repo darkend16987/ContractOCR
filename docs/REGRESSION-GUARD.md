@@ -12,30 +12,43 @@ tài liệu này chỉ có giá trị nếu được cập nhật.
 
 | File | Dòng | Vì sao rủi ro cao |
 |---|---|---|
-| `desktop/renderer/app.js` | ~3750 | State trung tâm + 12 hàm nút thắt. **Gần như mọi bản phát hành đều đụng.** |
+| `desktop/renderer/app.js` | ~4440 | State trung tâm + 12 hàm nút thắt. **Gần như mọi bản phát hành đều đụng.** |
 | `desktop/renderer/editor.js` | ~3340 | Overlay annotation, bake, form. Diff lớn nhất mỗi lần release. |
 | `desktop/src/main.js` + `src/tabs.js` | — | Tầng cửa sổ/tab — **hệ con mới nhất, ít va đập thực tế nhất** (ra mắt v0.2.41). Có lưới tự động `npm run test:tabs` cho phần logic thuần. |
-| `desktop/renderer/page-range.js` | ~120 | Số học khoảng trang. Rủi ro **thấp** vì có lưới `npm run test:pages`, nhưng hậu quả sai là **mất trang tài liệu** → xem BI-27. |
-| `desktop/renderer/pan.js` | ~370 | Bàn tay/pan. Rủi ro **trung bình**: nó giành sự kiện chuột **trên cùng phần tử** với `editor.js`/`capture.js`. Nửa logic có lưới `npm run test:pan`; nửa DOM thì không → xem BI-30/31. |
+| `desktop/renderer/page-range.js` | ~170 | Số học khoảng trang. Rủi ro **thấp** vì có lưới `npm run test:pages`, nhưng hậu quả sai là **mất trang tài liệu** → xem BI-27. |
+| `desktop/renderer/pan.js` | ~380 | Bàn tay/pan. Rủi ro **trung bình**: nó giành sự kiện chuột **trên cùng phần tử** với `editor.js`/`capture.js`. Nửa logic có lưới `npm run test:pan`; nửa DOM thì không → xem BI-30/31. |
+| `desktop/renderer/wire.js` | ~130 | Bộ mã hoá payload nhị phân. Rủi ro **thấp** nhờ lưới `npm run test:wire`, nhưng sai ở đây **im lặng**: request vẫn đúng cú pháp, chỉ là base64 hỏng → xem BI-24. |
+| `desktop/src/prefs.js` | ~80 | Tuỳ chọn phía main. Rủi ro thấp; nằm trong lưới `npm run test:tabs`. |
 | `api.py` + `src/pdf/*.py` | — | Có lưới test tự động (`run_tests.py`) → rủi ro thấp hơn renderer. |
 
-> Renderer gần như **không có** test tự động — ngoại lệ duy nhất là `page-range.js`
-> (không đụng DOM nên chạy được dưới node). Mọi bảo đảm còn lại ở renderer đến từ tài
-> liệu này + test tay. Đó là lý do sổ bất biến tồn tại.
+> Renderer gần như **không có** test tự động. Ngoại lệ là ba file được **cố ý tách ra
+> cho DOM-free**: `page-range.js`, `pan.js` (nửa trên), `wire.js`. Tiêu chí chọn tách
+> không phải “file to” mà là **“sai ở đây có im lặng không”** — mất trang, giành nhầm
+> chuột, payload hỏng. Phần renderer còn lại (`app.js`, `editor.js`, `text-edit.js`)
+> đụng DOM/canvas/pdf.js ở mọi dòng nên chỉ có tài liệu này + test tay + probe trình
+> duyệt. Đó là lý do sổ bất biến tồn tại.
 
 ---
 
 ## 2. Kiến trúc phải nhớ trước khi sửa
 
-- 9 file JS của renderer (`i18n, page-range, app, pan, editor, text-edit, compare, capture, sign`)
-  nạp bằng `<script>` **classic**, dùng chung **một scope**. `state`, `toast`, `sidecarFetch`,
-  `showOverlay`… là biến toàn cục dùng chéo, **không phải module** → đổi tên một hàm
-  trong `app.js` có thể làm `editor.js` chết mà không hề có cảnh báo lúc build.
-  (`page-range.js` là ngoại lệ có chủ ý: nó **chỉ** phơi ra `window.PageRange`, không thả
-  tên trần nào vào scope chung, nên cũng `require()` được từ node để chạy test.
-  `pan.js` theo cùng khuôn nhưng **nửa vời có chủ ý**: nửa trên là logic thuần
-  `require()` được, nửa dưới đụng DOM và nằm sau cửa `typeof document === "undefined"`
-  → node nạp được nửa trên, trình duyệt chạy cả hai.)
+- 10 file JS của renderer (`i18n, page-range, wire, app, pan, editor, text-edit, compare,
+  capture, sign`) nạp bằng `<script>` **classic**, dùng chung **một scope**. `state`,
+  `toast`, `sidecarFetch`, `showOverlay`… là biến toàn cục dùng chéo, **không phải
+  module** → đổi tên một hàm trong `app.js` có thể làm `editor.js` chết mà không hề có
+  cảnh báo lúc build. Ba file tách ra để test được, theo **ba mức** khác nhau — đọc kỹ
+  trước khi tách file thứ tư:
+  - `page-range.js` — **sạch nhất**: chỉ phơi `window.PageRange`, không thả tên trần
+    nào vào scope chung, nên `require()` được từ node. Dùng cho code **mới**.
+  - `pan.js` — **nửa vời có chủ ý**: nửa trên logic thuần `require()` được, nửa dưới
+    đụng DOM nằm sau cửa `typeof document === "undefined"` → node nạp nửa trên,
+    trình duyệt chạy cả hai.
+  - `wire.js` — **cố tình giữ tên trần**: `pdfJsonBody` / `b64ToU8` có sẵn **16 chỗ
+    gọi** trong `app.js`/`text-edit.js`/`compare.js` từ trước khi tách. Khai ở top-level
+    một classic script thì chúng vẫn nằm đúng scope chung như cũ ⇒ **không phải sửa
+    chỗ gọi nào**. Đổi sang `window.Wire.*` là tự chuốc lấy đúng rủi ro BI-14. Đánh đổi:
+    `wire.js` **phải nạp trước** `app.js`/`text-edit.js`/`compare.js` trong `index.html`.
+    Đã kiểm chứng bằng probe rằng tên trần nhìn thấy được từ script khác.
 - **Mỗi tab = một renderer riêng** (`WebContentsView`, process riêng). `state` **không**
   chia sẻ giữa các tab. Cái chia sẻ là: main process, sidecar Python, thư mục recovery.
   → Mọi singleton ở main process là nguy cơ xung đột đa tab.
@@ -83,7 +96,9 @@ Mỗi mục: **bất biến → ở đâu → vì sao → dấu hiệu vỡ.**
 - **Hệ quả cần nhớ:** tab thứ 2 gọi sẽ nhận mảng rỗng — đó là **đúng thiết kế**, không phải lỗi.
 
 ### BI-8 · Mở tài liệu mới **không bao giờ** được đè lên tab đang có dữ liệu
-- `app.js` `openDialog()` + nhánh drop; `main.js` `tabs:open-paths`.
+- `app.js` `openDialog()` + nhánh drop; `main.js` `tabs:open-paths`; **quyết định thật
+  nằm ở `tabs.js` `planOpen()`** — nó chỉ trả `fill` khác `null` khi người gọi khai
+  `fillCurrent`, và lưới `npm run test:tabs` có ca canh gác cho đúng điều đó.
 - Đây chính là lỗi đã phải hotfix ngay sau khi ra tab (`624fd7f` vá `7bd02d3`).
 - **Vỡ khi:** bấm Mở → tài liệu đang xem biến mất.
 
@@ -219,7 +234,11 @@ Mỗi mục: **bất biến → ở đâu → vì sao → dấu hiệu vỡ.**
   nằm sẵn trong cỡ chữ.
 
 ### BI-24 · Không bao giờ dựng payload PDF thành **một chuỗi JS**
-- `pdfJsonBody()` (`app.js`) — dùng ở **14 chỗ gọi** trong `app.js`/`text-edit.js`/`compare.js`.
+- **Nhà của luật này: `renderer/wire.js`** (tách khỏi `app.js` 2026-07-28) — có lưới
+  `npm run test:wire` (51 ca). Trước đó nó nằm giữa `app.js` và **không** test được;
+  đó là vấn đề, vì mọi cách vi phạm luật này đều hỏng **im lặng**.
+- `pdfJsonBody()` — dùng ở **16 chỗ gọi** trong `app.js`/`text-edit.js`/`compare.js`,
+  **bằng tên trần** (xem §2 để biết vì sao cố tình giữ vậy).
 - `JSON.stringify({pdf_b64: u8ToB64(bytes), …})` tốn **ba bản sao cỡ đầy đủ** trên heap
   renderer (chuỗi nhị phân trong `u8ToB64`, base64 nó trả về, và bản sao của
   `stringify`) ⇒ ~500MB rác tạm cho file 134MB, chồng lên `state.bytes` + lịch sử undo.
@@ -229,6 +248,15 @@ Mỗi mục: **bất biến → ở đâu → vì sao → dấu hiệu vỡ.**
 - **Kích thước mảnh phải là bội của 3** — base64 chỉ chèn `=` ở cuối luồng, chia đúng
   mốc 3 byte thì các mảnh nối thẳng được. Đổi thành số khác là hỏng payload **im lặng**.
 - Nhận cả `Uint8Array` (→ `pdf_b64`) lẫn object `{tên: bytes}` cho `/compare` (2 tài liệu).
+- **Không còn hàm `u8ToB64`** (xoá 2026-07-27). Nó là công cụ duy nhất dựng được payload
+  thành một chuỗi JS, tức là chính cái bẫy điều luật này sinh ra để chặn — để nó nằm đó thì
+  người viết lời gọi sidecar mới sẽ tìm thấy và tái lập đúng lỗi cũ. Cần đưa binary lên dây
+  thì **chỉ** có `pdfJsonBody` (một/nhiều trường) hoặc `binArrayJsonBody` (mảng trong 1 trường).
+- Chỗ cuối cùng còn sót đã vá cùng ngày: **Ảnh → PDF** (`pickI2pImages` / `runImagesToPdf`).
+  Nó phình bộ nhớ **hai lần**: giữ base64 của **mọi** ảnh đã chọn suốt lúc hộp thoại mở
+  (base64 = 4/3 dung lượng gốc), rồi `JSON.stringify` cả mảng đó thành một chuỗi nữa.
+  100 ảnh điện thoại 5MB ⇒ ~670MB chuỗi tạm chồng lên ~670MB đang giữ. Nay giữ **byte thô**
+  và chỉ mã hoá lúc gửi; xoá danh sách sau khi tạo xong (giữ lại khi lỗi để còn thử lại).
 
 ### BI-26 · Menu chuột phải là lối vào **không có id nút** → cổng bản quyền phải ở tầng HÀM
 - `app.js` `openThumbMenu()` + `GATED_BTNS` / `installLicenseGuard()`.
@@ -357,6 +385,29 @@ Mỗi mục: **bất biến → ở đâu → vì sao → dấu hiệu vỡ.**
 - **Luật:** đổi `SIDEBAR_W_MAX` thì phải trả lời câu hỏi raster + bộ nhớ, không
   chỉ nhìn cho đẹp.
 
+### BI-35 · “Mở file mới trong” sống ở MAIN, và **cả ba** đường mở file phải hỏi cùng một chỗ
+- `src/prefs.js` (lưu) + `src/tabs.js` `planOpen()` (quyết định, thuần, có lưới) +
+  `main.js` (`tabs:open-paths`, `openPathInApp`) + `renderer/app.js` (`#set-open-in`).
+- **Vì sao ở main, không phải localStorage:** file từ Explorer (“Open with”) có thể tới
+  lúc **chưa có cửa sổ nào** — không có renderer để hỏi. Đúng lý do `session.js` giữ cờ
+  `restore` trên đĩa. (Cũng là lý do **không** nhét vào `session.json`: giá trị của file
+  đó nằm ở phạm vi hẹp — chỉ đường dẫn — xem BI-18.)
+- Có **ba** đường mở tài liệu; bỏ sót một đường là người dùng thấy “lúc tab lúc cửa sổ”:
+  1. nút Mở / Ctrl+O / menu Mở → `openDialog` → `tabs:open-paths`;
+  2. kéo–thả PDF vào viewer khi tab **đã có** tài liệu → `tabs:open-paths`;
+  3. Explorer “Open with” / mở file thứ hai / macOS `open-file` → `openPathInApp`.
+- **Tab đang trống thắng tuỳ chọn** (`fillCurrent`). Không thế thì chọn 3 file trong một
+  cửa sổ trắng sẽ **để nguyên cửa sổ trắng đó** và mở thêm cửa sổ thứ hai.
+- Chọn **nhiều file** + “Cửa sổ mới” = **MỘT** cửa sổ mới chứa cả loạt. Mỗi file một cửa
+  sổ nghĩa là mỗi file một **tiến trình renderer** — chọn 30 file thành sự cố tài nguyên.
+- Giá trị đi qua IPC là **đầu vào không tin cậy**: `setOpenIn` chỉ nhận `"tab"`/`"window"`,
+  còn lại về mặc định; đọc từ đĩa cũng qua đúng cửa đó (file có thể bị sửa tay).
+- Mặc định **bắt buộc** là `"tab"` — đúng hành vi có từ trước khi có tuỳ chọn. Pref hỏng
+  hay không đọc được **không bao giờ** được suy thành “rải tài liệu ra nhiều cửa sổ”.
+- **Vỡ khi:** đổi sang “Cửa sổ mới” mà double-click file trong Explorer vẫn ra tab · chọn
+  10 file thì mở 10 cửa sổ · tab trắng vẫn trắng còn file chui sang cửa sổ khác.
+- Lưới: `npm run test:tabs` (mục `prefs.js` + `planOpen`, gồm 2 ca canh gác BI-8).
+
 ### BI-14 · Gọi hàm chéo module theo kiểu “tên trần” là điểm gãy im lặng
 - `rerenderChanged` (gọi từ `editor.js:2521`, `text-edit.js:519`) và
   `showOverlay`/`hideOverlay` (gọi từ 4 module) **không** có `window.` và **không** có guard.
@@ -372,12 +423,14 @@ Mỗi mục: **bất biến → ở đâu → vì sao → dấu hiệu vỡ.**
 | `toast()` | `app.js:58` | cả 6 module, ~172 chỗ |
 | `sidecarFetch()` | `app.js:49` | 4 module (~28 chỗ) — điểm duy nhất gắn token `X-Sidecar-Token` |
 | `pushUndo()` | `app.js:148` | 3 module, 10 chỗ — xem BI-3. Phơi ra ngoài bằng **`window.DocHistory`**, **không** phải `window.History` (tên đó là constructor của DOM → guard `if (window.History)` không bao giờ sai được) |
-| `pdfJsonBody()` | `app.js:2278` | 3 module, 14 chỗ — xem BI-24 |
+| `pdfJsonBody()` | **`wire.js`** | 3 module, 16 chỗ, **gọi bằng tên trần** — xem BI-24 + §2 |
 | `renderAll()` | `app.js:486` | 13 chỗ |
 | `rerenderChanged()` | `app.js:1138` | **chỉ** module khác gọi — xem BI-14 |
 | `updateToolbar()` | `app.js:3084` | 3 module, 11 chỗ — chứa BI-2 và BI-9 |
 | `showOverlay/hideOverlay` | `app.js:66/70` | 4 module — xem BI-14 |
-| `u8ToB64 / b64ToU8` | `app.js:2142/2156` | cầu base64 cho mọi vòng gọi sidecar |
+| `binArrayJsonBody()` | **`wire.js`** | 1 chỗ — Ảnh→PDF. Cùng luật BI-24, dạng **mảng** binary trong một trường |
+| `b64ToU8` | **`wire.js`** | 13 chỗ — chiều **giải mã** cho mọi vòng gọi sidecar. Chiều **mã hoá** cố ý **không còn helper** — xem BI-24 |
+| `planOpen()` | `tabs.js` | 1 chỗ (`tabs:open-paths`) — quyết định tab hay cửa sổ. Thuần + có lưới, xem BI-35 |
 
 ---
 
@@ -403,7 +456,9 @@ Mỗi mục: **bất biến → ở đâu → vì sao → dấu hiệu vỡ.**
 | Menu ngữ cảnh dùng chung (`showPageMenu` trong `capture.js`) | Chuột phải lên **trang PDF** (Sao chép ảnh/vùng/Dán) vẫn đúng · mở menu này rồi mở menu kia → menu cũ đóng · cuộn dải thumbnail → menu đóng |
 | Cỡ/hình học chữ vẽ lại (`hscale`, `vscale`, `orig_text`, `orig_size`) | `test_edit_text_metrics.py` · sửa 1 dòng trên hoá đơn thật → **không** dài ra đè chữ bên cạnh, **không** cao hơn dòng chưa sửa (BI-25) |
 | Redaction / `add_redact_annot` / `apply_redactions` | `test_edit_text_layout.py` **và** `test_translate_layout.py` · sửa 1 chữ trong ô bảng **có nền** → không vệt trắng, không mất đường kẻ (BI-23) |
-| `pdfJsonBody` hay bất kỳ chỗ gọi sidecar nào có PDF | Mở file **lớn** (≥100MB) rồi: Sửa nội dung · Nén · So sánh 2 file · Tách — không tab nào chết vì hết bộ nhớ (BI-24) |
+| `wire.js` (`pdfJsonBody` / `binArrayJsonBody` / `pushB64Chunks` / `b64ToU8` / `B64_CHUNK`) hay bất kỳ chỗ gọi sidecar nào có PDF | `cd desktop ; npm run test:wire` (51 ca) · mở file **lớn** (≥100MB) rồi: Sửa nội dung · Nén · So sánh 2 file · Tách — không tab nào chết vì hết bộ nhớ · **Ảnh → PDF với ~50 ảnh máy ảnh**: tạo được file, PDF mở lại đúng số trang và đúng thứ tự (BI-24) |
+| Thứ tự `<script>` trong `index.html` | `wire.js` **trước** `app.js`/`text-edit.js`/`compare.js`; `pan.js` sau `app.js` và trước `editor.js`/`capture.js`. Mở app → console **không** có `ReferenceError` · thử một lệnh gọi sidecar bất kỳ (Nén) (§2, BI-14) |
+| Tuỳ chọn “Mở file mới trong” (`prefs.js`, `planOpen`, `tabs:open-paths`, `openPathInApp`) | `cd desktop ; npm run test:tabs` · với **cả hai** giá trị, thử **cả ba** đường: nút Mở · kéo–thả PDF vào tab đang có tài liệu · double-click file trong Explorer — kết quả phải **giống nhau** · chọn 3 file cùng lúc + “Cửa sổ mới” → **một** cửa sổ 3 tab · tab trắng + “Cửa sổ mới” → nạp vào chính tab trắng đó · đổi tuỳ chọn rồi khởi động lại app → vẫn nhớ · xoá `%APPDATA%/Nabu PDF/prefs.json` → về “Tab mới” (BI-35, BI-8) |
 | Chọn font ở `/edit-text` hay `src/pdf/fonts.py` | `test_edit_text_font.py` **và** `test_edit_text_rounds.py` · mở 1 hoá đơn Times New Roman thật, sửa 1 dòng với “Giữ nguyên” → **không** đổi sang DejaVu, **không** ra □ (BI-21) |
 | Toàn màn hình (`setPresentation`, `_layout`, `.presenting`) | `npm run test:tabs` (10 ca cuối) · F11 vào/ra · Esc ra · thoát bằng nút cửa sổ → thanh công cụ phải quay lại · chuyển tab khi đang toàn màn hình · thử bật lúc đang Chú thích (phải từ chối) — BI-22 |
 | `pan.js` hay bất kỳ listener chuột nào trên `#viewer` | `cd desktop ; npm run test:pan` (57 ca) · bật Bàn tay → kéo trang chạy, **không** bôi đen chữ · tắt Bàn tay → bôi đen chữ lại được · giữ Space kéo rồi thả → về đúng công cụ cũ · kéo chuột giữa lúc **đang Chú thích** → trang chạy, **không** vẽ ra hình · lúc **đang Copy ảnh** → trang chạy, **không** ra khung marquee · bấm vào ghi chú (note marker) khi Bàn tay bật → popup vẫn mở (BI-30, BI-31) |
@@ -424,6 +479,8 @@ Mỗi mục: **bất biến → ở đâu → vì sao → dấu hiệu vỡ.**
    (lưới cho số học khoảng trang trong `renderer/page-range.js`).
 2c. `cd desktop ; npm run test:pan` → phải `N pass, 0 fail`
    (lưới cho logic giành chuột của bàn tay trong `renderer/pan.js`).
+2d. `cd desktop ; npm run test:wire` → phải `N pass, 0 fail`
+   (lưới cho bộ mã hoá payload trong `renderer/wire.js` — BI-24).
 3. `node --check` mọi file JS đã sửa (renderer **không** có test tự động).
 4. Nếu đụng `*.py` hoặc `sidecar.spec` → **rebuild sidecar**, nếu không OTA giao bản cũ.
 5. Chạy `npm start`, test tay các mục ở §5 tương ứng với thứ vừa sửa.

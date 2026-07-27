@@ -56,6 +56,15 @@ contextBridge.exposeInMainWorld("desktop", {
     getRestore: () => ipcRenderer.invoke("session:get-restore"),
     setRestore: (on) => ipcRenderer.invoke("session:set-restore", !!on),
   },
+
+  // --- main-side preferences (prefs.json) ---
+  prefs: {
+    // Where a newly opened file lands: "tab" | "window". Main-side for the same
+    // reason as getRestore — a file arriving from Explorer has no renderer to
+    // ask. Both calls resolve to the value main actually stored.
+    getOpenIn: () => ipcRenderer.invoke("prefs:get-open-in"),
+    setOpenIn: (v) => ipcRenderer.invoke("prefs:set-open-in", String(v)),
+  },
   // Main has earmarked this tab for a document it is about to send. The renderer
   // uses it to stand down from the crash-recovery prompt, which belongs to a tab
   // that is genuinely empty (see checkRecovery).
