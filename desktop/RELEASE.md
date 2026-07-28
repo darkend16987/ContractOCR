@@ -1,8 +1,9 @@
 # Phát hành & Auto-update (OTA)
 
 Auto-update dùng `electron-updater` với **GitHub Releases** làm kênh phân phối.
-Chỉ bản **NSIS (cài đặt)** tự cập nhật; bản **portable .exe không tự update**
-(người dùng tải tay bản mới).
+Chỉ bản **NSIS (cài đặt)** tự cập nhật. Từ nay chỉ build & phát hành bản NSIS —
+không còn build bản portable .exe nữa (các bản portable đã phát hành trước đây
+vẫn chạy được nhưng không tự cập nhật; người dùng cần tải tay bản cài đặt mới).
 
 ## Cơ chế
 
@@ -35,7 +36,7 @@ trên Release mới nhất. Mỗi Release **phải** có đủ:
 3. **Build + publish** (cần token GitHub có quyền `repo`):
    ```bash
    set GH_TOKEN=ghp_xxx          # PowerShell: $env:GH_TOKEN="ghp_xxx"
-   pnpm run release              # build NSIS + portable, đẩy lên GitHub Releases
+   pnpm run release              # build NSIS, đẩy lên GitHub Releases
    ```
    Lệnh này tạo (hoặc cập nhật) một Release **draft** kèm `latest.yml`, `.exe`,
    `.blockmap`.

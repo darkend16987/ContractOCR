@@ -58,8 +58,6 @@ fetch("https://api.github.com/repos/darkend16987/NabuPDF/releases/latest")
     if (v && rel.tag_name) v.textContent = rel.tag_name;
     const assets = rel.assets || [];
     const nsis = assets.find((a) => /-x64\.exe$/.test(a.name));
-    const port = assets.find((a) => /portable\.exe$/.test(a.name));
     if (nsis) document.getElementById("dl-installer").href = nsis.browser_download_url;
-    if (port) document.getElementById("dl-portable").href = port.browser_download_url;
   })
   .catch(() => {});

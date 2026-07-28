@@ -4,8 +4,7 @@ copyright: © 2026 Nabu PDF
 
 # "Open with Nabu PDF" for .pdf files. The NSIS installer registers this handler
 # in the Windows registry (adds Nabu PDF to the Open-with list; does NOT force it
-# as the default viewer). The portable .exe can't register associations — users
-# can still right-click → Open with → Choose another app.
+# as the default viewer).
 fileAssociations:
   - ext: pdf
     name: PDF Document
@@ -72,13 +71,9 @@ win:
   #   certificateProfileName: <profile>
   #   codeSigningAccountName: <account>
   target:
-    - target: portable   # single .exe, run from USB, no install
-    - target: nsis       # standard installer
+    - target: nsis       # standard installer (only build target — no portable)
   # Space-free file names (productName has a space) for clean download/OTA URLs.
   artifactName: NabuPDF-${version}-${arch}.${ext}
-
-portable:
-  artifactName: NabuPDF-${version}-portable.exe
 
 nsis:
   oneClick: false

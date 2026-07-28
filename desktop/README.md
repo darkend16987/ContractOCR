@@ -24,7 +24,7 @@ npm install
 npm start        # Electron spawn `python ../sidecar.py --port <port động>`
 ```
 
-## Đóng gói portable .exe
+## Đóng gói bản cài đặt (.exe)
 
 ```bash
 # 1) Freeze sidecar Python → ../dist/sidecar/sidecar.exe (onedir)
@@ -33,9 +33,9 @@ npm run build:sidecar
 #    thì thêm module vào `extra_hiddenimports` trong ../sidecar.spec rồi build lại.
 
 # 2) Đóng Electron + bundle sidecar → desktop/dist-app/
-npm run build    # tạo NabuPDF-<ver>-portable.exe và bản nsis
+npm run build    # tạo NabuPDF-<ver>-x64.exe (NSIS) — không còn build bản portable
 
-# 3) Test bản portable trên MÁY WINDOWS SẠCH (không cài Python).
+# 3) Test bản cài đặt trên MÁY WINDOWS SẠCH (không cài Python).
 ```
 
 ## Lưu ý

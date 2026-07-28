@@ -79,8 +79,8 @@ stale binary (see [memory] sidecar-stale-build-guard).
 - `cd desktop ; npm run build`  (runs the `prebuild` sidecar check, then
   electron-builder → `desktop/dist-app/`). Produces:
   - `NabuPDF-<ver>-x64.exe` + `.blockmap` (NSIS, self-updating)
-  - `NabuPDF-<ver>-portable.exe`
   - `latest.yml` (electron-updater manifest — **required** for OTA)
+  - (No portable build — removed from `electron-builder.yml`; not published anymore.)
 - `npm run checksums`  → `desktop/dist-app/SHA256SUMS.txt`.
 - Verify all expected files exist before releasing.
 
@@ -93,16 +93,16 @@ stale binary (see [memory] sidecar-stale-build-guard).
      --notes "<changelog>" \
      desktop/dist-app/NabuPDF-<ver>-x64.exe \
      desktop/dist-app/NabuPDF-<ver>-x64.exe.blockmap \
-     desktop/dist-app/NabuPDF-<ver>-portable.exe \
      desktop/dist-app/latest.yml \
      desktop/dist-app/SHA256SUMS.txt
    ```
    `latest.yml` + the NSIS `.exe` + `.blockmap` **must** be present or OTA breaks.
+   No portable `.exe` is built or attached anymore.
 2. Delete the **previous** release (the version that was Latest before this run):
    `gh release delete v<prev> --yes`. Leave its git tag unless the user asked to
    remove it (`--cleanup-tag` also deletes the tag). Only delete the single prior
    release by default — do not wipe older history unless asked.
-3. Confirm: `gh release list` shows v<ver> as Latest with the 5 assets.
+3. Confirm: `gh release list` shows v<ver> as Latest with the 4 assets.
 
 ## 8. Report
 
