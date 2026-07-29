@@ -41,8 +41,17 @@ const FONT_STACKS = {
   serif: '"Times New Roman", Times, serif',
   mono: '"Courier New", Courier, monospace',
 };
+// A falsy key means "no font chosen" and must resolve to the sans STACK. Until
+// v0.2.49 it fell through to the literal-family arm and emitted `"sans", sans-serif`
+// — a quoted family name nobody has — which the browser resolved to the generic
+// sans-serif (Arial on Windows) instead of system-ui (Segoe UI). Text boxes never hit
+// it (`normTextStyle` always supplies "sans"), but `textFont(fpx)` with NO opts did,
+// and the arrow-label + watermark rasterisers are exactly that: those two rendered in
+// Arial while every text box rendered in Segoe UI. Neither has a font picker (see
+// TOOL_CTLS in editor.js), so nothing let a user notice or correct it. BI-40.
 function fontFamily(key) {
-  return FONT_STACKS[key] || `"${(key || "sans").replace(/"/g, "")}", sans-serif`;
+  if (!key) return FONT_STACKS.sans;
+  return FONT_STACKS[key] || `"${String(key).replace(/"/g, "")}", sans-serif`;
 }
 // CSS `font` shorthand from a size (px) and an optional style object
 // ({ font, bold, italic }). Defaults match a plain sans-serif text box.

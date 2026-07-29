@@ -106,35 +106,42 @@ check("numeric strings are accepted (they arrive from <input> as strings)",
 check("built-in keys map to a stack", [fontFamily("sans"), fontFamily("serif"), fontFamily("mono")],
   [A.FONT_STACKS.sans, A.FONT_STACKS.serif, A.FONT_STACKS.mono]);
 check("unknown key is treated as a literal system family, quoted", fontFamily("Arial Narrow"), '"Arial Narrow", sans-serif');
-// PINS A QUIRK, does not endorse it. `FONT_STACKS[""]` misses, so the fallback arm
-// runs and emits a QUOTED LITERAL family called "sans" — a font nobody has — which
-// the browser then resolves to the generic `sans-serif`. That is NOT the same as
-// `FONT_STACKS.sans` (system-ui → Segoe UI on Windows). It matters because
-// `textFont(fpx)` with no opts takes this path, and three callers in editor.js do
-// exactly that (the arrow-label and watermark rasterisers), so those render in
-// Arial while text boxes render in Segoe UI. Behaviour predates v0.2.48 and is
-// deliberately left alone here — this grid only makes it visible. If it is ever
-// made consistent, THIS is the case that must be updated on purpose.
-check("empty / null hit the literal-family arm, NOT the sans stack",
-  [fontFamily(""), fontFamily(null), fontFamily(undefined)],
-  ['"sans", sans-serif', '"sans", sans-serif', '"sans", sans-serif']);
-check("guard — that is genuinely different from the sans stack",
-  fontFamily("") === A.FONT_STACKS.sans, false);
-check("the explicit key 'sans' DOES get the stack", fontFamily("sans"), A.FONT_STACKS.sans);
+// FIXED AT v0.2.49, and this is the case that was updated on purpose (the previous
+// revision of this grid PINNED the old behaviour and said so). Before: `FONT_STACKS[""]`
+// missed, the fallback arm ran, and it emitted a QUOTED LITERAL family called "sans" —
+// a font nobody has — which the browser resolved to the generic `sans-serif` (Arial on
+// Windows) instead of `FONT_STACKS.sans` (system-ui → Segoe UI). Text boxes never hit it
+// (`normTextStyle` always supplies "sans"), but `textFont(fpx)` with NO opts did, and the
+// arrow-label + watermark rasterisers are exactly that — so those two rendered in Arial
+// while every text box rendered in Segoe UI, with no font picker on either to reveal it.
+// A falsy key now means "no font chosen" → the sans stack. BI-40.
+check("a falsy key resolves to the sans STACK, not a literal family named 'sans'",
+  [fontFamily(""), fontFamily(null), fontFamily(undefined), fontFamily(0)],
+  [A.FONT_STACKS.sans, A.FONT_STACKS.sans, A.FONT_STACKS.sans, A.FONT_STACKS.sans]);
+// Guard: the exact string the bug used to produce must never come back.
+check("guard — the old literal-family output is gone",
+  fontFamily("") === '"sans", sans-serif', false);
+check("the explicit key 'sans' gives the same thing (no-choice == choosing sans)",
+  fontFamily("sans"), fontFamily(""));
 // Guard: the family name comes from the system /fonts picker and goes into a CSS
 // `font` shorthand. An embedded quote would break out of the string.
 check("embedded quotes are stripped, not escaped through", fontFamily('Ev"il'), '"Evil", sans-serif');
 
 check("textFont builds the CSS shorthand in order style-weight-size-family",
   textFont(12, { bold: true, italic: true, font: "mono" }), `italic 700 12px ${A.FONT_STACKS.mono}`);
-// No opts → no style, no weight, and `fontFamily(undefined)` → the literal-family
-// arm above (Arial in practice), which is what the arrow-label / watermark
-// rasterisers get. Pinned so the two paths can't drift further apart unnoticed.
-check("plain textFont omits style and weight", textFont(9), '9px "sans", sans-serif');
+// No opts → no style, no weight, and the sans stack. This is the shape the arrow-label
+// and watermark rasterisers use (`textFont(fs)` / `textFont(fpx)`), so these three cases
+// are what makes them agree with text boxes rather than falling back to Arial.
+check("plain textFont omits style and weight and uses the sans stack",
+  textFont(9), `9px ${A.FONT_STACKS.sans}`);
 check("bold alone / italic alone", [textFont(10, { bold: true }), textFont(10, { italic: true })],
-  ['700 10px "sans", sans-serif', 'italic 10px "sans", sans-serif']);
+  [`700 10px ${A.FONT_STACKS.sans}`, `italic 10px ${A.FONT_STACKS.sans}`]);
 check("an explicit font key gives the stack even with no other style",
   textFont(9, { font: "sans" }), `9px ${A.FONT_STACKS.sans}`);
+// The whole point of the fix, stated as one case: the no-opts call the arrow-label and
+// watermark rasterisers make must produce EXACTLY what a default text box produces.
+check("arrow-label / watermark now match a default text box",
+  textFont(14), textFont(14, normTextStyle({})));
 
 // ==========================================================================
 // 3. layoutTextBox — the core

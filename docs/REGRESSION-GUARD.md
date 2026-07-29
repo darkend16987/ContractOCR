@@ -623,12 +623,25 @@ chỉ tên hàm.
     làm `Math.round(len / 0)` ra `Infinity` và treo lúc dựng path.
 - Cột chữ của danh sách bullet/số lấy theo marker **rộng nhất** trong khối, không theo
   marker của từng dòng — nếu không thì “9.” và “10.” làm chữ bị bậc thang.
-- **Quirk đã ghim, chưa sửa:** `fontFamily("")` / `fontFamily(null)` **không** trả stack
-  `sans` mà trả `'"sans", sans-serif'` — tức đi tìm font tên literal `sans` (không tồn tại)
-  rồi rơi về `sans-serif` chung. Vì `textFont(fpx)` gọi **không có** `opts` đi vào nhánh
-  này, **nhãn mũi tên và watermark render bằng Arial** còn hộp văn bản dùng Segoe UI.
-  Có từ trước v0.2.48. `test:text` ghim đúng hành vi hiện tại; sửa cho nhất quán thì
-  **phải** cập nhật ca đó **có chủ ý** (và nhớ rằng nó đổi hình dáng file đã lưu).
+- **Đã sửa ở v0.2.49 — `fontFamily(falsy)` trả về stack `sans`.** Trước đó nó trả
+  `'"sans", sans-serif'`, tức đi tìm font tên **literal** `sans` (không tồn tại) rồi rơi về
+  `sans-serif` chung ⇒ **Arial** trên Windows. Hộp văn bản **không** đi vào nhánh này
+  (`normTextStyle` luôn cấp `font: "sans"`), nhưng `textFont(fpx)` gọi **không có** `opts`
+  thì có — và đó **đúng là** hai rasteriser `renderArrowPng` / `renderWatermarkPng`. Kết
+  quả: **nhãn mũi tên + watermark render bằng Arial** còn mọi hộp văn bản dùng Segoe UI,
+  suốt nhiều phiên bản, mà **không ai phát hiện được** vì cả hai **không có** tuỳ chọn font
+  (`TOOL_CTLS.arrow` = `["color","penwidth","arrowlabel"]`; modal watermark chỉ có
+  size/angle/opacity/color). `labelSize` cũng hardcode `14`.
+- **Phạm vi ảnh hưởng của bản sửa, đã đo bằng probe (không suy luận):** `layoutTextBox`
+  **0/1248** lệch · `measureText` **0/1248** lệch · hình học mây/mũi tên **0/178** lệch ·
+  `textFont` **1104/1248** lệch — đúng những ca **không** có `font` tường minh (144 ca còn
+  lại có `serif`/`mono`/tên font hệ thống nên không đổi). Tức hộp văn bản và hình học
+  **không** đổi gì; chỉ nhãn mũi tên + watermark **bake mới** đổi font. Cái đã bake là
+  pixel nên file cũ không đổi.
+- **Nếu muốn cho người dùng chọn font cho nhãn mũi tên / watermark** thì đó là **tính năng
+  khác**: phải thêm field `font` vào annot mũi tên + object watermark, thêm `"font"` vào
+  `TOOL_CTLS.arrow`, và truyền style vào `textFont` ở hai rasteriser. Bản sửa v0.2.49
+  **không** làm việc đó — nó chỉ làm mặc định nhất quán.
 - **Vỡ khi:** gõ chữ Việt có dấu vào hộp rồi Xong mà chữ tràn khỏi khung · đổi
   letter/word spacing xong hộp rộng hơn chữ · khoanh mây freehand rồi Lưu mà mây nhảy chỗ.
 - Lưới: `npm run test:text` (annot-text.js) + `npm run test:cloud` (annot-geom.js) +

@@ -6,9 +6,9 @@
 
 _Cập nhật: 2026-07-29 · v0.2.48 đã phát hành + 1 thay đổi **chưa phát hành** (v0.2.49, dưới đây)_
 
-> **v0.2.49 — CHƯA PHÁT HÀNH · tách `managed-codec` khỏi `editor.js`**
-> (chỉ renderer + test + tài liệu — **sidecar KHÔNG đổi, không cần rebuild**;
-> **không có thay đổi nào người dùng thấy được**).
+> **v0.2.49 — CHƯA PHÁT HÀNH · tách `managed-codec` khỏi `editor.js` + sửa font nhãn
+> mũi tên/watermark** (chỉ renderer + test + tài liệu — **sidecar KHÔNG đổi, không cần
+> rebuild**).
 >
 > Nốt cuối của việc tách bắt đầu ở v0.2.48 phần 4. Điều kiện tự đặt lúc đó — *"chỉ tách
 > code đã ship và đã test tay"* — nay đã thoả, nên 13 hàm + 6 hằng của lớp object PDF
@@ -38,7 +38,28 @@ _Cập nhật: 2026-07-29 · v0.2.48 đã phát hành + 1 thay đổi **chưa ph
 > kèm lệnh grep kiểm nhanh. **Mọi file classic mới có destructure từ thư viện phải theo
 > khuôn này.**
 >
-> **Verify:** 8 lưới **537 pass / 0 fail** · `node --check` 25/25 · probe Electron: **37/37
+> **Kèm bản sửa font — thứ DUY NHẤT trong v0.2.49 người dùng thấy được.**
+> `fontFamily(falsy)` trả `'"sans", sans-serif'` (font tên **literal** `sans`, không tồn tại)
+> thay vì stack `sans` ⇒ **Arial**. Hộp văn bản không đi vào nhánh đó (`normTextStyle` luôn
+> cấp `font: "sans"`), nhưng `textFont(fpx)` gọi **không có** `opts` thì có — và đó đúng là
+> `renderArrowPng` + `renderWatermarkPng`. Nên **nhãn mũi tên và watermark render bằng
+> Arial** suốt nhiều phiên bản còn mọi hộp văn bản dùng Segoe UI. Không ai phát hiện được
+> vì **cả hai không có tuỳ chọn font** (`TOOL_CTLS.arrow` = `["color","penwidth","arrowlabel"]`;
+> modal watermark chỉ có size/angle/opacity/color) — không có nút nào để thấy nó sai.
+>
+> Phạm vi đã **đo bằng probe**, không suy luận: `layoutTextBox` **0/1248** lệch ·
+> `measureText` **0/1248** · hình học mây/mũi tên **0/178** · `textFont` **1104/1248** —
+> đúng những ca không có `font` tường minh (144 ca còn lại có `serif`/`mono`/font hệ thống
+> nên không đổi). Hộp văn bản và hình học **không đổi gì**; chỉ nhãn mũi tên + watermark
+> **bake mới** đổi font, file đã lưu là pixel nên không đổi. Ca test từng **ghim hành vi
+> cũ** đã được cập nhật **có chủ ý** — đúng như chính nó dặn. Xem BI-40.
+>
+> ⚠️ Cho người dùng **chọn** font nhãn mũi tên / watermark là **tính năng khác**, chưa làm:
+> phải thêm field `font` vào annot mũi tên + object watermark, thêm `"font"` vào
+> `TOOL_CTLS.arrow`, và truyền style vào `textFont` ở hai rasteriser. (`labelSize` cũng đang
+> hardcode `14` ở `editor.js:945`.)
+>
+> **Verify:** 8 lưới **538 pass / 0 fail** · `node --check` 25/25 · probe Electron: **37/37
 > tên trần**, `window.Editor` đủ 10 key, `Pan`/`AnnotText`/`AnnotGeom`/`ManagedCodec` đủ,
 > hai shim (`pushB64Chunks`, `normTextStyle`) phân giải về **tên trần** trong trình duyệt,
 > **2674 ca tương đương 0 lệch**, **0 lỗi console mới** so với baseline tiền-tách.
