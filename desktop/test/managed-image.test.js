@@ -71,33 +71,34 @@ function constSource(name) {
 const ed = { seq: 1, annots: {}, _managedPages: new Set() };
 const f = (n) => (+n).toFixed(2); // mirrors editor.js's number formatter for the AP matrix
 
-// The /Nabu* keys ARE lifted, so a rename shows up here as a load error.
-const NABU_KIND = eval(constSource("NABU_KIND"));
-const NABU_DATA = eval(constSource("NABU_DATA"));
-const NABU_SRC = eval(constSource("NABU_SRC"));
-const NABU_IMG = eval(constSource("NABU_IMG"));
-const P_ANNOTS = eval(constSource("P_ANNOTS"));
-// Module scope, not inside the test body: a lifted function's scope chain reaches
-// this file's top level and `lift` itself, nothing narrower.
-const URL_TOKEN = eval(constSource("URL_TOKEN"));
+// Most of the codec moved to renderer/managed-codec.js at v0.2.49, so these are now a
+// PLAIN require — no eval, no brace-matching, and a rename is a load-time TypeError.
+// Destructured at MODULE scope on purpose: the four functions still lifted below close
+// over this file's top level, so that is where the names they call must live.
+const MC = require("../renderer/managed-codec.js");
+const {
+  NABU_KIND, NABU_DATA, NABU_SRC, NABU_IMG, P_ANNOTS,
+  sniffImage, strToBytes, pushPageAnnot, makeMap, serializeManaged,
+  managedSrcBytes, managedSrcDataUrl, collectManagedChain, freeManagedTrash,
+  stripManagedFromPage, stripManagedAnnots,
+} = MC;
+// `normTextStyle` is what serializeManaged's text branch normalises through; required
+// here too so the LIFTED addManagedAnnot resolves it the same way the browser does.
+const { normTextStyle } = require("../renderer/annot-text.js");
 
 // eslint-disable-next-line no-eval
 const lift = (name) => eval("(" + fnSource(name) + ")");
-const sniffImage = lift("sniffImage");
+// Still lifted, and each for a stated reason — these genuinely cannot leave editor.js:
+//   deserializeManaged  mints ids from `ed.seq`
+//   addManagedAnnot     calls the canvas rasterisers renderTextPng / renderArrowPng
+//   edSnapshot          is the undo pool, and closes over URL_TOKEN below
+//   dataUrlToBytes      a 3-line adapter over wire.js's b64ToU8, private to editor.js
 const dataUrlToBytes = lift("dataUrlToBytes");
-const strToBytes = lift("strToBytes");
-const pushPageAnnot = lift("pushPageAnnot");
-const makeMap = lift("makeMap");
-const serializeManaged = lift("serializeManaged");
 const deserializeManaged = lift("deserializeManaged");
 const addManagedAnnot = lift("addManagedAnnot");
-const managedSrcBytes = lift("managedSrcBytes");
-const managedSrcDataUrl = lift("managedSrcDataUrl");
-const collectManagedChain = lift("collectManagedChain");
-const freeManagedTrash = lift("freeManagedTrash");
-const stripManagedFromPage = lift("stripManagedFromPage");
-const stripManagedAnnots = lift("stripManagedAnnots");
 const edSnapshot = lift("edSnapshot");
+// URL_TOKEN stayed with edSnapshot (it is the undo pool's sentinel, not codec state).
+const URL_TOKEN = eval(constSource("URL_TOKEN"));
 
 // ---- fixtures ------------------------------------------------------------
 
@@ -305,6 +306,35 @@ function readManaged(doc) {
   check(`60 snapshots of a 5 MB image stay far below 60 copies (grew ${grewMb.toFixed(1)} MB)`,
     grewMb < 80, true);
   check("… and every slot still holds the image", slots.every((s) => s.annots[0][0].dataUrl === hugeUrl), true);
+
+  // ---- the module surface (BI-14: a rename here breaks editor.js silently) ----
+  // editor.js calls all of these by BARE NAME out of the shared classic-script scope,
+  // so a rename produces a runtime ReferenceError with no build-time warning. Pinning
+  // the surface makes that a failed grid instead.
+  check("managed-codec exports exactly what editor.js calls by bare name",
+    Object.keys(MC).sort(),
+    // NB: .sort() is by UTF-16 code unit, so "strToBytes" (capital T, 0x54) comes
+    // BEFORE "stripManagedAnnots" (lowercase i, 0x69). Not a typo.
+    ["MANAGED_KINDS", "NABU_DATA", "NABU_IMG", "NABU_KIND", "NABU_SRC", "P_ANNOTS",
+     "collectManagedChain", "freeManagedTrash", "isManagedKind", "makeMap",
+     "managedSrcBytes", "managedSrcDataUrl", "pageRotate", "pushPageAnnot",
+     "serializeManaged", "sniffImage", "strToBytes", "stripManagedAnnots",
+     "stripManagedFromPage"]);
+  check("the /Nabu* keys are PDFName objects, not strings",
+    [NABU_KIND, NABU_DATA, NABU_SRC, NABU_IMG, P_ANNOTS].map((k) => String(k)),
+    ["/NabuKind", "/NabuData", "/NabuSrc", "/NabuImg", "/Annots"]);
+  check("MANAGED_KINDS is the set that round-trips, and isManagedKind reads it",
+    [[...MC.MANAGED_KINDS].sort(), MC.isManagedKind("image"), MC.isManagedKind("highlight")],
+    [["arrow", "image", "note", "text"], true, false]);
+  // Guard: the module resolves pdf-lib and wire.js/annot-text.js itself (window.PDFLib +
+  // bare names in the browser, require() here). If either shim regressed, these two would
+  // throw rather than return — and managedSrcDataUrl is the image round-trip's only
+  // byte→base64 path (BI-24).
+  check("the pushB64Chunks shim resolves under node",
+    managedSrcDataUrl(PNG_2x2).startsWith("data:image/png;base64,"), true);
+  check("the normTextStyle shim resolves under node (serializeManaged's text branch)",
+    serializeManaged({ kind: "text", x: 1, y: 2, w: 3, h: 4, text: "a" }).lineHeight,
+    normTextStyle({}).lineHeight);
 
   console.log(`\n${pass} pass, ${fail} fail`);
   process.exit(fail ? 1 : 0);

@@ -44,7 +44,6 @@
   //            rendered the same Vietnamese-safe way as text; geometry + label in
   //            /NabuData so a re-opened file is fully re-editable (move / re-angle /
   //            retype the head-or-tail label).
-  const MANAGED_KINDS = new Set(["text", "note", "image", "arrow"]);
   // Kinds drawn as a plain x/y/w/h box — the ones that get resize grips. Named
   // because it used to be an inline `||` chain inside renderAnnot, which is the kind
   // of thing that quietly drifts out of step with the .handle rules in app.css.
@@ -55,15 +54,15 @@
     v: "select", t: "text", h: "highlight", d: "draw", r: "box", o: "ellipse",
     c: "cloud", f: "cloudpen", a: "arrow", n: "note", i: "image", x: "redact", m: "measure",
   };
-  const NABU_KIND = PDFName.of("NabuKind");
-  const NABU_DATA = PDFName.of("NabuData");
-  // Private carrier for an image's ORIGINAL file bytes — see addManagedAnnot's
-  // image branch for why the bytes can't live in /NabuData like every other kind.
-  const NABU_SRC = PDFName.of("NabuSrc");
-  const NABU_IMG = PDFName.of("NabuImg"); // the appearance's one XObject resource name
-  const P_ANNOTS = PDFName.of("Annots");
-
-  function isManagedKind(k) { return MANAGED_KINDS.has(k); }
+  // MANAGED_KINDS / isManagedKind / the /Nabu* keys / sniffImage / strToBytes /
+  // makeMap / pageRotate / serializeManaged / pushPageAnnot / managedSrcBytes /
+  // managedSrcDataUrl / collectManagedChain / freeManagedTrash /
+  // stripManagedFromPage / stripManagedAnnots moved to renderer/managed-codec.js
+  // at v0.2.49 (pure → now require()-able by `npm run test:managed`). Still reachable
+  // by BARE NAME from here: managed-codec.js is a classic script loaded BEFORE this
+  // one, so it declares them in the same shared scope. `deserializeManaged` (needs
+  // ed.seq) and `addManagedAnnot` (+ its `f`; calls the canvas rasterisers) stayed.
+  // See BI-14 + BI-37/38 + §2.
 
   const ed = {
     active: false,
@@ -306,13 +305,6 @@
   // Identify an image by its magic bytes — pdf-lib can only embed PNG or JPEG, and
   // the file's reported MIME is unreliable (empty for some files, wrong for others).
   // Returns "png", "jpg", or null (unsupported: webp/gif/bmp/svg/…).
-  function sniffImage(bytes) {
-    if (bytes.length >= 8 && bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47)
-      return "png";
-    if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return "jpg";
-    return null;
-  }
-
   // Coerce any browser-decodable image data URL into one pdf-lib can embed.
   // PNG/JPEG pass through unchanged; anything else the browser can decode (BMP,
   // GIF, WebP…) is re-encoded to PNG via a canvas so it can still be placed.
@@ -1829,43 +1821,9 @@
 
   // ---- baking --------------------------------------------------------------
 
-  function makeMap(vp1, mode) {
-    if (mode === "image") return (x, y) => [x, vp1.height - y];
-    return (x, y) => {
-      const r = vp1.convertToPdfPoint(x, y);
-      return [r[0], r[1]];
-    };
-  }
-
   // Editable payload stored in /NabuData so a re-opened file reconstructs the
   // overlay object. Geometry travels here too (not just the /Rect) so retyping /
   // restyling is lossless.
-  function serializeManaged(a) {
-    if (a.kind === "text") {
-      const s = normTextStyle(a);
-      return { k: "text", x: a.x, y: a.y, w: a.w, h: a.h, text: a.text,
-               font: a.font, fontSize: a.fontSize, color: a.color,
-               bold: !!a.bold, italic: !!a.italic, underline: !!a.underline,
-               strike: s.strike, align: s.align, lineHeight: s.lineHeight,
-               paraSpacing: s.paraSpacing, letterSpacing: s.letterSpacing,
-               wordSpacing: s.wordSpacing, charScale: s.charScale,
-               indent: s.indent, listType: s.listType, opacity: s.opacity };
-    }
-    if (a.kind === "arrow") {
-      return { k: "arrow", x1: a.x1, y1: a.y1, x2: a.x2, y2: a.y2,
-               color: a.color, width: a.width || 2,
-               label: a.label || "", labelEnd: a.labelEnd === "tail" ? "tail" : "head",
-               labelSize: a.labelSize || 14 };
-    }
-    // Geometry only — the pixels travel in the /NabuSrc stream, not in here.
-    if (a.kind === "image") {
-      return { k: "image", x: a.x, y: a.y, w: a.w, h: a.h, fmt: a.fmt === "jpg" ? "jpg" : "png" };
-    }
-    // note
-    return { k: "note", x: a.x, y: a.y, w: a.w, h: a.h, text: a.text || "",
-             color: a.color, replies: a.replies || [] };
-  }
-
   // `src` is only used by the image kind: the data URL rebuilt from /NabuSrc (see
   // managedSrcBytes). Every other kind is fully described by `data` alone.
   function deserializeManaged(data, src) {
@@ -1912,12 +1870,6 @@
   }
 
   // Attach `ref` to the page's /Annots array, creating it if absent.
-  function pushPageAnnot(doc, page, ref) {
-    let arr = page.node.Annots();
-    if (!arr) { arr = doc.context.obj([]); page.node.set(P_ANNOTS, arr); }
-    arr.push(ref);
-  }
-
   // Write one managed annotation (text Stamp with image /AP, or note Text annot)
   // into `page`, tagged with /NabuData. Returns true if it was written as a real
   // annotation; false means the caller should fall back to flattening (only text /
@@ -2039,89 +1991,28 @@
   }
 
   const f = (n) => (+n).toFixed(2);
-  function strToBytes(s) {
-    const out = new Uint8Array(s.length);
-    for (let i = 0; i < s.length; i++) out[i] = s.charCodeAt(i) & 0xff;
-    return out;
-  }
-
   // The original image bytes behind a managed image annot, or null when they can't
   // be trusted. `null` deliberately means "leave this annot alone": it is neither
   // imported as an editable object nor stripped on the next bake, so a file that has
   // been through another PDF editor loses nothing — the image simply stays a plain
   // stamp. We write the stream with NO /Filter, so any filter at all means someone
   // else re-encoded it and `contents` is no longer the image file.
-  function managedSrcBytes(doc, dict) {
-    try {
-      const ref = dict.get(NABU_SRC);
-      if (!ref) return null;
-      const st = doc.context.lookup(ref);
-      if (!(st instanceof PDFRawStream) || !st.contents || !st.contents.length) return null;
-      const d = st.dict || st;
-      if (d.get && d.get(PDFName.of("Filter"))) return null;
-      return sniffImage(st.contents) ? st.contents : null;
-    } catch (_) {
-      return null;
-    }
-  }
-
   // Image bytes → the data URL the overlay <img> and the next bake both need.
   // Uses wire.js's pushB64Chunks, the one tested chunked encoder in the renderer:
   // btoa(String.fromCharCode(...wholeBuffer)) blows the stack on a real photo, and
   // BI-24 is explicit that no new general-purpose byte→base64 helper gets written.
   // One image needing one data: URL is the narrow case that legitimately needs the
   // string at all — do NOT generalise this to documents.
-  function managedSrcDataUrl(bytes) {
-    const parts = [];
-    pushB64Chunks(parts, bytes);
-    return "data:image/" + (sniffImage(bytes) === "jpg" ? "jpeg" : "png") + ";base64," + parts.join("");
-  }
-
   // Every object a managed annot privately owns, collected for deletion: its /AP
   // form, that form's /NabuImg image (+ the /SMask a transparent PNG brings) and its
   // /NabuSrc stream, then the annot dict itself. Anything that doesn't look exactly
   // like our own output is skipped — worst case we keep the old growth, never a
   // dangling reference.
-  function collectManagedChain(doc, dict, annotRef, out) {
-    const ctx = doc.context;
-    try {
-      const src = dict.get(NABU_SRC);
-      if (src) out.push(src);
-      const apDict = ctx.lookup(dict.get(PDFName.of("AP")));
-      const nRef = apDict && apDict.get && apDict.get(PDFName.of("N"));
-      if (nRef) {
-        const form = ctx.lookup(nRef);
-        const fd = form && (form.dict || form);
-        const resDict = fd && fd.get && ctx.lookup(fd.get(PDFName.of("Resources")));
-        const xoDict = resDict && resDict.get && ctx.lookup(resDict.get(PDFName.of("XObject")));
-        const imgRef = xoDict && xoDict.get && xoDict.get(NABU_IMG);
-        if (imgRef) {
-          const img = ctx.lookup(imgRef);
-          const sm = img && (img.dict || img).get && (img.dict || img).get(PDFName.of("SMask"));
-          if (sm) out.push(sm);
-          out.push(imgRef);
-        }
-        out.push(nRef);
-      }
-    } catch (_) {
-      /* leave whatever we could not walk in place */
-    }
-    out.push(annotRef);
-  }
-
   // Actually free the collected objects. Deferred to the END of a whole-document
   // strip on purpose: an image source is SHARED by every page "Áp ảnh/chữ ký cho
   // nhiều trang" put it on, so deleting page 1's copy mid-loop would make page 2's
   // managedSrcBytes come back null and its annot would be kept AND re-written —
   // two stamps for one image. Duplicate refs are de-duped here, so sharing is free.
-  function freeManagedTrash(doc, trash) {
-    const uniq = new Map();
-    for (const r of trash) if (r) uniq.set(String(r), r);
-    for (const r of uniq.values()) {
-      try { doc.context.delete(r); } catch (_) { /* already gone / not an indirect ref */ }
-    }
-  }
-
   // Unlink every previously-written managed annotation on `page`, so a re-bake
   // replaces rather than duplicates them, pushing what they own onto `trash` for
   // freeManagedTrash. Returns the count unlinked.
@@ -2134,34 +2025,6 @@
   // embedJpg hand out a FRESH ref per call (they never dedupe by content), and
   // /NabuImg is a resource name nothing else writes, so once the annot is gone
   // nothing can still point at its appearance.
-  function stripManagedFromPage(doc, page, trash) {
-    const arr = page.node.Annots();
-    if (!arr) return 0;
-    const bin = trash || [];
-    let removed = 0;
-    for (let i = arr.size() - 1; i >= 0; i--) {
-      const ref = arr.get(i);
-      const dict = doc.context.lookup(ref);
-      if (!(dict instanceof PDFDict) || !dict.get(NABU_KIND)) continue;
-      // A managed image whose source bytes we can't read is not ours to replace:
-      // importManaged skipped it too, so ed.annots holds no copy and removing it
-      // would delete the user's image outright.
-      if (String(dict.get(NABU_KIND)) === "/image" && !managedSrcBytes(doc, dict)) continue;
-      arr.remove(i);
-      collectManagedChain(doc, dict, ref, bin);
-      removed++;
-    }
-    if (!trash) freeManagedTrash(doc, bin); // single-page call: nothing left to share with
-    return removed;
-  }
-  function stripManagedAnnots(doc) {
-    const trash = [];
-    let removed = 0;
-    for (const page of doc.getPages()) removed += stripManagedFromPage(doc, page, trash);
-    freeManagedTrash(doc, trash);
-    return removed;
-  }
-
   // Parse managed annotations out of the current document into live overlay
   // objects (per page) so they can be edited again. Read-only w.r.t. the PDF.
   async function importManaged() {
@@ -2197,10 +2060,6 @@
   // (text comment, image, watermark) come out rotated 90/180/270°. We pin the
   // image's visual lower-left to the already-mapped anchor and spin the glyphs
   // back by the page rotation so they read upright after the viewer applies it.
-  function pageRotate(page) {
-    return degrees(page.getRotation().angle);
-  }
-
   // `share` is the per-bake embed cache threaded down to addManagedAnnot; a bake
   // that doesn't pass one simply embeds every image separately (still correct).
   async function drawAnnots(doc, page, anns, vp1, mode, share) {

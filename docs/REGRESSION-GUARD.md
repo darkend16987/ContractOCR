@@ -13,15 +13,16 @@ tài liệu này chỉ có giá trị nếu được cập nhật.
 | File | Dòng | Vì sao rủi ro cao |
 |---|---|---|
 | `desktop/renderer/app.js` | ~4440 | State trung tâm + 12 hàm nút thắt. **Gần như mọi bản phát hành đều đụng.** |
-| `desktop/renderer/editor.js` | ~3320 | Overlay annotation, bake, form. Diff lớn nhất mỗi lần release. |
+| `desktop/renderer/editor.js` | ~3180 | Overlay annotation, bake, form. Diff lớn nhất mỗi lần release. |
 | `desktop/renderer/annot-text.js` | ~230 | Bố cục chữ (`layoutTextBox`). Rủi ro **thấp** nhờ lưới `npm run test:text`, nhưng sai ở đây **im lặng**: hộp trên màn hình và PNG đem bake lệch nhau → chữ tràn/xuống dòng khác trong file đã lưu → xem BI-40. |
+| `desktop/renderer/managed-codec.js` | ~275 | Lớp object PDF riêng của chú thích sửa-lại-được. **Hậu quả cao nhất trong repo**: sai là **mất ảnh của người dùng** hoặc phình file âm thầm. Có lưới `npm run test:managed` → xem BI-37, BI-38, BI-14. |
 | `desktop/renderer/annot-geom.js` | ~230 | Đường mây revision + nhãn mũi tên + `resizeRect`. Rủi ro **thấp** nhờ `npm run test:cloud` + `test:geom`; sai ở đây làm mây lệch chỗ **trong PDF đã lưu** (trên màn hình vẫn đúng) → xem BI-40. |
 | `desktop/src/main.js` + `src/tabs.js` | — | Tầng cửa sổ/tab — **hệ con mới nhất, ít va đập thực tế nhất** (ra mắt v0.2.41). Có lưới tự động `npm run test:tabs` cho phần logic thuần. |
 | `desktop/renderer/page-range.js` | ~170 | Số học khoảng trang. Rủi ro **thấp** vì có lưới `npm run test:pages`, nhưng hậu quả sai là **mất trang tài liệu** → xem BI-27. |
 | `desktop/renderer/pan.js` | ~380 | Bàn tay/pan. Rủi ro **trung bình**: nó giành sự kiện chuột **trên cùng phần tử** với `editor.js`/`capture.js`. Nửa logic có lưới `npm run test:pan`; nửa DOM thì không → xem BI-30/31. |
 | `desktop/renderer/wire.js` | ~130 | Bộ mã hoá payload nhị phân. Rủi ro **thấp** nhờ lưới `npm run test:wire`, nhưng sai ở đây **im lặng**: request vẫn đúng cú pháp, chỉ là base64 hỏng → xem BI-24. |
 | `desktop/renderer/app.js` — khối zoom | ~130 dòng | `applyScaleToDom`/`commitScale` đụng CSS box của **mọi** trang + 4 lớp overlay. Sai là zoom mờ mãi hoặc chú thích lệch. Nửa số học có lưới `npm run test:geom` → xem BI-36. |
-| `desktop/renderer/editor.js` — ảnh round-trip | ~180 dòng | Ghi/đọc/giải phóng object PDF riêng. Sai ở đây **mất ảnh của người dùng** hoặc phình file âm thầm. Có lưới `npm run test:managed` → xem BI-37, BI-38. |
+| ~~`editor.js` — ảnh round-trip~~ → `managed-codec.js` (v0.2.49) | ~180 dòng | Ghi/đọc/giải phóng object PDF riêng. Sai ở đây **mất ảnh của người dùng** hoặc phình file âm thầm. Có lưới `npm run test:managed` → xem BI-37, BI-38. |
 | `desktop/src/prefs.js` | ~80 | Tuỳ chọn phía main. Rủi ro thấp; nằm trong lưới `npm run test:tabs`. |
 | `api.py` + `src/pdf/*.py` | — | Có lưới test tự động (`run_tests.py`) → rủi ro thấp hơn renderer. |
 
@@ -90,13 +91,13 @@ tài liệu này chỉ có giá trị nếu được cập nhật.
 
 ## 2. Kiến trúc phải nhớ trước khi sửa
 
-- 12 file JS của renderer (`i18n, page-range, wire, annot-text, annot-geom, app, pan,
-  editor, text-edit, compare, capture, sign`) nạp bằng `<script>` **classic**, dùng
+- 13 file JS của renderer (`i18n, page-range, wire, annot-text, annot-geom, managed-codec,
+  app, pan, editor, text-edit, compare, capture, sign`) nạp bằng `<script>` **classic**, dùng
   chung **một scope**. `state`,
   `toast`, `sidecarFetch`, `showOverlay`… là biến toàn cục dùng chéo, **không phải
   module** → đổi tên một hàm trong `app.js` có thể làm `editor.js` chết mà không hề có
   cảnh báo lúc build. Năm file đã tách ra để test được, theo **ba mức** khác nhau — đọc
-  kỹ trước khi tách file thứ sáu:
+  kỹ trước khi tách file thứ bảy:
   - `page-range.js` — **sạch nhất**: chỉ phơi `window.PageRange`, không thả tên trần
     nào vào scope chung, nên `require()` được từ node. Dùng cho code **mới**.
   - `pan.js` — **nửa vời có chủ ý**: nửa trên logic thuần `require()` được, nửa dưới
@@ -116,6 +117,12 @@ tài liệu này chỉ có giá trị nếu được cập nhật.
     `editor.js`**. Cả hai đều DOM-free trừ `measureCtx` — nó nằm sau cửa
     `typeof document === "undefined"` kiểu `pan.js`, và `measureText` nhận thêm tham số
     `ctx` **tuỳ chọn** để lưới node bơm ctx giả (chỗ gọi cũ truyền 3 tham số, không đổi).
+  - `managed-codec.js` (v0.2.49) — **mức thứ tư: IIFE + `Object.assign(window, …)`**. Cần
+    thiết vì nó destructure `PDFName`/`PDFRawStream`/`PDFDict`/`degrees` từ pdf-lib, và
+    khai ở top level thì `degrees` **đụng `app.js:17`** ⇒ SyntaxError giết `app.js` ⇒ app
+    trắng. Bọc IIFE cho binding thành private, publish bề mặt bằng `Object.assign` — bare
+    name vẫn phân giải khi *đọc*, mà không thể trùng khai báo. **Đây là khuôn phải dùng cho
+    mọi file mới có destructure từ thư viện.** Xem BI-14 (nửa sau).
 - **Mỗi tab = một renderer riêng** (`WebContentsView`, process riêng). `state` **không**
   chia sẻ giữa các tab. Cái chia sẻ là: main process, sidecar Python, thư mục recovery.
   → Mọi singleton ở main process là nguy cơ xung đột đa tab.
@@ -497,6 +504,29 @@ Mỗi mục: **bất biến → ở đâu → vì sao → dấu hiệu vỡ.**
 - Đổi tên/xoá chúng trong `app.js` → `ReferenceError` lúc chạy, không lỗi lúc build.
 - Ngược lại `repaintRenderedPages` có guard `if (window.…)` — mẫu này an toàn hơn, nên theo.
 
+**Mặt thứ hai của cùng vấn đề, mất một lần vỡ app mới thấy (v0.2.49):** khi **hoist code
+vào một classic script mới**, phải kiểm trùng tên cho cả **binding destructure**, không
+chỉ tên hàm.
+- `managed-codec.js` khai `const { PDFName, PDFRawStream, PDFDict, degrees } = PDFLib`
+  ở **top level**. `app.js:17` cũng khai `const { PDFDocument, degrees } = window.PDFLib`
+  ở top level. Hai `const degrees` trong **cùng** global scope = **SyntaxError**, và nó
+  không giết file mới — nó giết **`app.js`**, file nạp sau. `$` biến mất ⇒ `pan.js`,
+  `editor.js`, `capture.js`, `sign.js` đổ theo. **App trắng.**
+- **`node` không bao giờ thấy lỗi này**: `require()` cho mỗi module một scope riêng, nên
+  **537/537 ca lưới xanh trong lúc app đang vỡ**. Chỉ probe Electron bắt được. Đây là ca
+  cụ thể chứng minh vì sao §1 nói "nửa DOM thì vẫn phải probe" — nó không chỉ đúng cho DOM,
+  mà cho **mọi** thứ phụ thuộc scope dùng chung.
+- **Cách làm đúng, xem `managed-codec.js`:** bọc **IIFE** để mọi binding riêng (nhất là
+  destructure từ thư viện) thành private, rồi publish bề mặt công khai bằng
+  `Object.assign(window, SURFACE)`. Một **property** của global object vẫn được phân giải
+  y như tên trần khi *đọc*, mà **không thể** SyntaxError với khai báo của script khác.
+  (`annot-text.js`/`annot-geom.js` không cần IIFE vì chúng không destructure gì từ thư viện
+  — nhưng nếu sau này có thêm, phải đổi sang khuôn IIFE.)
+- **Vỡ khi:** mở app thấy trắng · console có `Identifier 'X' has already been declared` ·
+  hoặc `$ is not defined` hàng loạt (dấu hiệu `app.js` chết, **không** phải `$` bị đổi tên).
+- Kiểm nhanh trước khi thêm file: `grep -nE "^\s*const \{.*\} = " renderer/*.js` rồi đối
+  chiếu từng tên trong ngoặc.
+
 ### BI-36 · Zoom là HAI nửa: đổi hình học ngay, rasterise sau — và **không** dựng lại `.page-wrap`
 - `app.js` `applyScaleToDom()` + `commitScale()` + `scheduleScaleCommit()`; `zoomTo` gọi cả ba.
 - Trước v0.2.48 `zoomTo` gọi thẳng `renderViewer()`: **mỗi nấc lăn chuột** xoá sạch mọi
@@ -652,7 +682,7 @@ Mỗi mục: **bất biến → ở đâu → vì sao → dấu hiệu vỡ.**
 | Cỡ/hình học chữ vẽ lại (`hscale`, `vscale`, `orig_text`, `orig_size`) | `test_edit_text_metrics.py` · sửa 1 dòng trên hoá đơn thật → **không** dài ra đè chữ bên cạnh, **không** cao hơn dòng chưa sửa (BI-25) |
 | Redaction / `add_redact_annot` / `apply_redactions` | `test_edit_text_layout.py` **và** `test_translate_layout.py` · sửa 1 chữ trong ô bảng **có nền** → không vệt trắng, không mất đường kẻ (BI-23) |
 | `wire.js` (`pdfJsonBody` / `binArrayJsonBody` / `pushB64Chunks` / `b64ToU8` / `B64_CHUNK`) hay bất kỳ chỗ gọi sidecar nào có PDF | `cd desktop ; npm run test:wire` (51 ca) · mở file **lớn** (≥100MB) rồi: Sửa nội dung · Nén · So sánh 2 file · Tách — không tab nào chết vì hết bộ nhớ · **Ảnh → PDF với ~50 ảnh máy ảnh**: tạo được file, PDF mở lại đúng số trang và đúng thứ tự (BI-24) |
-| Thứ tự `<script>` trong `index.html` | `wire.js` **trước** `app.js`/`text-edit.js`/`compare.js`/`editor.js`/`sign.js`; `annot-text.js` + `annot-geom.js` **trước** `editor.js`; `pan.js` sau `app.js` và trước `editor.js`/`capture.js`. Mở app → console **không** có `ReferenceError` · thử một lệnh gọi sidecar bất kỳ (Nén) (§2, BI-14, BI-40) |
+| Thứ tự `<script>` trong `index.html` | `wire.js` **trước** `app.js`/`text-edit.js`/`compare.js`/`editor.js`/`sign.js`; `annot-text.js` + `annot-geom.js` + `managed-codec.js` **trước** `editor.js` (và `managed-codec.js` sau `vendor/pdf-lib.min.js` + `wire.js` + `annot-text.js`); `pan.js` sau `app.js` và trước `editor.js`/`capture.js`. Mở app → console **không** có `ReferenceError` · thử một lệnh gọi sidecar bất kỳ (Nén) (§2, BI-14, BI-40) |
 | `annot-text.js` / `annot-geom.js` | `npm run test:text` + `test:cloud` + `test:geom` · rồi **test tay**: gõ chữ Việt vào hộp → Xong → mở lại file, chữ **không** tràn khung · khoanh mây (hộp + freehand) → Lưu → mây đúng chỗ · mũi tên có nhãn ở cả hai đầu (BI-40) |
 | Tuỳ chọn “Mở file mới trong” (`prefs.js`, `planOpen`, `tabs:open-paths`, `openPathInApp`) | `cd desktop ; npm run test:tabs` · với **cả hai** giá trị, thử **cả ba** đường: nút Mở · kéo–thả PDF vào tab đang có tài liệu · double-click file trong Explorer — kết quả phải **giống nhau** · chọn 3 file cùng lúc + “Cửa sổ mới” → **một** cửa sổ 3 tab · tab trắng + “Cửa sổ mới” → nạp vào chính tab trắng đó · đổi tuỳ chọn rồi khởi động lại app → vẫn nhớ · xoá `%APPDATA%/Nabu PDF/prefs.json` → về “Tab mới” (BI-35, BI-8) |
 | Chọn font ở `/edit-text` hay `src/pdf/fonts.py` | `test_edit_text_font.py` **và** `test_edit_text_rounds.py` · mở 1 hoá đơn Times New Roman thật, sửa 1 dòng với “Giữ nguyên” → **không** đổi sang DejaVu, **không** ra □ (BI-21) |
@@ -681,7 +711,9 @@ Mỗi mục: **bất biến → ở đâu → vì sao → dấu hiệu vỡ.**
    (hình học zoom / cột trang **cắt thẳng từ `app.js`**; `resizeRect` `require()` từ
    `annot-geom.js` từ v0.2.48 — BI-36, BI-39).
 2f. `cd desktop ; npm run test:managed` → phải `N pass, 0 fail`
-   (vòng round-trip của ảnh chèn: ghi → đọc lại → bake lại không phình — BI-37, BI-38).
+   (vòng round-trip của ảnh chèn: ghi → đọc lại → bake lại không phình — BI-37, BI-38.
+   Từ v0.2.49 phần lớn là `require("renderer/managed-codec.js")`; chỉ `deserializeManaged`,
+   `addManagedAnnot`, `edSnapshot`, `dataUrlToBytes` còn cắt-lúc-chạy vì không rời được `editor.js`).
 2g. `cd desktop ; npm run test:text` → phải `N pass, 0 fail`
    (bố cục chữ trong `renderer/annot-text.js` — BI-40).
 2h. `cd desktop ; npm run test:cloud` → phải `N pass, 0 fail`

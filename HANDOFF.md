@@ -4,7 +4,45 @@
 > [DESIGN.md](DESIGN.md) (kiến trúc), [ROADMAP.md](ROADMAP.md) (tiến độ chi tiết),
 > [SETUP.md](SETUP.md) (dựng môi trường).
 
-_Cập nhật: 2026-07-29 · v0.2.48 đã phát hành (4 thay đổi, dưới đây)_
+_Cập nhật: 2026-07-29 · v0.2.48 đã phát hành + 1 thay đổi **chưa phát hành** (v0.2.49, dưới đây)_
+
+> **v0.2.49 — CHƯA PHÁT HÀNH · tách `managed-codec` khỏi `editor.js`**
+> (chỉ renderer + test + tài liệu — **sidecar KHÔNG đổi, không cần rebuild**;
+> **không có thay đổi nào người dùng thấy được**).
+>
+> Nốt cuối của việc tách bắt đầu ở v0.2.48 phần 4. Điều kiện tự đặt lúc đó — *"chỉ tách
+> code đã ship và đã test tay"* — nay đã thoả, nên 13 hàm + 6 hằng của lớp object PDF
+> riêng chuyển sang [`renderer/managed-codec.js`](desktop/renderer/managed-codec.js).
+> `editor.js` **3323 → 3181 dòng**. `test:managed` (49 ca) chuyển từ cắt-hàm-lúc-chạy sang
+> `require()` thẳng; chỉ còn 4 thứ phải cắt, mỗi thứ có lý do ghi rõ trong file test:
+> `deserializeManaged` (cần `ed.seq`), `addManagedAnnot` (gọi rasteriser canvas),
+> `edSnapshot` (hệ undo), `dataUrlToBytes` (adapter 3 dòng, riêng của `editor.js`).
+> 13/13 thân hàm **byte-identical** với bản tiền-move.
+>
+> **⚠️ Bài học đáng giá nhất của bản này, và nó tốn một lần app trắng để thấy.**
+> Bản đầu khai `const { PDFName, PDFRawStream, PDFDict, degrees } = PDFLib` ở **top level**
+> của classic script mới. `app.js:17` cũng khai `degrees` ở top level. Hai `const` cùng tên
+> trong cùng global scope = **SyntaxError**, và nó **không** giết file mới mà giết
+> **`app.js`** (nạp sau) ⇒ `$` biến mất ⇒ `pan.js`/`editor.js`/`capture.js`/`sign.js` đổ
+> theo ⇒ **app trắng**.
+>
+> Điều đáng ghi nhớ: **`node` không thấy lỗi này. Lưới 537/537 xanh trong khi app đang vỡ**,
+> vì `require()` cho mỗi module một scope riêng. Chỉ **probe Electron** bắt được, qua đúng
+> ba tín hiệu: `Identifier 'degrees' has already been declared`, `window.Editor` thành
+> `undefined`, và `$ is not defined` hàng loạt. Lúc kiểm trùng tên trước khi move tôi chỉ
+> kiểm **tên hàm** đem đi, không kiểm **binding destructure** mới thêm vào — đó là chỗ hổng.
+>
+> Cách sửa thành **khuôn mức thứ tư** cho §2: bọc **IIFE** để binding riêng thành private,
+> publish bề mặt bằng `Object.assign(window, SURFACE)` — property của global object vẫn
+> phân giải như tên trần khi *đọc*, mà không thể trùng khai báo. Ghi ở **BI-14 (nửa sau)**,
+> kèm lệnh grep kiểm nhanh. **Mọi file classic mới có destructure từ thư viện phải theo
+> khuôn này.**
+>
+> **Verify:** 8 lưới **537 pass / 0 fail** · `node --check` 25/25 · probe Electron: **37/37
+> tên trần**, `window.Editor` đủ 10 key, `Pan`/`AnnotText`/`AnnotGeom`/`ManagedCodec` đủ,
+> hai shim (`pushB64Chunks`, `normTextStyle`) phân giải về **tên trần** trong trình duyệt,
+> **2674 ca tương đương 0 lệch**, **0 lỗi console mới** so với baseline tiền-tách.
+> ⚠️ **Chưa test tay trên GUI.**
 
 > **v0.2.48 — zoom mượt + cột trang chạy theo trang đang đọc + ảnh chèn
 > vẫn là object sửa được** (chỉ renderer + tài liệu — **sidecar KHÔNG đổi, không cần rebuild**).
@@ -161,9 +199,24 @@ _Cập nhật: 2026-07-29 · v0.2.48 đã phát hành (4 thay đổi, dưới đ
 > sidecar từ nguồn v0.2.39 lên nguồn hiện tại. Không phải lỗi, nhưng **đáng làm nhẹ ở
 > phiên sau**: `dist/sidecar` giải nén là **1155 MB**, trong đó `torch` 446 · `cv2` 148 ·
 > `scipy` 83 · **`pyarrow` 78** · `rapidocr` 47 · `pymupdf` 46 · `onnxruntime` 38 ·
-> **`matplotlib` 21** · `pandas` 13. `pyarrow`/`matplotlib`/`pandas` rất có thể là dep
-> gián tiếp không dùng tới — soi `sidecar.spec` (`excludes`) là ứng viên giảm ~110 MB.
-> Chưa làm trong bản này vì đổi spec ⇒ rebuild ⇒ phải test tay lại toàn bộ sidecar.
+> `matplotlib` 21 · `pandas` 13.
+>
+> **Đã truy nguồn từng cái (đừng đoán lại):**
+> - **`matplotlib` 21 MB — BẮT BUỘC, đừng bỏ.** `src/pdf/fonts.py` import `font_manager`
+>   ở 4 chỗ, và `collect_all("matplotlib")` là nguồn **duy nhất** của
+>   `mpl-data/fonts/ttf/DejaVuSans.ttf` cho lớp text vô hình tiếng Việt — comment đầu
+>   `sidecar.spec` đã ghi. Bỏ là vỡ Searchable + Sửa chữ.
+> - **`pyarrow` 78 MB — ứng viên thật.** Kẻ import nó trong site-packages: `altair`,
+>   `narwhals`, `streamlit` (cả ba thuộc streamlit, **đã** trong `excludes`),
+>   `modelscope`, `sklearn`, `pandas`. **Không** có đường nào từ code dự án.
+> - **`pandas` 13 MB — ứng viên yếu.** `pymupdf/table.py:1670` import pandas **bên trong**
+>   `to_pandas()`; ta chỉ dùng `find_tables()` (`src/output/pdf_office.py:69`,
+>   `src/pdf/layout.py:127`), không dùng `to_pandas()`. Nhưng đó là đường của PDF→Office
+>   và dịch-giữ-layout, nên chỉ được bỏ sau khi **test thật hai tính năng đó**.
+>
+> Ước tính sau khi truy nguồn: **~91 MB**, không phải 110. Chưa làm trong bản này vì đổi
+> spec ⇒ rebuild ⇒ phải test tay lại OCR/Searchable/dịch/PDF→Office. **Cách kiểm đúng là
+> build thật rồi chạy từng endpoint, không phải đọc `excludes` rồi suy luận.**
 
 > v0.2.47 — **hotfix: hợp nhất số học khoảng trang trong hộp thoại "Áp ảnh/chữ ký cho
 > nhiều trang"** (chỉ renderer — **sidecar KHÔNG đổi, không cần rebuild**):
