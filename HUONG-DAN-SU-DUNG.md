@@ -12,7 +12,7 @@ Chỉ cần **một file duy nhất**:
 
 | Kiểu | File tải về | Dùng khi |
 |------|-------------|----------|
-| **Bản cài đặt** | `NabuPDF-0.2.48-x64.exe` (~387 MB) | Cài vào máy (tạo shortcut, gỡ qua Control Panel), **tự cập nhật** khi có bản mới. |
+| **Bản cài đặt** | `NabuPDF-0.2.48-x64.exe` (~455 MB) | Cài vào máy (tạo shortcut, gỡ qua Control Panel), **tự cập nhật** khi có bản mới. |
 
 > **Từ v0.2.48 không còn bản portable.** Các bản trước có
 > `NabuPDF-<ver>-portable.exe`; nó đã bị bỏ khỏi quy trình đóng gói vì bản cài đặt tự

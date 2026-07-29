@@ -140,6 +140,30 @@ _Cập nhật: 2026-07-29 · v0.2.48 đã phát hành (4 thay đổi, dưới đ
 > và giảm ~140 dòng nữa khỏi `editor.js`. Ưu tiên thấp hơn hai file đã tách.
 >
 > ✅ **Đã test tay trên GUI** (2026-07-29): tất cả các mục ở §5 đều đạt.
+>
+> **Hai thứ lộ ra lúc đóng gói, đã sửa trong chính bản này:**
+> - **Sidecar đã stale 2 release.** Marker còn trỏ `10bbccf` (**v0.2.39**, build
+>   2026-07-23T10:12Z) trong khi `api.py` + `src/pdf/fonts.py` đổi **324 dòng** ở
+>   **v0.2.40** và **v0.2.43**. Nghĩa là *"sửa trắng trang khi Sửa nội dung trên PDF
+>   lớn"* và *"sửa chữ giữ đúng font/cỡ/nền"* **chưa từng đến tay người dùng** — đúng
+>   loại lỗi mà `check-sidecar-fresh.js` được dựng để chặn (comment của
+>   `write-sidecar-marker.js` ghi rõ nó **đã** xảy ra một lần trước đó). Guard chạy
+>   đúng; nó đã bị bỏ qua ở hai release đó. **Bản này rebuild** → marker `e336fcc7`,
+>   smoke-test `/health` 200. **Luật: đừng bao giờ `SKIP_SIDECAR_CHECK=1`.**
+> - **`SHA256SUMS.txt` mô tả sai thứ nó đi kèm.** `checksums.js` hash **mọi** `.exe`
+>   trong `dist-app/`, mà thư mục đó không bị xoá giữa các build ⇒ file publish ra có
+>   **55 dòng** trải từ `0.2.1`, gồm cả những version đã bị xoá khỏi Releases, và chỉ
+>   **1 dòng** thuộc release hiện tại. Nay script **giới hạn theo `version` trong
+>   package.json** và hash bằng **stream** (trước đó `readFileSync` kéo ~10 GB qua RAM
+>   mỗi lần chạy: >120 s → **1,5 s**).
+>
+> **Kích thước installer: 387 → 455 MB (+68 MB)**, hệ quả trực tiếp của việc rebuild
+> sidecar từ nguồn v0.2.39 lên nguồn hiện tại. Không phải lỗi, nhưng **đáng làm nhẹ ở
+> phiên sau**: `dist/sidecar` giải nén là **1155 MB**, trong đó `torch` 446 · `cv2` 148 ·
+> `scipy` 83 · **`pyarrow` 78** · `rapidocr` 47 · `pymupdf` 46 · `onnxruntime` 38 ·
+> **`matplotlib` 21** · `pandas` 13. `pyarrow`/`matplotlib`/`pandas` rất có thể là dep
+> gián tiếp không dùng tới — soi `sidecar.spec` (`excludes`) là ứng viên giảm ~110 MB.
+> Chưa làm trong bản này vì đổi spec ⇒ rebuild ⇒ phải test tay lại toàn bộ sidecar.
 
 > v0.2.47 — **hotfix: hợp nhất số học khoảng trang trong hộp thoại "Áp ảnh/chữ ký cho
 > nhiều trang"** (chỉ renderer — **sidecar KHÔNG đổi, không cần rebuild**):
