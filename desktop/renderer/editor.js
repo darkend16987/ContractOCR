@@ -44,7 +44,12 @@
   //            rendered the same Vietnamese-safe way as text; geometry + label in
   //            /NabuData so a re-opened file is fully re-editable (move / re-angle /
   //            retype the head-or-tail label).
-  const MANAGED_KINDS = new Set(["text", "note", "arrow"]);
+  const MANAGED_KINDS = new Set(["text", "note", "image", "arrow"]);
+  // Kinds drawn as a plain x/y/w/h box — the ones that get resize grips. Named
+  // because it used to be an inline `||` chain inside renderAnnot, which is the kind
+  // of thing that quietly drifts out of step with the .handle rules in app.css.
+  const RESIZABLE_KINDS = new Set(["highlight", "redact", "image", "box", "ellipse"]);
+  const HANDLE_DIRS = ["nw", "ne", "sw", "se"];
   // Single-key tool shortcuts (edit mode only). Letters mirror the tool tooltips.
   const TOOL_KEYS = {
     v: "select", t: "text", h: "highlight", d: "draw", r: "box", o: "ellipse",
@@ -52,6 +57,10 @@
   };
   const NABU_KIND = PDFName.of("NabuKind");
   const NABU_DATA = PDFName.of("NabuData");
+  // Private carrier for an image's ORIGINAL file bytes — see addManagedAnnot's
+  // image branch for why the bytes can't live in /NabuData like every other kind.
+  const NABU_SRC = PDFName.of("NabuSrc");
+  const NABU_IMG = PDFName.of("NabuImg"); // the appearance's one XObject resource name
   const P_ANNOTS = PDFName.of("Annots");
 
   function isManagedKind(k) { return MANAGED_KINDS.has(k); }
@@ -123,18 +132,8 @@
     return Object.values(ed.annots).reduce((s, a) => s + a.length, 0) + (ed.watermark ? 1 : 0);
   }
 
-  // Centre point (in whatever coord space the endpoints are given) where an arrow's
-  // label sits. `sx,sy`=tail (x1,y1), `ex,ey`=head/tip (x2,y2), `ang`=head direction
-  // (atan2(ey-sy, ex-sx)), `hl`=head length, `fs`=label font size. labelEnd "tail"
-  // puts it just beyond the base pointing away from the tip; anything else = head
-  // (the historical default, so arrows without a labelEnd render unchanged).
-  function arrowLabelPos(a, sx, sy, ex, ey, ang, hl, fs) {
-    const gap = hl + fs * 0.6;
-    if (a.labelEnd === "tail") {
-      return { x: sx - Math.cos(ang) * gap, y: sy - Math.sin(ang) * gap };
-    }
-    return { x: ex + Math.cos(ang) * gap, y: ey + Math.sin(ang) * gap };
-  }
+  // `arrowLabelPos` moved to renderer/annot-geom.js at v0.2.48 — see the note at the
+  // cloud-path site below for why the call sites here did not change.
 
   // ---- annotation-level undo/redo (Ctrl+Z/Y while the editor is open) ------
   // Snapshots of the *pending* annotations, separate from app.js's document
@@ -142,9 +141,32 @@
 
   const edHist = { past: [], future: [], lastKey: null, lastT: 0 };
 
+  // A JSON round-trip is still the deep copy (it is proven, and annots are plain
+  // data), but image `dataUrl`s are swapped for a token on the way out and restored
+  // BY REFERENCE on the way in. They are immutable — an edit replaces the string,
+  // never mutates it — and since images round-trip they now live in ed.annots for a
+  // whole session: a re-opened photo is a multi-megabyte base64 string and a plain
+  // JSON.parse(JSON.stringify(...)) cloned it into every one of the 50 history slots.
+  // Same lesson as BI-24, on the heap instead of the wire. Everything else is still
+  // genuinely copied, including the nested pts/replies arrays that ARE mutated
+  // in place (draw strokes, note threads).
+  // Collision-proof by construction: a real dataUrl always begins "data:".
+  const URL_TOKEN = "nabu-src-ref:";
   function edSnapshot() {
+    const pool = [];
+    const json = JSON.stringify(ed.annots, (k, v) => {
+      if (k === "dataUrl" && typeof v === "string") {
+        pool.push(v);
+        return URL_TOKEN + (pool.length - 1);
+      }
+      return v;
+    });
     return {
-      annots: JSON.parse(JSON.stringify(ed.annots)),
+      annots: JSON.parse(json, (k, v) =>
+        k === "dataUrl" && typeof v === "string" && v.startsWith(URL_TOKEN)
+          ? pool[+v.slice(URL_TOKEN.length)]
+          : v
+      ),
       watermark: ed.watermark ? { ...ed.watermark } : null,
     };
   }
@@ -224,155 +246,12 @@
     return { x, y };
   }
 
-  let _measureCtx;
-  function measureCtx() {
-    if (!_measureCtx) _measureCtx = document.createElement("canvas").getContext("2d");
-    return _measureCtx;
-  }
-  // Built-in font-family keys → a CSS font-family stack. Any other value is taken
-  // as a literal system family name (from the /fonts picker) and quoted as-is.
-  const FONT_STACKS = {
-    sans: 'system-ui, "Segoe UI", Arial, sans-serif',
-    serif: '"Times New Roman", Times, serif',
-    mono: '"Courier New", Courier, monospace',
-  };
-  function fontFamily(key) {
-    return FONT_STACKS[key] || `"${(key || "sans").replace(/"/g, "")}", sans-serif`;
-  }
-  // CSS `font` shorthand from a size (px) and an optional style object
-  // ({ font, bold, italic }). Defaults match a plain sans-serif text box.
-  function textFont(fontSizePx, opts) {
-    const o = opts || {};
-    const style = o.italic ? "italic " : "";
-    const weight = o.bold ? "700 " : "";
-    return `${style}${weight}${fontSizePx}px ${fontFamily(o.font)}`;
-  }
-  // Normalise a text annotation (or a partial style object) into the full set of
-  // style fields the layout engine understands, filling in safe defaults. Old
-  // files / older annots that lack the new fields keep their original look.
-  function normTextStyle(a) {
-    a = a || {};
-    const num = (v, d) => (v == null || isNaN(+v) ? d : +v);
-    const al = a.align;
-    return {
-      font: a.font || "sans",
-      bold: !!a.bold,
-      italic: !!a.italic,
-      underline: !!a.underline,
-      strike: !!a.strike,
-      align: al === "center" || al === "right" || al === "justify" ? al : "left",
-      lineHeight: Math.max(0.5, num(a.lineHeight, 1.3)), // multiplier of font size
-      paraSpacing: Math.max(0, num(a.paraSpacing, 0)), // extra pt at blank-line breaks
-      letterSpacing: num(a.letterSpacing, 0), // pt between characters
-      wordSpacing: num(a.wordSpacing, 0), // pt added on spaces
-      charScale: Math.max(0.2, num(a.charScale, 1)), // horizontal glyph scale (1 = 100%)
-      indent: Math.max(0, num(a.indent, 0)), // left indent in pt
-      listType: a.listType === "bullet" || a.listType === "number" ? a.listType : "none",
-      opacity: Math.min(1, Math.max(0, num(a.opacity, 1))),
-    };
-  }
-  // Back-compat alias: the style bundle read off a text annotation is now the full
-  // normalised set (superset of the old {font,bold,italic}).
-  function textStyle(a) {
-    return normTextStyle(a);
-  }
-
-  // Core text layout, shared by measureText (box sizing) and renderTextPng (baked
-  // PNG) so the on-screen box and the printed result always agree. Positions EVERY
-  // glyph so we can honour alignment, justify, letter/word spacing, horizontal
-  // char scale, indent and bullet/number lists — none of which plain fillText(str)
-  // can do. Works in an abstract unit: `fpx` is the font size in that unit and
-  // `upp` is units-per-point (so pt-based spacings scale correctly): raster passes
-  // fpx=sizePt*RS, upp=RS; measuring passes fpx=sizePt, upp=1.
-  //   ctx: a canvas-2d-like object (needs .font + measureText(str).width).
-  // Returns { width, height, ops:[{ch,x,y}], decos:[{x0,x1,y,kind}], style }.
-  function layoutTextBox(text, style, ctx, fpx, upp) {
-    const s = normTextStyle(style);
-    ctx.font = textFont(fpx, s);
-    const meas = (str) => ctx.measureText(str).width;
-    const sx = s.charScale;
-    const ls = s.letterSpacing * upp;
-    const ws = s.wordSpacing * upp;
-    const indent = s.indent * upp;
-    const para = s.paraSpacing * upp;
-    const lh = fpx * s.lineHeight;
-    const markerGap = fpx * 0.4;
-    const isList = s.listType === "bullet" || s.listType === "number";
-
-    const rawLines = String(text == null ? "" : text).split("\n");
-    // Width of a line's text run, including char scale + letter/word spacing but
-    // NOT the trailing letter-space (spacing sits *between* glyphs).
-    const lineTextWidth = (str) => {
-      let w = 0;
-      for (const ch of str) {
-        w += meas(ch) * sx + ls;
-        if (ch === " ") w += ws;
-      }
-      if (str.length) w -= ls;
-      return Math.max(0, w);
-    };
-
-    let num = 0;
-    const items = rawLines.map((str) => {
-      const blank = str.trim() === "";
-      let marker = "";
-      if (isList && !blank) {
-        num++;
-        marker = s.listType === "bullet" ? "•" : num + ".";
-      }
-      return { str, blank, marker };
-    });
-    const markerW = (m) => (m ? meas(m) * sx : 0);
-    const maxMarkerW = items.reduce((mx, it) => Math.max(mx, markerW(it.marker)), 0);
-    const textLeft = indent + (isList ? maxMarkerW + markerGap : 0);
-    const blockW = items.reduce((mx, it) => Math.max(mx, lineTextWidth(it.str)), 1);
-
-    const ops = [];
-    const decos = [];
-    let y = 0;
-    items.forEach((it, idx) => {
-      if (!it.blank) {
-        const lw = lineTextWidth(it.str);
-        const lastOfPara = idx === items.length - 1 || items[idx + 1].blank;
-        let offset = 0;
-        let justifyExtra = 0;
-        if (s.align === "center") offset = (blockW - lw) / 2;
-        else if (s.align === "right") offset = blockW - lw;
-        else if (s.align === "justify" && !lastOfPara) {
-          const spaces = (it.str.match(/ /g) || []).length;
-          if (spaces > 0) justifyExtra = (blockW - lw) / spaces;
-        }
-        // Marker (bullet / number) sits at the indent; text follows it.
-        if (it.marker) {
-          let mx = indent;
-          for (const ch of it.marker) {
-            ops.push({ ch, x: mx, y });
-            mx += meas(ch) * sx;
-          }
-        }
-        let cx = textLeft + offset;
-        const lineStartX = cx;
-        for (const ch of it.str) {
-          ops.push({ ch, x: cx, y });
-          cx += meas(ch) * sx + ls;
-          if (ch === " ") cx += ws + justifyExtra;
-        }
-        const lineEndX = it.str.length ? cx - ls : lineStartX;
-        if (s.underline) decos.push({ x0: lineStartX, x1: lineEndX, y: y + fpx * 1.02, kind: "under" });
-        if (s.strike) decos.push({ x0: lineStartX, x1: lineEndX, y: y + fpx * 0.62, kind: "strike" });
-      }
-      y += lh;
-      if (it.blank) y += para;
-    });
-
-    return { width: Math.max(1, textLeft + blockW), height: Math.max(lh, y), ops, decos, style: s };
-  }
-
-  function measureText(text, fontSizePt, opts) {
-    const lay = layoutTextBox(text, opts, measureCtx(), fontSizePt, 1);
-    const pad = fontSizePt * 0.15;
-    return { w: Math.ceil(lay.width + pad * 2), h: Math.ceil(lay.height + pad * 2) };
-  }
+  // `measureCtx` / `FONT_STACKS` / `fontFamily` / `textFont` / `normTextStyle` /
+  // `textStyle` / `layoutTextBox` / `measureText` / `listDisplayText` moved to
+  // renderer/annot-text.js at v0.2.48 (pure → now under `npm run test:text`). They
+  // are still reachable by BARE NAME from here: annot-text.js is a classic script
+  // loaded BEFORE this one, so it declares them in the same shared scope they used
+  // to live in — that is why no call site in this file changed. See BI-14 + §2.
 
   // The formatting bundle a NEW text box inherits from the current palette state.
   // (ed.textOpacity → the annot's `opacity`, kept distinct from fill opacity.)
@@ -405,34 +284,23 @@
       [s.underline && "underline", s.strike && "line-through"].filter(Boolean).join(" ") || "none";
   }
 
-  // Text with bullet/number markers prefixed per non-empty line — DISPLAY ONLY
-  // (the stored `text` stays clean so editing never touches the markers).
-  function listDisplayText(text, style) {
-    const s = normTextStyle(style);
-    const str = text == null ? "" : String(text);
-    if (s.listType === "none") return str;
-    let n = 0;
-    return str
-      .split("\n")
-      .map((ln) => {
-        if (ln.trim() === "") return ln;
-        n++;
-        return (s.listType === "bullet" ? "• " : n + ". ") + ln;
-      })
-      .join("\n");
-  }
-
   function hexRgb(hex) {
     const m = /^#?([0-9a-f]{6})$/i.exec(hex || "");
     if (!m) return rgb(0, 0, 0);
     const n = parseInt(m[1], 16);
     return rgb(((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255);
   }
+  // Strip the `data:…;base64,` prefix and hand the payload to wire.js's `b64ToU8`
+  // — the ONE base64 decoder in the renderer (BI-24's rule, decode side). This used
+  // to be a hand-rolled copy of that loop, and `sign.js` had a third copy; the
+  // pattern that produced BI-27 (a private `parsePageRanges` in this file) all over
+  // again. Keep it a one-line adapter: the loop lives in wire.js, under test:wire.
   function dataUrlToBytes(dataUrl) {
-    const bin = atob(dataUrl.split(",")[1]);
-    const u8 = new Uint8Array(bin.length);
-    for (let k = 0; k < bin.length; k++) u8[k] = bin.charCodeAt(k);
-    return u8;
+    const b64 = String(dataUrl).split(",")[1];
+    // `b64ToU8` tolerates a missing payload (returns 0 bytes). Here that would mean
+    // silently embedding an EMPTY image, so keep the old behaviour: fail loudly.
+    if (b64 == null) throw new Error("dataUrlToBytes: not a data: URL");
+    return b64ToU8(b64);
   }
 
   // Identify an image by its magic bytes — pdf-lib can only embed PNG or JPEG, and
@@ -498,128 +366,12 @@
     return `rgba(${r},${g},${b},${a})`;
   }
 
-  // Revision-cloud outline as an SVG path. The perimeter of the a.w×a.h box is
-  // replaced by outward semicircular scallops — the construction-industry standard
-  // "khoanh mây". Coordinates are shifted by `pad` so the bulges stay ≥ 0, letting
-  // the same string drive both the overlay <svg> (0-origin viewBox) and pdf-lib's
-  // drawSvgPath at bake time. Returns { d, pad, W, H }.
-  const CLOUD_BUMP = 16; // default scallop diameter in scale-1 PDF points
-  const CLOUD_BUMP_MIN = 6; // tightest/densest cloud the size control allows
-  const CLOUD_BUMP_MAX = 28; // puffiest cloud the size control allows
-  // Per-annotation scallop size. Users asked for smaller/denser clouds, so each
-  // cloud carries its own `bump`; clouds drawn before this was configurable have
-  // no `bump` and fall back to the historical default so they render unchanged.
-  const bumpOf = (a) => (a && a.bump) || CLOUD_BUMP;
-  function cloudPath(w, h, bump) {
-    bump = bump || CLOUD_BUMP;
-    const pad = bump; // room for the outward bulges
-    const x0 = pad;
-    const y0 = pad;
-    const x1 = pad + Math.max(1, w);
-    const y1 = pad + Math.max(1, h);
-    const parts = [];
-    // Emit `n` semicircular arcs along the straight edge A→B, each bulging outward.
-    // Traversing the rectangle clockwise (in the y-down overlay space), a sweep
-    // flag of 1 puts every bump on the outer side.
-    const side = (ax, ay, bx, by) => {
-      const len = Math.hypot(bx - ax, by - ay);
-      const n = Math.max(1, Math.round(len / bump));
-      const r = len / n / 2;
-      for (let k = 1; k <= n; k++) {
-        const t = k / n;
-        const px = ax + (bx - ax) * t;
-        const py = ay + (by - ay) * t;
-        parts.push(`A ${r.toFixed(2)} ${r.toFixed(2)} 0 0 1 ${px.toFixed(2)} ${py.toFixed(2)}`);
-      }
-    };
-    side(x0, y0, x1, y0); // top: left → right
-    side(x1, y0, x1, y1); // right: top → bottom
-    side(x1, y1, x0, y1); // bottom: right → left
-    side(x0, y1, x0, y0); // left: bottom → top
-    const d = `M ${x0} ${y0} ` + parts.join(" ") + " Z";
-    return { d, pad, W: Math.max(1, w) + 2 * pad, H: Math.max(1, h) + 2 * pad };
-  }
-
-  // Freehand / polygon revision cloud: scallop a *closed* polygon given by an
-  // ordered point list (scale-1 space). The perimeter is resampled into ~`bump`
-  // spaced points and each span becomes an outward semicircular bump. "Outward"
-  // is decided per-span relative to the polygon centroid, so it works for any
-  // winding. Returns { d, minX, minY, pad, W, H } (local 0-origin, y-down —
-  // drives both the overlay <svg> and pdf-lib's drawSvgPath, like cloudPath) or
-  // null if there aren't enough distinct points. Corners are lightly rounded.
-  // Apex (farthest point) of the SVG elliptical-arc A→B with rx=ry=rr, x-rotation
-  // 0 and large-arc-flag 0, for a given sweep flag. Uses the SVG endpoint→center
-  // parameterisation. Lets cloudPathPoly decide which sweep bulges outward.
-  function arcApex(A, B, rr, sweep) {
-    const dx = B.x - A.x, dy = B.y - A.y;
-    const chord = Math.hypot(dx, dy) || 1;
-    rr = Math.max(rr, chord / 2 + 0.01);
-    const mx = (A.x + B.x) / 2, my = (A.y + B.y) / 2;
-    const h = Math.sqrt(Math.max(0, rr * rr - (chord / 2) * (chord / 2)));
-    const ux = -dy / chord, uy = dx / chord; // unit perpendicular to the chord
-    const sign = sweep ? 1 : -1; // large-arc-flag is 0, so center sign = ±1 by sweep
-    const ccx = mx + sign * h * ux, ccy = my + sign * h * uy;
-    let vx = mx - ccx, vy = my - ccy;
-    const vl = Math.hypot(vx, vy) || 1;
-    return { x: ccx + (rr * vx) / vl, y: ccy + (rr * vy) / vl };
-  }
-
-  function cloudPathPoly(rawPts, bump) {
-    bump = bump || CLOUD_BUMP;
-    const pts = [];
-    for (const p of rawPts || []) {
-      const last = pts[pts.length - 1];
-      if (!last || Math.hypot(p.x - last.x, p.y - last.y) > 0.5) pts.push({ x: p.x, y: p.y });
-    }
-    if (pts.length < 3) return null;
-    let cx = 0, cy = 0;
-    for (const p of pts) { cx += p.x; cy += p.y; }
-    cx /= pts.length; cy /= pts.length;
-    const loop = pts.concat([pts[0]]);
-    let L = 0;
-    for (let i = 1; i < loop.length; i++) L += Math.hypot(loop[i].x - loop[i - 1].x, loop[i].y - loop[i - 1].y);
-    if (L < 1) return null;
-    const n = Math.max(6, Math.round(L / bump));
-    const step = L / n;
-    // Resample n points evenly along the closed perimeter.
-    const samples = [];
-    let segI = 1, dist = 0;
-    let segStart = loop[0], segEnd = loop[1];
-    let segLen = Math.hypot(segEnd.x - segStart.x, segEnd.y - segStart.y);
-    for (let k = 0; k < n; k++) {
-      const target = k * step;
-      while (target > dist + segLen && segI < loop.length - 1) {
-        dist += segLen;
-        segI++;
-        segStart = loop[segI - 1];
-        segEnd = loop[segI];
-        segLen = Math.hypot(segEnd.x - segStart.x, segEnd.y - segStart.y);
-      }
-      const t = segLen > 0 ? Math.min(1, (target - dist) / segLen) : 0;
-      samples.push({ x: segStart.x + (segEnd.x - segStart.x) * t, y: segStart.y + (segEnd.y - segStart.y) * t });
-    }
-    const xs = samples.map((s) => s.x), ys = samples.map((s) => s.y);
-    const minX = Math.min(...xs), minY = Math.min(...ys);
-    const maxX = Math.max(...xs), maxY = Math.max(...ys);
-    const pad = bump;
-    const lx = (x) => (x - minX + pad).toFixed(2);
-    const ly = (y) => (y - minY + pad).toFixed(2);
-    const rNum = step / 2;
-    const r = rNum.toFixed(2);
-    const parts = [];
-    for (let k = 0; k < n; k++) {
-      const a = samples[k], b = samples[(k + 1) % n];
-      // Bulge each span outward. The two sweep flags put the arc apex on opposite
-      // sides of the chord; pick the one whose apex is farther from the centroid.
-      // Winding-independent, so it's correct for either polygon orientation.
-      const ap1 = arcApex(a, b, rNum, 1), ap0 = arcApex(a, b, rNum, 0);
-      const d1 = Math.hypot(ap1.x - cx, ap1.y - cy), d0 = Math.hypot(ap0.x - cx, ap0.y - cy);
-      const sweep = d1 > d0 ? 1 : 0;
-      parts.push(`A ${r} ${r} 0 0 ${sweep} ${lx(b.x)} ${ly(b.y)}`);
-    }
-    const d = `M ${lx(samples[0].x)} ${ly(samples[0].y)} ` + parts.join(" ") + " Z";
-    return { d, minX, minY, pad, W: maxX - minX + 2 * pad, H: maxY - minY + 2 * pad };
-  }
+  // `CLOUD_BUMP` / `CLOUD_BUMP_MIN` / `CLOUD_BUMP_MAX` / `bumpOf` / `cloudPath` /
+  // `arcApex` / `cloudPathPoly` / `arrowLabelPos` / `resizeRect` moved to
+  // renderer/annot-geom.js at v0.2.48 (pure → now under `npm run test:geom`). They are
+  // still reachable by BARE NAME from here: annot-geom.js is a classic script loaded
+  // BEFORE this one, so it declares them in the same shared scope they used to live
+  // in — that is why no call site in this file changed. See BI-14 + §2.
 
   // ---- overlay rendering ---------------------------------------------------
 
@@ -962,10 +714,13 @@
     }
     // redact needs no extra content (solid black via CSS)
 
-    if (ed.sel === a.id && (a.kind === "highlight" || a.kind === "redact" || a.kind === "image" || a.kind === "box" || a.kind === "ellipse")) {
-      const h = document.createElement("div");
-      h.className = "handle";
-      el.appendChild(h);
+    if (ed.sel === a.id && RESIZABLE_KINDS.has(a.kind)) {
+      for (const dir of HANDLE_DIRS) {
+        const h = document.createElement("div");
+        h.className = "handle h-" + dir;
+        h.dataset.dir = dir; // read back by onDown → resizeRect
+        el.appendChild(h);
+      }
     }
     return el;
   }
@@ -1003,7 +758,7 @@
     if (ed.tool === "select") syncCtlVisibility("select");
     updateFmtPanel();
   }
-  const SELECT_HINT = "Kéo để di chuyển; góc để đổi cỡ; Delete để xoá.";
+  const SELECT_HINT = "Kéo để di chuyển; 4 góc để đổi cỡ (giữ Shift = giữ đúng tỷ lệ); Delete để xoá.";
   // Update the edit-bar readout for the select tool. `null` restores the generic
   // select hint; the per-tool hints in setTool own the same slot when other tools
   // are active, so this only writes while the select tool is current.
@@ -1068,6 +823,8 @@
 
   // ---- pointer interaction (create / move / resize) ------------------------
 
+  // `resizeRect` moved to renderer/annot-geom.js at v0.2.48 (see the note above).
+
   let drag = null; // { type, page, id, layer, sx, sy, orig }
 
   function onDown(e) {
@@ -1088,9 +845,16 @@
     if (e.target.classList.contains("handle")) {
       const id = +e.target.closest(".an").dataset.id;
       const a = findAnnot(id).a;
+      // x/y are part of `orig` now: dragging the nw/ne/sw grips moves the box's
+      // origin as well as its size, and cancelDrag has to be able to put both back.
       // undo pushed lazily on the first real resize move (see onMove); a click
       // that grabs the handle but never drags leaves the session untouched
-      drag = { type: "resize", page: i, id, layer, sx: p.x, sy: p.y, orig: { w: a.w, h: a.h }, pushed: false };
+      drag = {
+        type: "resize", page: i, id, layer, sx: p.x, sy: p.y,
+        dir: e.target.dataset.dir || "se", // "se" = the single-grip behaviour this replaced
+        orig: { x: a.x, y: a.y, w: a.w, h: a.h },
+        pushed: false,
+      };
       e.preventDefault();
       return;
     }
@@ -1314,8 +1078,13 @@
       const d = Math.hypot(a.x2 - a.x1, a.y2 - a.y1);
       a.text = ed.measureCal ? formatDim(d * ed.measureCal.unitsPerPoint) : "";
     } else if (drag.type === "resize") {
-      a.w = Math.max(4, drag.orig.w + (p.x - drag.sx));
-      a.h = Math.max(4, drag.orig.h + (p.y - drag.sy));
+      // Shift is read live off the event, so it can be pressed or released
+      // mid-drag and the box follows immediately.
+      const g = resizeRect(drag.dir, drag.orig, p.x - drag.sx, p.y - drag.sy, e.shiftKey, 4);
+      a.x = g.x;
+      a.y = g.y;
+      a.w = g.w;
+      a.h = g.h;
     } else if (drag.type === "rect") {
       a.x = Math.min(drag.sx, p.x);
       a.y = Math.min(drag.sy, p.y);
@@ -1459,6 +1228,8 @@
           a.y = d.orig.y;
         }
       } else if (d.type === "resize") {
+        a.x = d.orig.x;
+        a.y = d.orig.y;
         a.w = d.orig.w;
         a.h = d.orig.h;
       }
@@ -2035,7 +1806,19 @@
     c.width = Math.floor(vp.width);
     c.height = Math.floor(vp.height);
     const cx = c.getContext("2d");
-    await page.render({ canvasContext: cx, viewport: vp }).promise;
+    // A page that carries round-trip annots of ours must be rasterised WITHOUT
+    // annotations. importManaged lifted them into ed.annots and this bake writes them
+    // back as stamps, so burning their old appearance in as well would show every
+    // text box / image on the page TWICE — and a round-trip object the user had just
+    // deleted would come back as un-removable pixels. Pages with none keep the old
+    // behaviour (annotations rendered), so a foreign annotation elsewhere in the
+    // document still survives redaction as pixels exactly as before.
+    const hadManaged = ed._managedPages.has(i);
+    await page.render({
+      canvasContext: cx,
+      viewport: vp,
+      annotationMode: hadManaged ? pdfjsLib.AnnotationMode.DISABLE : pdfjsLib.AnnotationMode.ENABLE,
+    }).promise;
     // Burn each box in *its own* colour so the original pixels are gone for good.
     for (const r of redacts) {
       cx.fillStyle = r.color || "#000";
@@ -2074,12 +1857,18 @@
                label: a.label || "", labelEnd: a.labelEnd === "tail" ? "tail" : "head",
                labelSize: a.labelSize || 14 };
     }
+    // Geometry only — the pixels travel in the /NabuSrc stream, not in here.
+    if (a.kind === "image") {
+      return { k: "image", x: a.x, y: a.y, w: a.w, h: a.h, fmt: a.fmt === "jpg" ? "jpg" : "png" };
+    }
     // note
     return { k: "note", x: a.x, y: a.y, w: a.w, h: a.h, text: a.text || "",
              color: a.color, replies: a.replies || [] };
   }
 
-  function deserializeManaged(data) {
+  // `src` is only used by the image kind: the data URL rebuilt from /NabuSrc (see
+  // managedSrcBytes). Every other kind is fully described by `data` alone.
+  function deserializeManaged(data, src) {
     if (!data || !data.k) return null;
     if (data.k === "text") {
       if (!data.text) return null;
@@ -2110,6 +1899,15 @@
                color: data.color || "#ffd54a",
                replies: Array.isArray(data.replies) ? data.replies : [], _managed: true };
     }
+    if (data.k === "image") {
+      // No usable source bytes → refuse the import. stripManagedFromPage makes the
+      // same call and refuses to remove it, so the image survives as a plain stamp
+      // instead of being silently deleted on the next bake.
+      if (!src) return null;
+      return { id: ed.seq++, kind: "image", x: +data.x || 0, y: +data.y || 0,
+               w: +data.w || 1, h: +data.h || 1,
+               dataUrl: src, fmt: data.fmt === "jpg" ? "jpg" : "png", _managed: true };
+    }
     return null;
   }
 
@@ -2122,11 +1920,61 @@
 
   // Write one managed annotation (text Stamp with image /AP, or note Text annot)
   // into `page`, tagged with /NabuData. Returns true if it was written as a real
-  // annotation; false means the caller should fall back to flattening (only text
-  // on a rotated page).
-  async function addManagedAnnot(doc, page, a, map) {
+  // annotation; false means the caller should fall back to flattening (only text /
+  // arrow / image on a rotated page).
+  //
+  // `share` is a per-bake Map (dataUrl → {imgRef, srcRef}) so the same picture
+  // placed on many pages by "Áp ảnh/chữ ký cho nhiều trang" is embedded ONCE. That
+  // is safe to share only because every managed annot is stripped in the same pass
+  // before a re-bake — see stripManagedAnnots' deferred delete.
+  async function addManagedAnnot(doc, page, a, map, share) {
     const ctx = doc.context;
     const dataHex = PDFHexString.fromText(JSON.stringify(serializeManaged(a)));
+    if (a.kind === "image") {
+      if (page.getRotation().angle % 360 !== 0) return false; // deferred: rotated image keeps flattening
+      const bytes = dataUrlToBytes(a.dataUrl);
+      const fmt = a.fmt || sniffImage(bytes);
+      if (!fmt) return false; // unknown format — flatten (drawOneAnnot sniffs again)
+      const cached = share && share.get(a.dataUrl);
+      let imgRef;
+      let srcRef;
+      if (cached) {
+        imgRef = cached.imgRef;
+        srcRef = cached.srcRef;
+      } else {
+        const img = fmt === "png" ? await doc.embedPng(bytes) : await doc.embedJpg(bytes);
+        imgRef = img.ref;
+        // The ORIGINAL file bytes, verbatim, in a private FILTERLESS stream. They
+        // cannot be recovered from the /AP image (pdf-lib re-encodes a PNG into raw
+        // samples + an /SMask, throwing the container away), and neither string
+        // carrier pdf-lib offers works here — measured on the shipped 1.17.1:
+        //   · a /NabuData-style hex string costs ~1.46x the image and takes >1s to
+        //     write for 1 MB, a literal string ~1.02x;
+        //   · and BOTH PDFHexString.decodeText and PDFString.decodeText throw
+        //     RangeError above ~150 KB (they spread the whole buffer through
+        //     String.fromCharCode), so a signature PNG would be unreadable anyway.
+        // A raw stream is 1.00x, ~5 ms for 2 MB, and reads back as bytes already.
+        srcRef = ctx.register(PDFRawStream.of(ctx.obj({ NabuFmt: fmt }), bytes));
+        if (share) share.set(a.dataUrl, { imgRef: imgRef, srcRef: srcRef });
+      }
+      const [bx, by] = map(a.x, a.y + a.h); // lower-left, the same anchor the flattened path uses
+      const apDict = ctx.obj({
+        Type: "XObject", Subtype: "Form", FormType: 1,
+        BBox: [0, 0, a.w, a.h],
+        Resources: { XObject: { NabuImg: imgRef } },
+      });
+      const apStream = PDFRawStream.of(apDict, strToBytes(`q ${f(a.w)} 0 0 ${f(a.h)} 0 0 cm /NabuImg Do Q`));
+      const annot = ctx.obj({
+        Type: "Annot", Subtype: "Stamp", F: 4,
+        Rect: [bx, by, bx + a.w, by + a.h],
+        AP: { N: ctx.register(apStream) },
+      });
+      annot.set(NABU_KIND, PDFName.of("image"));
+      annot.set(NABU_DATA, dataHex);
+      annot.set(NABU_SRC, srcRef);
+      pushPageAnnot(doc, page, ctx.register(annot));
+      return true;
+    }
     if (a.kind === "text") {
       if (page.getRotation().angle % 360 !== 0) return false; // deferred: rotated text keeps flattening
       // Pass the whole annot as the style so alignment / spacing / lists / scale /
@@ -2197,21 +2045,120 @@
     return out;
   }
 
-  // Remove every previously-written managed annotation from a pdf-lib doc, so a
-  // re-bake replaces rather than duplicates them. Returns the count removed.
-  function stripManagedFromPage(doc, page) {
+  // The original image bytes behind a managed image annot, or null when they can't
+  // be trusted. `null` deliberately means "leave this annot alone": it is neither
+  // imported as an editable object nor stripped on the next bake, so a file that has
+  // been through another PDF editor loses nothing — the image simply stays a plain
+  // stamp. We write the stream with NO /Filter, so any filter at all means someone
+  // else re-encoded it and `contents` is no longer the image file.
+  function managedSrcBytes(doc, dict) {
+    try {
+      const ref = dict.get(NABU_SRC);
+      if (!ref) return null;
+      const st = doc.context.lookup(ref);
+      if (!(st instanceof PDFRawStream) || !st.contents || !st.contents.length) return null;
+      const d = st.dict || st;
+      if (d.get && d.get(PDFName.of("Filter"))) return null;
+      return sniffImage(st.contents) ? st.contents : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  // Image bytes → the data URL the overlay <img> and the next bake both need.
+  // Uses wire.js's pushB64Chunks, the one tested chunked encoder in the renderer:
+  // btoa(String.fromCharCode(...wholeBuffer)) blows the stack on a real photo, and
+  // BI-24 is explicit that no new general-purpose byte→base64 helper gets written.
+  // One image needing one data: URL is the narrow case that legitimately needs the
+  // string at all — do NOT generalise this to documents.
+  function managedSrcDataUrl(bytes) {
+    const parts = [];
+    pushB64Chunks(parts, bytes);
+    return "data:image/" + (sniffImage(bytes) === "jpg" ? "jpeg" : "png") + ";base64," + parts.join("");
+  }
+
+  // Every object a managed annot privately owns, collected for deletion: its /AP
+  // form, that form's /NabuImg image (+ the /SMask a transparent PNG brings) and its
+  // /NabuSrc stream, then the annot dict itself. Anything that doesn't look exactly
+  // like our own output is skipped — worst case we keep the old growth, never a
+  // dangling reference.
+  function collectManagedChain(doc, dict, annotRef, out) {
+    const ctx = doc.context;
+    try {
+      const src = dict.get(NABU_SRC);
+      if (src) out.push(src);
+      const apDict = ctx.lookup(dict.get(PDFName.of("AP")));
+      const nRef = apDict && apDict.get && apDict.get(PDFName.of("N"));
+      if (nRef) {
+        const form = ctx.lookup(nRef);
+        const fd = form && (form.dict || form);
+        const resDict = fd && fd.get && ctx.lookup(fd.get(PDFName.of("Resources")));
+        const xoDict = resDict && resDict.get && ctx.lookup(resDict.get(PDFName.of("XObject")));
+        const imgRef = xoDict && xoDict.get && xoDict.get(NABU_IMG);
+        if (imgRef) {
+          const img = ctx.lookup(imgRef);
+          const sm = img && (img.dict || img).get && (img.dict || img).get(PDFName.of("SMask"));
+          if (sm) out.push(sm);
+          out.push(imgRef);
+        }
+        out.push(nRef);
+      }
+    } catch (_) {
+      /* leave whatever we could not walk in place */
+    }
+    out.push(annotRef);
+  }
+
+  // Actually free the collected objects. Deferred to the END of a whole-document
+  // strip on purpose: an image source is SHARED by every page "Áp ảnh/chữ ký cho
+  // nhiều trang" put it on, so deleting page 1's copy mid-loop would make page 2's
+  // managedSrcBytes come back null and its annot would be kept AND re-written —
+  // two stamps for one image. Duplicate refs are de-duped here, so sharing is free.
+  function freeManagedTrash(doc, trash) {
+    const uniq = new Map();
+    for (const r of trash) if (r) uniq.set(String(r), r);
+    for (const r of uniq.values()) {
+      try { doc.context.delete(r); } catch (_) { /* already gone / not an indirect ref */ }
+    }
+  }
+
+  // Unlink every previously-written managed annotation on `page`, so a re-bake
+  // replaces rather than duplicates them, pushing what they own onto `trash` for
+  // freeManagedTrash. Returns the count unlinked.
+  //
+  // Unlinking alone is NOT enough, and that was a real (if quiet) bug: pdf-lib keeps
+  // every parsed object and writes them all back, so the appearance PNG of each
+  // replaced stamp stayed in the file forever — a text box re-baked ten times
+  // shipped ten copies of its PNG. With images (megabytes) that growth is impossible
+  // to ignore, hence the chain delete. It is provably safe: pdf-lib's embedPng /
+  // embedJpg hand out a FRESH ref per call (they never dedupe by content), and
+  // /NabuImg is a resource name nothing else writes, so once the annot is gone
+  // nothing can still point at its appearance.
+  function stripManagedFromPage(doc, page, trash) {
     const arr = page.node.Annots();
     if (!arr) return 0;
+    const bin = trash || [];
     let removed = 0;
     for (let i = arr.size() - 1; i >= 0; i--) {
-      const dict = doc.context.lookup(arr.get(i));
-      if (dict instanceof PDFDict && dict.get(NABU_KIND)) { arr.remove(i); removed++; }
+      const ref = arr.get(i);
+      const dict = doc.context.lookup(ref);
+      if (!(dict instanceof PDFDict) || !dict.get(NABU_KIND)) continue;
+      // A managed image whose source bytes we can't read is not ours to replace:
+      // importManaged skipped it too, so ed.annots holds no copy and removing it
+      // would delete the user's image outright.
+      if (String(dict.get(NABU_KIND)) === "/image" && !managedSrcBytes(doc, dict)) continue;
+      arr.remove(i);
+      collectManagedChain(doc, dict, ref, bin);
+      removed++;
     }
+    if (!trash) freeManagedTrash(doc, bin); // single-page call: nothing left to share with
     return removed;
   }
   function stripManagedAnnots(doc) {
+    const trash = [];
     let removed = 0;
-    for (const page of doc.getPages()) removed += stripManagedFromPage(doc, page);
+    for (const page of doc.getPages()) removed += stripManagedFromPage(doc, page, trash);
+    freeManagedTrash(doc, trash);
     return removed;
   }
 
@@ -2233,7 +2180,12 @@
         if (!dataObj || typeof dataObj.decodeText !== "function") continue;
         let parsed;
         try { parsed = JSON.parse(dataObj.decodeText()); } catch (_) { continue; }
-        const a = deserializeManaged(parsed);
+        let src = null;
+        if (parsed && parsed.k === "image") {
+          const raw = managedSrcBytes(doc, dict);
+          if (raw) src = managedSrcDataUrl(raw);
+        }
+        const a = deserializeManaged(parsed, src);
         if (a) { annotsFor(i).push(a); ed._managedPages.add(i); count++; }
       }
     }
@@ -2249,15 +2201,18 @@
     return degrees(page.getRotation().angle);
   }
 
-  async function drawAnnots(doc, page, anns, vp1, mode) {
+  // `share` is the per-bake embed cache threaded down to addManagedAnnot; a bake
+  // that doesn't pass one simply embeds every image separately (still correct).
+  async function drawAnnots(doc, page, anns, vp1, mode, share) {
     const map = makeMap(vp1, mode);
     let failed = 0;
     for (const a of anns) {
       try {
-        // Text boxes and notes go in as real, re-editable annotations; only the
-        // rotated-text fallback (addManagedAnnot → false) drops through to flatten.
+        // Text boxes, notes, arrows and images go in as real, re-editable
+        // annotations; only the rotated-page fallback (addManagedAnnot → false)
+        // drops through to flatten.
         if (isManagedKind(a.kind)) {
-          const done = await addManagedAnnot(doc, page, a, map);
+          const done = await addManagedAnnot(doc, page, a, map, share);
           if (done) continue;
         }
         await drawOneAnnot(doc, page, a, map);
@@ -2471,12 +2426,13 @@
   async function bakeInPlace() {
     const doc = await PDFDocument.load(state.bytes);
     stripManagedAnnots(doc); // drop the previous round-trip copies; re-added from ed.annots below
+    const share = new Map(); // one embed per distinct image across the whole bake
     const pages = doc.getPages();
     for (let i = 0; i < pages.length; i++) {
       const anns = annotsFor(i);
       if (!anns.length && !ed.watermark) continue;
       const vp1 = (await state.pdf.getPage(i + 1)).getViewport({ scale: 1 });
-      await drawAnnots(doc, pages[i], anns, vp1, "orig");
+      await drawAnnots(doc, pages[i], anns, vp1, "orig", share);
       if (ed.watermark) await drawWatermark(doc, pages[i], vp1, "orig");
     }
     return await doc.save();
@@ -2485,6 +2441,11 @@
   async function bakeWithRedaction() {
     const src = await PDFDocument.load(state.bytes);
     const out = await PDFDocument.create();
+    const share = new Map(); // see bakeInPlace
+    // Copied pages carry the old round-trip annots. They are unlinked page by page
+    // but freed only after the loop, because a shared image source must stay
+    // readable while later pages are still being checked (see freeManagedTrash).
+    const trash = [];
     const n = state.numPages;
     for (let i = 0; i < n; i++) {
       const anns = annotsFor(i);
@@ -2504,11 +2465,12 @@
         out.addPage(cp);
         page = cp;
         mode = "orig";
-        stripManagedFromPage(out, page); // copied page carried the old round-trip copies
+        stripManagedFromPage(out, page, trash); // copied page carried the old round-trip copies
       }
-      if (others.length) await drawAnnots(out, page, others, vp1, mode);
+      if (others.length) await drawAnnots(out, page, others, vp1, mode, share);
       if (ed.watermark) await drawWatermark(out, page, vp1, mode);
     }
+    freeManagedTrash(out, trash);
     return await out.save();
   }
 

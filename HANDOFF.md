@@ -4,7 +4,142 @@
 > [DESIGN.md](DESIGN.md) (kiến trúc), [ROADMAP.md](ROADMAP.md) (tiến độ chi tiết),
 > [SETUP.md](SETUP.md) (dựng môi trường).
 
-_Cập nhật: 2026-07-28 · v0.2.47_
+_Cập nhật: 2026-07-29 · v0.2.48 đã phát hành (4 thay đổi, dưới đây)_
+
+> **v0.2.48 — zoom mượt + cột trang chạy theo trang đang đọc + ảnh chèn
+> vẫn là object sửa được** (chỉ renderer + tài liệu — **sidecar KHÔNG đổi, không cần rebuild**).
+> Ba order feedback của người dùng, xử lý trong một lượt vì cả ba đụng cùng vùng
+> `app.js` (viewer) / `editor.js` (overlay).
+>
+> **1 · Zoom không còn khựng — `zoomTo` thôi gọi `renderViewer()`.**
+> Thủ phạm không phải “render liên tục” theo nghĩa vẽ nhiều, mà là **mỗi nấc lăn chuột
+> phá sạch DOM rồi dựng lại**: `renderViewer` xoá toàn bộ `.page-wrap`, dựng lại canvas,
+> nối lại hai IntersectionObserver, rasterise 2 trang đầu — trước khi có gì nhúc nhích
+> trên màn hình. Tệ hơn, cờ `zooming` **âm thầm bỏ** những nấc tới trong lúc nó chạy, nên
+> lăn nhanh còn bị mất nấc. Nay tách hai nửa như Acrobat/Foxit:
+> `applyScaleToDom()` **đồng bộ, chỉ đổi CSS box** (compositor kéo giãn bitmap đang có →
+> bám tay ngay, hơi mềm một nhịp) rồi `commitScale()` **hoãn 160 ms** mới rasterise lại
+> đúng những trang đang giữ bitmap. Vì `.page-wrap` **được dùng lại**, overlay chú thích,
+> ô nhập chữ đang mở, highlight Ctrl+F và hình học cuộn đều sống nguyên qua một lần zoom —
+> điều bản cũ không hứa được.
+> Hai chi tiết đáng nhớ: (a) `.text-layer` **không cần vẽ lại** — pdf.js 3.x ghi vị trí span
+> bằng `calc(var(--scale-factor) * Npx)`, đổi đúng một biến CSS là cả lớp tự dàn lại
+> (đã kiểm chứng trong bundle vendor, rồi probe lại trong Chromium thật); (b) bước lăn
+> chuột chuyển sang **phép nhân** (1.1/nấc) và làm tròn tỷ lệ lên **3 chữ số** — cộng cố
+> định 0.1 là nhảy 25% ở mức 40% mà chỉ 3% ở mức 300%, và làm tròn 2 chữ số thì pinch
+> trackpad bị vo về đúng tỷ lệ cũ ⇒ cử chỉ chết. Xem **BI-36**.
+>
+> **2 · Cột trang trượt & sáng theo trang đang đọc** (`syncThumbFocus`). Quyết định quan
+> trọng nhất ở đây là **không** đổi `state.selected`: “trang đang xem” và “trang đang chọn”
+> là hai thứ khác nhau, nhập chúng lại là cuộn qua trang khác rồi bấm Xoá sẽ xoá trang vừa
+> cuộn tới — đúng loại hậu quả BI-26. Nên cue hình cũng phải khác `.selected` (nền + số
+> trang đổi màu, không phải viền accent). Cuộn bằng **số học** `nearestScrollDelta` chứ
+> không `scrollIntoView()` (cái đó cuộn cả phần tử cha + có animation, đánh nhau với
+> smooth-scroll của viewer), và **đứng im khi đang kéo sắp xếp trang** (BI-33). Xem **BI-39**.
+>
+> **3 · Ảnh chèn round-trip như hộp văn bản** — `image` vào `MANAGED_KINDS`, ghi ra
+> `/Stamp` + `/AP` + `/NabuData`, mở lại là object kéo/đổi cỡ/xoá được. Phần khó **không**
+> phải cái annot mà là **byte ảnh gốc để lại đâu**, và câu trả lời chỉ ra được sau khi đo:
+> - không khôi phục được từ ảnh trong `/AP` (pdf-lib giải mã PNG thành mẫu thô + `/SMask`,
+>   bỏ container);
+> - nhét base64 vào `/NabuData` như mọi kind khác thì **hex tốn ~1.46× cỡ ảnh và >1 s để
+>   ghi 1 MB**, và — điều chặn đứng phương án này — **cả `PDFHexString.decodeText` lẫn
+>   `PDFString.decodeText` ném `RangeError` khi payload > ~150 KB** (chúng spread cả buffer
+>   qua `String.fromCharCode`), tức một PNG chữ ký đã không đọc lại được;
+> - **stream thô riêng `/NabuSrc` không có `/Filter`** = **1.00×**, ~5 ms cho 2 MB, đọc ra
+>   đã là byte. Chọn cái này. Và chính chỗ “không có `/Filter`” thành **khoá an toàn**: có
+>   filter nghĩa là tool khác đã nén lại ⇒ annot thành **chỉ đọc** chứ tuyệt đối không bị
+>   xoá lúc bake (BI-37).
+>
+> Hai thứ **phải sửa kèm**, không phải tuỳ chọn:
+> - **Bỏ liên kết annot là chưa đủ.** pdf-lib giữ mọi object nó đọc và ghi lại tất cả, nên
+>   `arr.remove(i)` để lại appearance cũ trong file **mãi mãi** — một hộp văn bản bake 10
+>   lần là 10 bản PNG (bug âm thầm **có từ trước**, ảnh chỉ làm nó lộ ra vì to). Nay giải
+>   phóng cả chuỗi object riêng của annot; an toàn vì `embedPng` của pdf-lib trả **ref mới
+>   mỗi lần gọi**. Thứ tự bắt buộc: **bỏ liên kết cả tài liệu trước, giải phóng sau** — một
+>   `/NabuSrc` được chia sẻ cho mọi trang “áp nhiều trang”, xoá giữa vòng lặp là ảnh nhân
+>   đôi. Kết quả: “áp 1 chữ ký cho 20 trang” giờ **nhúng ảnh 1 lần**, tức **nhỏ hơn cả bản
+>   cũ**. Xem **BI-38**.
+> - **`rasterRedacted` phải tắt annotation** trên trang có annot round-trip. Bug này cũng
+>   có từ trước (redact + hộp văn bản đã bake trên **cùng một trang** ⇒ hộp chữ hiện hai
+>   lần, và ảnh vừa xoá quay lại thành pixel không xoá được). Chỉ tắt trên trang thật sự
+>   có annot của ta, để annot lạ ở trang khác vẫn được burn vào raster như cũ.
+> - **`edSnapshot` không được clone base64 nữa.** Vì ảnh round-trip nên nó **sống trong
+>   `ed.annots` cả phiên**, và `JSON.parse(JSON.stringify(...))` sẽ nhân bản chuỗi
+>   multi-MB vào cả 50 ô undo (đo được: 60 ô × ảnh 5 MB ⇒ ~300 MB). Nay `dataUrl` được đổi
+>   thành token khi stringify và trả lại **theo tham chiếu** — đo lại: **0.1 MB**. Đúng bài
+>   học BI-24, lần này trên heap.
+>
+> **4 tay nắm góc + Shift giữ tỷ lệ.** Trước đây object chỉ có **một** tay nắm ở góc
+> dưới-phải. Nay 4 góc, góc đối diện đứng yên (`resizeRect`), giữ **Shift** = giữ đúng tỷ
+> lệ — áp cho cả tô sáng / redact / chữ nhật / elip, không riêng ảnh.
+>
+> **Lưới test — thêm cách thứ hai để test renderer mà KHÔNG tách file.** §1 của
+> REGRESSION-GUARD nói `app.js`/`editor.js` không test tự động được; v0.2.48 mở rộng đúng
+> mẹo đã dùng ở v0.2.47: test **cắt thẳng hàm ra khỏi file đang ship lúc chạy** rồi cấp cho
+> nó những tên nó khép kín ⇒ cái được test **chính là** cái chạy, và không phải tách file
+> thứ tư. `npm run test:geom` (39 ca) + `npm run test:managed` (42 ca, chạy trên chính
+> pdf-lib đã đối chiếu sha256 với bản vendor). Nửa DOM thì probe bằng **chính Electron của
+> dự án** (30/30). Bốn lưới cũ + 11/11 test Python đều xanh.
+> **4 · Tách lõi thuần khỏi `editor.js` — +180 ca test mới, 0 call site đổi.**
+>
+> **Xuất phát từ một câu hỏi, không phải một lỗi:** “`editor.js` 4k dòng, có nên module
+> hoá?”. Đo trước khi trả lời — và câu trả lời là **KHÔNG, không module hoá toàn bộ**:
+> 57% file (58 hàm / 2075 dòng) bám DOM/canvas, tách ra chỉ *di chuyển* code chứ không
+> làm nó test được. Bốn rào cản đo được (ESM chết vì `file://`, bundler phá lưới hiện
+> có, `ed` là 345 chỗ dính, không có áp lực cộng tác) ghi ở
+> [REGRESSION-GUARD §1](docs/REGRESSION-GUARD.md) để không phải điều tra lại.
+>
+> **Cái ĐÃ làm là phần thuần: 2 file mới, ~460 dòng, 0 call site nào đổi.**
+> - [`renderer/annot-text.js`](desktop/renderer/annot-text.js) — `layoutTextBox` và bạn bè.
+>   Đây là hàm quan trọng nhất trong cả `editor.js`: nó định vị **từng glyph** và là nguồn
+>   duy nhất cho **cả** hộp trên màn hình (`measureText`) **và** PNG đem bake
+>   (`renderTextPng`). Hai đường lệch nhau = chữ tràn khung **trong file đã lưu**, màn hình
+>   vẫn đẹp. → `npm run test:text`, **104 ca**.
+> - [`renderer/annot-geom.js`](desktop/renderer/annot-geom.js) — mây revision, nhãn mũi tên,
+>   `resizeRect`. Mây trả **một** chuỗi SVG path cho cả overlay và pdf-lib. → lưới **mới**
+>   `npm run test:cloud`, **73 ca** (trước đây phần này **không có test nào**);
+>   `resizeRect` chuyển từ `eval` sang `require()` trong `test:geom` (39 ca vẫn xanh —
+>   đó chính là bằng chứng tương đương của nó).
+> - **Cùng mức `wire.js`, không phải `page-range.js`** — giữ **tên trần**, vì ~36 chỗ gọi
+>   đã có sẵn. Hệ quả quan trọng: phía `editor.js` của lần này là **thuần xoá**, không
+>   một call site nào đổi ⇒ hành vi **không thể** lệch. Đánh đổi: hai file **phải nạp
+>   trước** `editor.js`. Xem [§2](docs/REGRESSION-GUARD.md) + BI-14.
+>
+> **Cách kiểm chứng — 3 tầng, không tầng nào là “đọc code thấy ổn”:**
+> 1. **Byte-identical**: script so từng dòng thân hàm đã move với bản trong `git HEAD` →
+>    **7/7 khớp tuyệt đối**. Nên đây là đổi chỗ ở, không phải viết lại.
+> 2. **Tương đương lúc chạy, trong Electron thật**: probe nạp `index.html` **thật**, eval
+>    bản gốc tiền-tách vào **cùng trang** rồi so kết quả trên **font metrics thật** —
+>    **2674 ca, 0 lệch** (1248 layout + 1248 measureText + 178 mây/mũi tên). Cùng probe
+>    khẳng định **18/18 tên trần** thấy được qua ranh giới `<script>` và `window.Editor`
+>    đủ 10 key (IIFE chạy trọn). Chạy baseline trên renderer HEAD để so: **0 lỗi console
+>    mới**, và baseline cho `REFERENCE-ERROR` trên cả 18 tên → phép kiểm **không rỗng**.
+> 3. **Lưới**: 352 → **532 pass, 0 fail** (8 lưới) · `node --check` 24/24 · Python 11/11.
+>
+> **Kèm một lỗi thật đã sửa:** `dataUrlToBytes` bị **nhân bản 3 lần** — `editor.js` và
+> `sign.js` giống hệt nhau từng dòng, và cả hai lặp lại `b64ToU8` của `wire.js` (bộ decode
+> đã chuẩn hoá, đã có 51 ca test). Đúng khuôn bệnh đã sinh ra BI-27. Nay cả hai delegate.
+> **Có guard nổ tiếng**: `b64ToU8` dung thứ payload rỗng (trả 0 byte, `test:wire` ghim ca
+> đó), mà 0 byte ở đây nghĩa là **nhúng một ảnh RỖNG** — nên adapter phải `throw`.
+> 3 ca canh gác trong `test:managed` (42 → 45).
+>
+> **Một quirk đã ghim, CHƯA sửa** (cần bạn quyết): `fontFamily("")`/`fontFamily(null)`
+> không trả stack `sans` mà trả `'"sans", sans-serif'` → **nhãn mũi tên + watermark render
+> bằng Arial**, còn hộp văn bản dùng Segoe UI. Có từ trước. `test:text` ghim hành vi hiện
+> tại; sửa là **đổi hình dáng file đã lưu**, nên để bạn quyết — xem BI-40.
+>
+> **Cố ý CHƯA tách khối `managed-codec`** (`managedSrcBytes`, `managedSrcDataUrl`,
+> `collectManagedChain`, `freeManagedTrash`) — **việc còn lại cho phiên sau.** Lúc làm
+> phần 4 này, 4 hàm đó còn là code mới của phần 3 ở trên: **chưa từng ship, chưa test tay
+> GUI**. Tách chúng ngay lúc đó sẽ làm đợt test tay không phân biệt được lỗi là của tính
+> năng mới hay của phép move — trên đúng đường code mà sai là **mất ảnh của người dùng**
+> (BI-37/38). Nay v0.2.48 **đã** ship và **đã** test tay, nên điều kiện đó đã thoả:
+> tách được ở phiên sau. Đổi lại, phần này **không** thêm coverage mới (42 → 45 ca của
+> `test:managed` đã phủ, qua cách cắt-hàm-lúc-chạy) — cái mua được là bỏ một hack `eval`
+> và giảm ~140 dòng nữa khỏi `editor.js`. Ưu tiên thấp hơn hai file đã tách.
+>
+> ✅ **Đã test tay trên GUI** (2026-07-29): tất cả các mục ở §5 đều đạt.
 
 > v0.2.47 — **hotfix: hợp nhất số học khoảng trang trong hộp thoại "Áp ảnh/chữ ký cho
 > nhiều trang"** (chỉ renderer — **sidecar KHÔNG đổi, không cần rebuild**):
@@ -586,6 +721,19 @@ OCR cần `.venv` Python 3.12 ở gốc repo + `GEMINI_API_KEY` trong `.env`. Xe
   canvas trang, **không vẽ chữ annotation** → trước đây app mình thấy ô marker nhưng không đọc được
   nội dung (Foxit/Acrobat đọc được). Sửa: `addNoteMarkers()` ở `app.js` đọc `page.getAnnotations()`
   mỗi lần render trang, đè hotspot trong suốt lên marker → hover = tooltip, click = popup nội dung.
+- **Zoom KHÔNG được gọi `renderViewer()`** (v0.2.48): `renderViewer` là đường cho **đổi tài liệu**,
+  nó xoá sạch `.page-wrap` → mất overlay chú thích/ô nhập chữ/highlight tìm kiếm và tốn O(trang) mỗi
+  nấc lăn chuột (chính là cảm giác "khựng/giật"). Đổi tỷ lệ đi qua `applyScaleToDom()` (đồng bộ, chỉ
+  CSS box) + `commitScale()` (hoãn 160 ms mới rasterise). `.text-layer` không cần vẽ lại — pdf.js 3.x
+  dàn span bằng `calc(var(--scale-factor)*Npx)`. Xem BI-36.
+- **Byte ảnh gốc của ảnh round-trip nằm ở stream `/NabuSrc` KHÔNG filter**, không nhét vào `/NabuData`
+  (v0.2.48): đo trên pdf-lib 1.17.1 → hex ~1.46× cỡ ảnh + >1 s/MB, **và** cả `PDFHexString.decodeText`
+  lẫn `PDFString.decodeText` **ném `RangeError` khi payload > ~150 KB**; stream thô = 1.00×, ~5 ms/2 MB.
+  Có `/Filter` = tool khác nén lại ⇒ annot thành **chỉ đọc**, không bao giờ bị xoá lúc bake. Xem BI-37.
+- **Strip annot round-trip phải GIẢI PHÓNG object, và giải phóng SAU khi bỏ liên kết cả tài liệu**
+  (v0.2.48): pdf-lib ghi lại mọi object nó đọc ⇒ chỉ `arr.remove()` là để lại appearance cũ mãi mãi
+  (bake 10 lần = 10 bản PNG). Một `/NabuSrc` được **chia sẻ** cho mọi trang "áp nhiều trang" nên xoá
+  giữa vòng lặp = ảnh nhân đôi. Xem BI-38.
 - **Re-render sau Áp dụng = chỉ trang đổi** (`rerenderChanged(changed)` ở `app.js`, thay `renderAll`):
   bake đổi `state.bytes` nên pdf.js phải reload doc, **nhưng số trang không đổi** → giữ DOM page-wrap +
   bitmap trang không đổi, chỉ repaint canvas/thumbnail trang thực sự đổi. Editor (P4): `changed` = các
@@ -620,6 +768,20 @@ OCR cần `.venv` Python 3.12 ở gốc repo + `GEMINI_API_KEY` trong `.env`. Xe
   con) → electron-builder lỗi `EBUSY`/`Access denied`. Kill process `Nabu PDF`+`sidecar` trước khi build.
 
 ## Bước tiếp theo (gợi ý)
+
+0. **▶️ Test tay GUI cho v0.2.48 (BẮT BUỘC trước khi phát hành)** — ba thay đổi này đều là
+   renderer/DOM nên lưới tự động chỉ phủ phần số học + phần object PDF; phần cảm giác thì
+   phải mắt thấy tay kéo. Danh sách đầy đủ ở `docs/REGRESSION-GUARD.md` §5 (4 dòng mới:
+   Zoom · Cột trang · Ảnh round-trip · Tay nắm đổi cỡ). Bốn phép thử đáng làm trước nhất:
+   - Ctrl+lăn **nhanh liên tục** trên PDF nhiều trang & trên bản vẽ A0 → trang bám tay, dừng
+     ~0.2 s là nét, **không nấc nào bị bỏ**; rồi zoom **trong lúc đang Chú thích** → hình vẽ
+     theo đúng tỷ lệ và ô nhập chữ đang mở **không mất**.
+   - Tick chọn vài trang → cuộn đi trang khác → bấm **Xoá trang**: phải xoá **đúng các trang
+     đã tick** (BI-39/BI-26).
+   - Chèn 1 ảnh → Áp dụng → Lưu → **mở lại** → Chỉnh sửa → kéo/đổi cỡ/xoá được; lưu **3–4
+     lần** liên tiếp → **cỡ file không phình**; áp 1 chữ ký cho ~20 trang → file ~1 lần cỡ ảnh.
+   - Xoá 1 ảnh round-trip rồi thêm **ô redact trên chính trang đó** → Áp dụng: ảnh **không**
+     quay lại thành pixel và ảnh còn lại **không nhân đôi** (BI-38).
 
 1. **▶️ Test GUI P4 (T4.6)**: bật "Chỉnh sửa" → thử đủ công cụ → Áp dụng → Lưu → mở lại; kiểm tra
    redact thật sự xoá text gốc (bôi đen vùng rồi sau khi lưu thử copy/search không ra chữ cũ).

@@ -8,17 +8,21 @@ diễn ra **ngay trên máy bạn** — file PDF không bị gửi lên mạng (
 
 ## 1. Cần copy gì vào USB
 
-Chỉ cần **một file duy nhất**, chọn 1 trong 2 kiểu:
+Chỉ cần **một file duy nhất**:
 
-| Kiểu | File copy vào USB | Dùng khi |
-|------|-------------------|----------|
-| **Bản chạy thẳng (khuyên dùng)** | `NabuPDF-0.2.47-portable.exe` (~387 MB) | Cắm USB, chạy luôn, không cài. Tiện mang đi nhiều máy. |
-| **Bản cài đặt** | `NabuPDF-0.2.47-x64.exe` (~387 MB) | Cài cố định vào 1 máy (tạo shortcut, gỡ qua Control Panel). |
+| Kiểu | File tải về | Dùng khi |
+|------|-------------|----------|
+| **Bản cài đặt** | `NabuPDF-0.2.48-x64.exe` (~387 MB) | Cài vào máy (tạo shortcut, gỡ qua Control Panel), **tự cập nhật** khi có bản mới. |
+
+> **Từ v0.2.48 không còn bản portable.** Các bản trước có
+> `NabuPDF-<ver>-portable.exe`; nó đã bị bỏ khỏi quy trình đóng gói vì bản cài đặt tự
+> cập nhật được (OTA) còn portable thì không, nên người dùng portable cứ mắc ở bản cũ.
+> Nếu bạn đang dùng portable: tải bản cài đặt ở trên, nó sẽ tự cập nhật từ nay.
 
 **Tải ở đâu:** trang phát hành — <https://github.com/darkend16987/NabuPDF/releases/latest>
 (kèm `SHA256SUMS.txt` để đối chiếu file tải về nếu cần).
 
-> Nếu bạn tự build trên máy phát triển thì hai file nằm ở `desktop\dist-app\` trong thư mục dự án.
+> Nếu bạn tự build trên máy phát triển thì file nằm ở `desktop\dist-app\` trong thư mục dự án.
 
 > **Không cần** copy thư mục `win-unpacked`, không cần cài Python, không cần `.venv`. Mọi thứ đã
 > gói sẵn trong file `.exe`.
@@ -27,15 +31,10 @@ Chỉ cần **một file duy nhất**, chọn 1 trong 2 kiểu:
 
 ## 2. Cách chạy
 
-### Cách A — Bản chạy thẳng (portable)
-1. Copy `NabuPDF-0.2.47-portable.exe` vào USB (hoặc ổ cứng máy đích).
-2. Nháy đúp để chạy. Lần đầu nó tự giải nén ra thư mục tạm (mất ~10–20 giây) rồi mở cửa sổ app.
-3. Xong. Không để lại gì trên máy (ngoài cache model, xem mục 4).
-
-### Cách B — Bản cài đặt (installer)
-1. Copy `NabuPDF-0.2.47-x64.exe` vào máy đích.
+1. Copy `NabuPDF-0.2.48-x64.exe` vào máy đích.
 2. Nháy đúp → chọn thư mục cài → Next → Install.
 3. Chạy từ Start Menu / shortcut desktop. Gỡ qua **Settings → Apps** như phần mềm thường.
+4. Các bản sau app **tự tải và tự cập nhật**, không phải làm lại bước 1–3.
 
 ---
 
@@ -81,9 +80,16 @@ Chỉ cần **một file duy nhất**, chọn 1 trong 2 kiểu:
 >   (Ctrl+S ghi đè thẳng vào file đang mở; file kéo–thả/chưa lưu thì hỏi nơi lưu.)
 > - **Ctrl+Z** Hoàn tác · **Ctrl+Y** Làm lại.
 > - **Ctrl + / Ctrl − / Ctrl 0** Phóng to / Thu nhỏ / Cỡ gốc 100%.
+> - **Ctrl + lăn chuột** phóng to/thu nhỏ **bám theo con trỏ**. Trang bám tay ngay lập tức (hơi mềm
+>   một nhịp) rồi **tự làm nét khi bạn dừng lại** — đó là cách Acrobat/Foxit làm, và là lý do zoom
+>   không còn giật từng nấc.
 > - **Vừa bề ngang / Vừa chiều dọc** (nút cạnh ô zoom) — "Vừa chiều dọc" hợp văn bản khổ ngang (landscape).
 > - **↑ / ↓** (ở cửa sổ xem trang) nhảy sang trang trước / trang kế.
 > - **Delete** Xóa trang đang chọn.
+>
+> 💡 **Cột trang chạy theo bạn:** cuộn tài liệu tới đâu, thumbnail trang đó **sáng lên** (số trang đổi
+> màu) và cột trang **tự trượt** để trang đó luôn nằm trong khung nhìn. Đây chỉ là dấu "bạn đang ở đây"
+> — nó **không** đổi các trang bạn đã tick chọn, nên Xoá/Tách trang vẫn nhắm đúng những trang bạn chọn.
 
 Cache model lưu ở: `C:\Users\<tên-bạn>\.paddlex` (và `.cache`). Xóa được nếu cần giải phóng ổ; lần
 sau dùng OCR sẽ tải lại.
@@ -108,6 +114,17 @@ Giới hạn đã biết: sửa trong phạm vi từng đoạn (không tự dàn
 > nhắc). Chỉ nhận **PNG / JPG**.
 > ⚠️ Đây là **dán ảnh chữ ký**, không phải **chữ ký số** (digital signature có chứng thư CA). App
 > hiện chưa hỗ trợ chữ ký số pháp lý.
+
+> **Ảnh vẫn sửa lại được sau khi Lưu:** giống hộp văn bản và ghi chú, ảnh/chữ ký bạn chèn **không bị
+> "dán chết"** vào trang. Mở lại file → bấm **Chỉnh sửa** → ảnh lại là một đối tượng riêng: kéo để
+> **di chuyển**, kéo **4 góc** để **đổi cỡ**, **Delete** để **xoá**, và vẫn dùng được **"Áp ảnh/chữ ký
+> cho nhiều trang"**.
+> - **Giữ Shift** khi kéo góc → co giãn **đúng tỷ lệ** (không bị méo). Áp dụng cho cả khoanh vùng
+>   chữ nhật/elip, tô sáng và ô che (redact).
+> - Ngoại lệ: trang **đã bị xoay** (PDF có `/Rotate`, thường gặp ở bản scan) thì ảnh vẫn dán chết như
+>   trước — giống hộp văn bản và mũi tên trên trang xoay.
+> - Ảnh chèn ở các bản **trước v0.2.48** đã dán chết rồi thì không lấy lại được thành đối tượng; chỉ
+>   ảnh chèn từ bản này trở đi mới sửa lại được.
 
 > **Mũi tên kèm nhãn:** chọn công cụ **Mũi tên**, kéo để vẽ — thả ra là hiện ô nhập chữ ngay ở **đầu mũi tên**
 > (gõ nhãn rồi Enter, bỏ trống/Esc nếu không cần). Muốn sửa nhãn sau: **bấm đúp** vào mũi tên.
@@ -152,7 +169,7 @@ Nhập key **ngay trong app**, không cần đụng tới file hay biến môi t
 | "OCR: lỗi" | Thường do lần đầu không có mạng để tải model, hoặc thiếu RAM. Nối mạng rồi mở lại app. |
 | SmartScreen chặn | More info → Run anyway (mục 3.1). |
 | Bóc tách báo thiếu key | Bấm ⚙ → dán API key → Lưu (mục 6). |
-| App mở chậm lần đầu | Bình thường — portable giải nén + engine OCR tải ngầm. Lần sau nhanh hơn. |
+| App mở chậm lần đầu | Bình thường — engine OCR tải ngầm ở lần dùng đầu. Lần sau nhanh hơn. |
 | Máy yếu, OCR chậm | Engine chạy trên CPU; PDF nhiều trang sẽ lâu. Các thao tác PDF thường (xem/ghép/sửa chữ) vẫn nhanh. |
 
 ---
@@ -160,10 +177,10 @@ Nhập key **ngay trong app**, không cần đụng tới file hay biến môi t
 ## 8. Yêu cầu máy đích
 
 - Windows 10/11 **64-bit**.
-- ~2 GB trống cho app (portable giải nén tạm) + ~1 GB cho cache model (lần đầu OCR).
+- ~2 GB trống cho app + ~1 GB cho cache model (lần đầu OCR).
 - Khuyến nghị ≥ 8 GB RAM để OCR mượt.
 - Internet cho **lần đầu** dùng OCR (và mỗi lần dùng "Bóc tách").
 
 ---
 
-*Phiên bản: 0.2.47 · Đóng gói portable + installer cho Windows x64.*
+*Phiên bản: 0.2.48 · Installer (NSIS, tự cập nhật) cho Windows x64.*

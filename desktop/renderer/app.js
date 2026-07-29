@@ -630,6 +630,12 @@ async function renderThumbs() {
   );
   wrap.querySelectorAll(".thumb").forEach((d) => thumbObserver.observe(d));
   updatePageCount();
+  // The .current marker lived on a thumb that innerHTML just deleted, so force
+  // syncThumbFocus to re-apply it instead of short-circuiting on a stale index.
+  // It is NOT called here: renderAll runs renderThumbs BEFORE renderViewer, so
+  // #viewer still holds the previous document's pages and currentPageIndex() would
+  // answer for those. renderViewer marks it once its own pages are in place.
+  thumbFocusIdx = -1;
 }
 
 // Rasterise one thumbnail into its (already-sized) canvas. Idempotent via the
@@ -669,6 +675,9 @@ const KEEP_MARGIN_PX = 1500;
 
 async function renderViewer() {
   const v = $("viewer");
+  // Every page below is built at the current scale, so a zoom repaint still queued
+  // from before this rebuild has nothing left to do.
+  clearTimeout(scaleCommitTimer);
   v.querySelectorAll(".page-wrap").forEach((e) => e.remove());
   if (pageObserver) {
     pageObserver.disconnect();
@@ -732,6 +741,11 @@ async function renderViewer() {
   // Draw the first page(s) immediately so the viewer is never blank on open.
   for (let i = 0; i < Math.min(2, metas.length); i++) await renderPageCanvas(i);
 
+  // Pages are in place now, so "which page am I on" finally has a real answer —
+  // mark it in the page list (see the note in renderThumbs about the ordering).
+  thumbFocusIdx = -1;
+  syncThumbFocus();
+
   // Let the overlay editor (P4) re-attach its annotation layers, if loaded.
   if (window.Editor) window.Editor.syncOverlays();
   // Let the native text editor (P6) re-place its span boxes, if active.
@@ -770,6 +784,10 @@ async function renderPageCanvas(i) {
     canvas.width = pw;
     canvas.height = ph;
     canvas.getContext("2d").drawImage(off, 0, 0);
+    // The scale these pixels (and the layers below) were built at. commitScale
+    // compares it against state.scale to know which pages are still stretched, and
+    // applyScaleToDom scales the note/find layers relative to it.
+    m.paintScale = state.scale;
     await addTextLayer(i, m);  // selectable/​highlightable text for text-based pages
     if (!editing) await addNoteMarkers(i, m); // surface baked sticky-note comments (readable in-app)
     if (search.matches.length) drawSearchLayer(i); // repaint find highlights on (re)render
@@ -869,6 +887,7 @@ async function addNoteMarkers(i, m) {
   layer.className = "note-layer";
   layer.style.width = (parseFloat(canvas.style.width) || cw) + "px";
   layer.style.height = (parseFloat(canvas.style.height) || ch) + "px";
+  layer.dataset.pscale = String(state.scale); // read by applyScaleToDom during a zoom
   for (const an of notes) {
     const text = noteText(an);
     const r = vp.convertToViewportRectangle(an.rect);
@@ -1119,6 +1138,7 @@ function drawSearchLayer(i) {
   layer.className = "search-layer";
   layer.style.width = (parseFloat(canvas.style.width) || cw) + "px";
   layer.style.height = (parseFloat(canvas.style.height) || ch) + "px";
+  layer.dataset.pscale = String(state.scale); // read by applyScaleToDom during a zoom
   for (const gi of here) {
     const mt = search.matches[gi];
     const tx = pdfjsLib.Util.transform(vp.transform, mt.transform);
@@ -1268,6 +1288,53 @@ function scrollToPage(i) {
   renderPageCanvas(i);
   const el = $("viewer").querySelector(`.page-wrap[data-index="${i}"]`);
   if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+// ---- sidebar follows the page you are reading ----------------------------
+//
+// Acrobat/Foxit both keep the page list in step with the view: scroll the document
+// and the matching thumbnail highlights and slides into the panel. This is the
+// read-only half of that contract — it marks the CURRENT page but never touches
+// `state.selected`, so scrolling past a page can't quietly re-aim "Xoá trang" /
+// "Tách trang" at it (BI-26). Selection stays a thing you do with a click.
+
+// How far a scroll container must move (px, positive = down) for `el` to sit fully
+// inside it, "nearest"-style: 0 when it already does. Deliberately arithmetic
+// rather than el.scrollIntoView() — that also scrolls ANCESTORS and animates, so it
+// fought both the viewer's own smooth scroll and the thumbnail reorder drag.
+function nearestScrollDelta(viewTop, viewBottom, elTop, elBottom, pad) {
+  const p = pad || 0;
+  if (elTop < viewTop + p) return elTop - (viewTop + p);
+  if (elBottom > viewBottom - p) return elBottom - (viewBottom - p);
+  return 0;
+}
+
+let thumbFocusIdx = -1;
+
+// Highlight the thumbnail of the page at the top of the viewport and bring it into
+// the panel. Cheap enough for the scroll path: it exits on the first line unless
+// the page actually changed.
+function syncThumbFocus() {
+  if (!state.numPages) return;
+  const i = currentPageIndex();
+  if (i === thumbFocusIdx) return;
+  thumbFocusIdx = i;
+  const wrap = $("thumbs");
+  if (!wrap) return;
+  const prev = wrap.querySelector(".thumb.current");
+  if (prev) prev.classList.remove("current");
+  const el = wrap.querySelector(`.thumb[data-index="${i}"]`);
+  if (!el) return;
+  el.classList.add("current");
+  // Never move the list out from under a reorder drag — wireThumb picks the insert
+  // gap from the cursor's Y against a thumb's midpoint (BI-33), and scrolling
+  // mid-drag would change which gap that is.
+  if (state.dragSrc != null) return;
+  const wr = wrap.getBoundingClientRect();
+  if (!wr.height) return; // panel collapsed / hidden — nothing to scroll
+  const er = el.getBoundingClientRect();
+  const d = nearestScrollDelta(wr.top, wr.bottom, er.top, er.bottom, 12);
+  if (d) wrap.scrollTop += d;
 }
 
 function refreshSelectionUI() {
@@ -1977,8 +2044,8 @@ async function runPrint() {
 }
 
 // ---- zoom ----------------------------------------------------------------
-
-let zooming = false;
+//
+// See `applyScaleToDom` / `commitScale` further down for how a zoom is applied.
 
 // Reflect state.scale in the editable zoom box (unless the user is mid-typing).
 function syncZoomInput() {
@@ -2104,13 +2171,131 @@ function toggleSidebar(collapse) {
 // and clamping there silently failed to do what the button says.
 const FIT_MIN_SCALE = 0.08;
 
+// Free-zoom floor / ceiling (the zoom box advertises 40–300%).
+const ZOOM_MIN = 0.4;
+const ZOOM_MAX = 3;
+
+// ---- how a zoom is applied (two halves) ----------------------------------
+//
+// Zooming used to be one call to renderViewer(), which removes EVERY .page-wrap,
+// rebuilds each canvas, reconnects both IntersectionObservers and re-rasterises —
+// per wheel notch. That is what made zoom feel like it stuttered: each notch paid
+// an O(pages) DOM rebuild *before* anything moved on screen, and the old `zooming`
+// re-entrancy guard silently dropped every notch that arrived while it ran, so a
+// fast scroll-wheel turn also lost steps.
+//
+// Acrobat/Foxit split the job in two, and so do we now:
+//   1. applyScaleToDom() — SYNCHRONOUS and cheap: only the CSS box of each page
+//      (and of the overlay layers) is resized, so the compositor stretches the
+//      bitmap that is already on screen. The page tracks the wheel with no
+//      per-pixel work — slightly soft mid-gesture, exactly like the reference apps.
+//   2. commitScale() — DEBOUNCED by SCALE_COMMIT_MS: once the user pauses (i.e. has
+//      settled on a zoom level) the pages inside the keep window are re-rasterised
+//      at the true scale, which is also what rebuilds their text / note / find
+//      layers crisply.
+// Nothing here creates or destroys a .page-wrap, so the annotation overlay, an open
+// inline text editor, the find highlights and the scroll geometry all survive a
+// zoom untouched — which the old teardown could not promise.
+const SCALE_COMMIT_MS = 160;
+let scaleCommitTimer = null;
+let scaleCommitting = false;
+let scaleCommitPending = false;
+
+// Resize every page (and its overlays) to state.scale without rasterising anything.
+function applyScaleToDom() {
+  const metas = state.pageMetas;
+  if (!metas || !metas.length) return;
+  const s = state.scale;
+  for (const m of metas) {
+    if (!m || !m.page || !m.wrap) continue;
+    m.vp = m.page.getViewport({ scale: s }); // synchronous — the page dict is parsed already
+    m.cw = Math.floor(m.vp.width);
+    m.ch = Math.floor(m.vp.height);
+    m.canvas.style.width = m.cw + "px";
+    m.canvas.style.height = m.ch + "px"; // stretches the existing bitmap; commitScale repaints it
+    // pdf.js 3.x writes span positions as `calc(var(--scale-factor) * Npx)`, so the
+    // whole text layer re-lays itself out from this one variable — selection and
+    // Ctrl+F highlighting stay aligned mid-gesture with no re-render.
+    const tl = m.wrap.querySelector(".text-layer");
+    if (tl) {
+      tl.style.width = m.cw + "px";
+      tl.style.height = m.ch + "px";
+      tl.style.setProperty("--scale-factor", String(s));
+    }
+    // Note markers and find highlights are positioned in absolute px derived from
+    // the viewport they were painted with, so they cannot follow a CSS variable.
+    // Scale them from that paint scale instead — deliberately WITHOUT touching
+    // width/height, because the transform already resizes the box. commitScale
+    // rebuilds them exactly and the transform dies with the replaced element.
+    for (const sel of [".note-layer", ".search-layer"]) {
+      const l = m.wrap.querySelector(sel);
+      if (!l) continue;
+      // Each layer carries the scale IT was built at — not the page's, because
+      // gotoMatch can rebuild the find layer on its own between two zoom steps.
+      const built = +l.dataset.pscale || m.paintScale || s;
+      const k = s / built;
+      l.style.transformOrigin = "0 0";
+      l.style.transform = k === 1 ? "" : "scale(" + k + ")";
+    }
+  }
+  // Both redraw their own boxes from state.scale, synchronously.
+  if (window.Editor) window.Editor.syncOverlays();
+  if (window.TextEdit) window.TextEdit.syncOverlays();
+}
+
+// Re-rasterise the pages that are currently painted, at the settled scale. Pages
+// outside the keep window are skipped: they hold no bitmap and repaint lazily.
+async function commitScale() {
+  if (scaleCommitting) {
+    scaleCommitPending = true; // the running pass will loop again
+    return;
+  }
+  scaleCommitting = true;
+  try {
+    do {
+      scaleCommitPending = false;
+      const metas = state.pageMetas;
+      if (!metas) break;
+      for (let i = 0; i < metas.length; i++) {
+        const m = metas[i];
+        if (!m || !m.wrap || m.wrap.dataset.rendered !== "1") continue;
+        if (m.paintScale === state.scale) continue; // already crisp at this scale
+        m.wrap.dataset.rendered = "0";
+        await renderPageCanvas(i); // reads the m.vp applyScaleToDom just set
+      }
+    } while (scaleCommitPending);
+  } finally {
+    scaleCommitting = false;
+  }
+}
+
+function scheduleScaleCommit() {
+  clearTimeout(scaleCommitTimer);
+  scaleCommitTimer = setTimeout(commitScale, SCALE_COMMIT_MS);
+}
+
+// One wheel notch in Chromium is deltaY ≈ ±100. The step is MULTIPLICATIVE, like
+// Acrobat/Foxit and every browser: the old fixed ±0.1 was a 25% jump at 40% zoom
+// and a 3% nudge at 300%, which is most of why zooming felt uneven. Clamped to ±3
+// notches so one violent fling cannot teleport across the range, and kept
+// proportional to |deltaY| so a trackpad pinch (many small deltas) stays smooth.
+const ZOOM_WHEEL_BASE = 1.1;
+function wheelZoomFactor(deltaY) {
+  const notches = Math.max(-3, Math.min(3, -(+deltaY || 0) / 100));
+  return Math.pow(ZOOM_WHEEL_BASE, notches);
+}
+
 // Zoom to an absolute scale. `anchor` = client {x,y} to keep visually fixed
 // (Ctrl+wheel zooms toward the cursor); defaults to the viewer centre.
 // `opts.min` lowers the floor for the fit commands (see FIT_MIN_SCALE).
+// Stays `async` on purpose: ~10 call sites await it (BI-14).
 async function zoomTo(next, anchor, opts) {
-  if (zooming || !state.bytes) return;
-  const min = opts && opts.min ? opts.min : 0.4;
-  next = Math.min(3, Math.max(min, +(+next).toFixed(2)));
+  if (!state.bytes) return;
+  const min = opts && opts.min ? opts.min : ZOOM_MIN;
+  // Quantised to 3 decimals, not 2: the wheel steps multiplicatively now, and a
+  // 2-decimal floor swallowed the small steps a trackpad pinch sends (they
+  // rounded straight back to the current scale, so the gesture felt dead).
+  next = Math.min(ZOOM_MAX, Math.max(min, Math.round(+next * 1000) / 1000));
   if (!next || next === state.scale) {
     syncZoomInput();
     return;
@@ -2124,15 +2309,13 @@ async function zoomTo(next, anchor, opts) {
   const st = v.scrollTop;
   state.scale = next;
   syncZoomInput();
-  zooming = true;
-  try {
-    await renderViewer();
-    // Keep the document point that was under the anchor in place.
-    v.scrollLeft = (sl + ax) * ratio - ax;
-    v.scrollTop = (st + ay) * ratio - ay;
-  } finally {
-    zooming = false;
-  }
+  if (!state.pageMetas || !state.pageMetas.length) return; // nothing rendered yet
+  applyScaleToDom();
+  // Keep the document point that was under the anchor in place. Assigning scroll
+  // flushes layout, so the resize above is already in effect.
+  v.scrollLeft = (sl + ax) * ratio - ax;
+  v.scrollTop = (st + ay) * ratio - ay;
+  scheduleScaleCommit();
 }
 
 async function zoom(delta) {
@@ -3739,7 +3922,7 @@ $("viewer").addEventListener(
     if (!e.ctrlKey) return;
     e.preventDefault(); // stop the browser's own pinch-zoom
     if (!state.bytes) return;
-    zoomTo(state.scale + (e.deltaY < 0 ? 0.1 : -0.1), { x: e.clientX, y: e.clientY });
+    zoomTo(state.scale * wheelZoomFactor(e.deltaY), { x: e.clientX, y: e.clientY });
   },
   { passive: false }
 );
@@ -3750,6 +3933,7 @@ $("viewer").addEventListener("scroll", () => {
   clearTimeout(pageScrollTimer);
   pageScrollTimer = setTimeout(() => {
     syncPageInput();
+    syncThumbFocus(); // page list follows the view (highlight + auto-scroll)
     updatePresentHud(); // the status bar is hidden in full screen; the chip isn't
   }, 80);
 });

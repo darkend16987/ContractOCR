@@ -20,11 +20,12 @@
 
   const byId = (id) => document.getElementById(id);
 
+  // Third copy of wire.js's `b64ToU8` loop until v0.2.48 — now delegates, same as
+  // editor.js's namesake. BI-24's rule (one encoder) applies to decoding too.
   function dataUrlToBytes(u) {
-    const b = atob(u.split(",")[1]);
-    const a = new Uint8Array(b.length);
-    for (let i = 0; i < b.length; i++) a[i] = b.charCodeAt(i);
-    return a;
+    const b64 = String(u).split(",")[1];
+    if (b64 == null) throw new Error("dataUrlToBytes: not a data: URL");
+    return b64ToU8(b64);
   }
 
   function loadImage(bytes) {

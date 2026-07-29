@@ -1196,9 +1196,17 @@
     <script src="vendor/pdf.min.js"></script>
     <script src="i18n.js"></script>
     <script src="page-range.js"></script>
-    <!-- wire.js must load BEFORE app.js / text-edit.js / compare.js: they call
-         pdfJsonBody / b64ToU8 by bare name out of the shared script scope. -->
+    <!-- wire.js must load BEFORE app.js / text-edit.js / compare.js / editor.js /
+         sign.js: they call pdfJsonBody / b64ToU8 by bare name out of the shared
+         script scope. -->
     <script src="wire.js"></script>
+    <!-- annot-text.js / annot-geom.js must load BEFORE editor.js: layoutTextBox,
+         normTextStyle, measureText, textFont, listDisplayText, cloudPath,
+         cloudPathPoly, arcApex, arrowLabelPos, resizeRect and the CLOUD_BUMP*
+         constants live there now, and editor.js calls them by bare name out of the
+         same shared scope (same deal as wire.js). -->
+    <script src="annot-text.js"></script>
+    <script src="annot-geom.js"></script>
     <script src="app.js"></script>
     <!-- pan.js must load AFTER app.js ($ / state / isTyping come from it) and
          BEFORE editor.js / capture.js, so its capture-phase viewer listener is

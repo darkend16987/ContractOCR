@@ -280,6 +280,12 @@ body.presenting .sidebar-resizer { display: none; }
   transition: border-color 0.12s;
 }
 .thumb.selected { border-color: var(--accent); }
+/* "You are here" — the page currently at the top of the viewport, kept in step by
+   syncThumbFocus(). Deliberately a DIFFERENT cue from .selected (which owns the
+   accent border): the current page is not a selection, and confusing the two would
+   make it look as though scrolling had re-aimed Xoá/Tách trang at it (BI-26). */
+.thumb.current { background: var(--bg-3); }
+.thumb.current .num { background: var(--accent); color: var(--accent-fg); font-weight: 600; }
 .thumb.drag-over { border-color: var(--ok); }
 .thumb.dragging { opacity: 0.4; }
 /* external PDF dragged from OS: show the gap it will drop into */
@@ -623,12 +629,19 @@ body.editing .annot-layer .an { cursor: move; }
   user-select: none;
 }
 .an.sel { outline: 1.5px dashed var(--accent); outline-offset: 1px; }
+/* Four corner grips on a selected box. Each carries data-dir ("nw"/"ne"/"sw"/"se")
+   and the corner OPPOSITE the one you grab stays pinned (see resizeRect in
+   editor.js). Hold Shift while dragging to keep the box's aspect ratio. */
 .annot-layer .handle {
-  position: absolute; right: -5px; bottom: -5px;
+  position: absolute;
   width: 11px; height: 11px;
   background: var(--accent); border: 1px solid var(--accent-fg);
-  border-radius: 2px; cursor: nwse-resize; pointer-events: auto;
+  border-radius: 2px; pointer-events: auto;
 }
+.annot-layer .handle.h-nw { left: -5px; top: -5px; cursor: nwse-resize; }
+.annot-layer .handle.h-ne { right: -5px; top: -5px; cursor: nesw-resize; }
+.annot-layer .handle.h-sw { left: -5px; bottom: -5px; cursor: nesw-resize; }
+.annot-layer .handle.h-se { right: -5px; bottom: -5px; cursor: nwse-resize; }
 .annot-text-edit {
   position: absolute;
   min-width: 80px;

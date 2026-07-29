@@ -13,31 +13,90 @@ tài liệu này chỉ có giá trị nếu được cập nhật.
 | File | Dòng | Vì sao rủi ro cao |
 |---|---|---|
 | `desktop/renderer/app.js` | ~4440 | State trung tâm + 12 hàm nút thắt. **Gần như mọi bản phát hành đều đụng.** |
-| `desktop/renderer/editor.js` | ~3340 | Overlay annotation, bake, form. Diff lớn nhất mỗi lần release. |
+| `desktop/renderer/editor.js` | ~3320 | Overlay annotation, bake, form. Diff lớn nhất mỗi lần release. |
+| `desktop/renderer/annot-text.js` | ~230 | Bố cục chữ (`layoutTextBox`). Rủi ro **thấp** nhờ lưới `npm run test:text`, nhưng sai ở đây **im lặng**: hộp trên màn hình và PNG đem bake lệch nhau → chữ tràn/xuống dòng khác trong file đã lưu → xem BI-40. |
+| `desktop/renderer/annot-geom.js` | ~230 | Đường mây revision + nhãn mũi tên + `resizeRect`. Rủi ro **thấp** nhờ `npm run test:cloud` + `test:geom`; sai ở đây làm mây lệch chỗ **trong PDF đã lưu** (trên màn hình vẫn đúng) → xem BI-40. |
 | `desktop/src/main.js` + `src/tabs.js` | — | Tầng cửa sổ/tab — **hệ con mới nhất, ít va đập thực tế nhất** (ra mắt v0.2.41). Có lưới tự động `npm run test:tabs` cho phần logic thuần. |
 | `desktop/renderer/page-range.js` | ~170 | Số học khoảng trang. Rủi ro **thấp** vì có lưới `npm run test:pages`, nhưng hậu quả sai là **mất trang tài liệu** → xem BI-27. |
 | `desktop/renderer/pan.js` | ~380 | Bàn tay/pan. Rủi ro **trung bình**: nó giành sự kiện chuột **trên cùng phần tử** với `editor.js`/`capture.js`. Nửa logic có lưới `npm run test:pan`; nửa DOM thì không → xem BI-30/31. |
 | `desktop/renderer/wire.js` | ~130 | Bộ mã hoá payload nhị phân. Rủi ro **thấp** nhờ lưới `npm run test:wire`, nhưng sai ở đây **im lặng**: request vẫn đúng cú pháp, chỉ là base64 hỏng → xem BI-24. |
+| `desktop/renderer/app.js` — khối zoom | ~130 dòng | `applyScaleToDom`/`commitScale` đụng CSS box của **mọi** trang + 4 lớp overlay. Sai là zoom mờ mãi hoặc chú thích lệch. Nửa số học có lưới `npm run test:geom` → xem BI-36. |
+| `desktop/renderer/editor.js` — ảnh round-trip | ~180 dòng | Ghi/đọc/giải phóng object PDF riêng. Sai ở đây **mất ảnh của người dùng** hoặc phình file âm thầm. Có lưới `npm run test:managed` → xem BI-37, BI-38. |
 | `desktop/src/prefs.js` | ~80 | Tuỳ chọn phía main. Rủi ro thấp; nằm trong lưới `npm run test:tabs`. |
 | `api.py` + `src/pdf/*.py` | — | Có lưới test tự động (`run_tests.py`) → rủi ro thấp hơn renderer. |
 
-> Renderer gần như **không có** test tự động. Ngoại lệ là ba file được **cố ý tách ra
-> cho DOM-free**: `page-range.js`, `pan.js` (nửa trên), `wire.js`. Tiêu chí chọn tách
-> không phải “file to” mà là **“sai ở đây có im lặng không”** — mất trang, giành nhầm
-> chuột, payload hỏng. Phần renderer còn lại (`app.js`, `editor.js`, `text-edit.js`)
-> đụng DOM/canvas/pdf.js ở mọi dòng nên chỉ có tài liệu này + test tay + probe trình
-> duyệt. Đó là lý do sổ bất biến tồn tại.
+> Renderer gần như **không có** test tự động. Ngoại lệ là **năm** file được **cố ý tách
+> ra cho DOM-free**: `page-range.js`, `pan.js` (nửa trên), `wire.js`, và từ v0.2.48
+> `annot-text.js` + `annot-geom.js`. Tiêu chí chọn tách không phải “file to” mà là
+> **“sai ở đây có im lặng không”** — mất trang, giành nhầm chuột, payload hỏng, chữ/mây
+> lệch chỗ trong file đã lưu. Phần renderer còn lại (`app.js`, `editor.js`,
+> `text-edit.js`) đụng DOM/canvas/pdf.js ở mọi dòng nên chỉ có tài liệu này + test tay
+> + probe trình duyệt. Đó là lý do sổ bất biến tồn tại.
+
+> **v0.2.48 — đã đo trước khi tách, và đây là con số:** `editor.js` (3641 dòng, 115 hàm,
+> trung bình 24,5 dòng/hàm) có **33 hàm / 429 dòng thuần** (không DOM, không `ed`/`state`),
+> **24 hàm / 315 dòng** chỉ đụng `ed`/`state`, và **58 hàm / 2075 dòng (57%) bám
+> DOM/canvas**. Vì thế **module hoá toàn bộ file đã bị bác bỏ có chủ ý**: 57% kia tách ra
+> chỉ *di chuyển* code chứ không làm nó test được, mà lại đụng file có diff lớn nhất repo.
+> Bốn rào cản đo được, ghi lại để không phải điều tra lại:
+> 1. **ESM bị chặn ở tầng nạp** — `tabs.js` dùng `loadFile` ⇒ origin `file://`; Chromium
+>    fetch module script theo CORS nên `import` chết. Muốn ESM phải chuyển sang custom
+>    protocol cho **cả 3 HTML**, viết lại CSP tay ở `main.js`, dưới `sandbox: true`.
+>    Rủi ro dồn đúng chỗ mong manh nhất (đa tab/đa cửa sổ, BI-35) để đổi lấy tổ chức file.
+> 2. **Bundler sẽ phá lưới hiện có** — `test:geom`/`test:managed` cắt source hàm ra khỏi
+>    file *đang ship*; minify/bundle là mất tính chất “cái được test chính là cái chạy”.
+> 3. **`ed` là điểm dính** — 345 chỗ đọc/ghi một object 43 thuộc tính. Tách file thì hoặc
+>    phơi `ed` thành global (nhân BI-14 lên) hoặc viết lại để truyền state tường minh
+>    (rewrite ngữ nghĩa trên file nguy hiểm nhất).
+> 4. **Không có áp lực cộng tác** — 20 commit cả đời file, một người viết, gần như chỉ
+>    thêm. Lập luận “file to đau vì nhiều người sửa” không áp dụng ở đây.
+>
+> ⚠️ **Thứ tự thao tác, luật rút ra ở v0.2.48:** chỉ tách code **đã ship và đã test tay**.
+> Cả `annot-text.js` lẫn phần mây/mũi tên của `annot-geom.js` đã được chứng minh
+> **byte-identical với editor.js của v0.2.47** trước khi move (script so từng dòng), nên
+> bản chất là đổi chỗ ở. Ngược lại khối **managed-codec** (`managedSrcBytes`,
+> `managedSrcDataUrl`, `collectManagedChain`, `freeManagedTrash`) **cố ý CHƯA tách**: lúc
+> đó nó là code mới của chính v0.2.48, **chưa từng ship, chưa test tay GUI**. Tách nó
+> cùng lúc sẽ làm đợt test tay không phân biệt được lỗi là của tính năng mới hay của phép
+> move — trên đúng đường code mà sai là **mất ảnh của người dùng** (BI-37/38). Sau khi
+> v0.2.48 ship và test tay xanh thì điều kiện đã thoả ⇒ tách được ở phiên sau.
+>
+> **Luật chung:** code vừa viết xong thì **kiểm chứng nó trước, refactor sau** — đừng gộp
+> "tính năng mới" và "đổi chỗ ở" vào cùng một đợt test tay, vì lúc đó không có cách nào
+> quy lỗi. Ngược lại, code đã ship thì refactor **rẻ**, vì đã có bản gốc để so byte.
+
+> **Cách thứ hai để có lưới mà KHÔNG tách file** (v0.2.48, mở rộng cách đã dùng để kiểm
+> chứng bản hợp nhất `page-range` ở v0.2.47): test **cắt thẳng hàm ra khỏi file đang
+> ship lúc chạy** (khớp ngoặc từ `function <tên>(`) rồi `eval`, và cấp cho nó đúng
+> những tên nó khép kín (`ed` giả, class của pdf-lib, `pushB64Chunks` thật). Cái được
+> test **chính là** cái chạy trong app — không có bản copy nào để lệch — và `app.js` /
+> `editor.js` **không phải** tách ra làm gì. Đổi tên hàm ⇒ test **đổ ngay** (đúng ý muốn).
+> - `npm run test:geom` → `test/viewer-geom.test.js`: `resizeRect` (editor.js),
+>   `nearestScrollDelta` + `wheelZoomFactor` (app.js) — 39 ca.
+> - `npm run test:managed` → `test/managed-image.test.js`: cả vòng ghi→đọc→bake lại của
+>   ảnh round-trip, chạy trên chính pdf-lib trong `node_modules` (đã đối chiếu sha256 với
+>   `renderer/vendor/pdf-lib.min.js`) — 42 ca.
+>
+> **Nửa DOM thì vẫn phải probe trình duyệt.** v0.2.48 dựng probe bằng cách cho node cắt
+> `applyScaleToDom` / `syncThumbFocus` / `currentPageIndex` ra, nhúng cùng `app.css` thật
+> vào một trang HTML, rồi chạy bằng **chính Electron của dự án**
+> (`./node_modules/.bin/electron`, `BrowserWindow({show:false})` → đọc `#out`): 30/30 —
+> box canvas theo tỷ lệ, `--scale-factor` của pdf.js kéo span đi đúng, `.page-wrap`
+> **được dùng lại** chứ không dựng lại, cột trang trượt đúng, và 4 tay nắm có đúng CSS.
+> Probe là **file dùng một lần, không commit** (như các probe trước). Đừng dùng preview
+> pane của IDE: nó render snapshot, **script không chạy**.
 
 ---
 
 ## 2. Kiến trúc phải nhớ trước khi sửa
 
-- 10 file JS của renderer (`i18n, page-range, wire, app, pan, editor, text-edit, compare,
-  capture, sign`) nạp bằng `<script>` **classic**, dùng chung **một scope**. `state`,
+- 12 file JS của renderer (`i18n, page-range, wire, annot-text, annot-geom, app, pan,
+  editor, text-edit, compare, capture, sign`) nạp bằng `<script>` **classic**, dùng
+  chung **một scope**. `state`,
   `toast`, `sidecarFetch`, `showOverlay`… là biến toàn cục dùng chéo, **không phải
   module** → đổi tên một hàm trong `app.js` có thể làm `editor.js` chết mà không hề có
-  cảnh báo lúc build. Ba file tách ra để test được, theo **ba mức** khác nhau — đọc kỹ
-  trước khi tách file thứ tư:
+  cảnh báo lúc build. Năm file đã tách ra để test được, theo **ba mức** khác nhau — đọc
+  kỹ trước khi tách file thứ sáu:
   - `page-range.js` — **sạch nhất**: chỉ phơi `window.PageRange`, không thả tên trần
     nào vào scope chung, nên `require()` được từ node. Dùng cho code **mới**.
   - `pan.js` — **nửa vời có chủ ý**: nửa trên logic thuần `require()` được, nửa dưới
@@ -49,6 +108,14 @@ tài liệu này chỉ có giá trị nếu được cập nhật.
     chỗ gọi nào**. Đổi sang `window.Wire.*` là tự chuốc lấy đúng rủi ro BI-14. Đánh đổi:
     `wire.js` **phải nạp trước** `app.js`/`text-edit.js`/`compare.js` trong `index.html`.
     Đã kiểm chứng bằng probe rằng tên trần nhìn thấy được từ script khác.
+  - `annot-text.js` + `annot-geom.js` (v0.2.48) — **cùng mức `wire.js`, cùng lý do**:
+    ~25 và ~11 chỗ gọi có sẵn trong `editor.js`. Giữ tên trần ⇒ phía `editor.js` của
+    lần tách này là **thuần xoá**, không một call site nào đổi, nên hành vi không thể
+    lệch. `module.exports` cho node, `window.AnnotText` / `window.AnnotGeom` là **cùng
+    bộ đó** dưới cái tên probe/test khẳng định được. Đánh đổi: **phải nạp trước
+    `editor.js`**. Cả hai đều DOM-free trừ `measureCtx` — nó nằm sau cửa
+    `typeof document === "undefined"` kiểu `pan.js`, và `measureText` nhận thêm tham số
+    `ctx` **tuỳ chọn** để lưới node bơm ctx giả (chỗ gọi cũ truyền 3 tham số, không đổi).
 - **Mỗi tab = một renderer riêng** (`WebContentsView`, process riêng). `state` **không**
   chia sẻ giữa các tab. Cái chia sẻ là: main process, sidecar Python, thư mục recovery.
   → Mọi singleton ở main process là nguy cơ xung đột đa tab.
@@ -430,7 +497,112 @@ Mỗi mục: **bất biến → ở đâu → vì sao → dấu hiệu vỡ.**
 - Đổi tên/xoá chúng trong `app.js` → `ReferenceError` lúc chạy, không lỗi lúc build.
 - Ngược lại `repaintRenderedPages` có guard `if (window.…)` — mẫu này an toàn hơn, nên theo.
 
+### BI-36 · Zoom là HAI nửa: đổi hình học ngay, rasterise sau — và **không** dựng lại `.page-wrap`
+- `app.js` `applyScaleToDom()` + `commitScale()` + `scheduleScaleCommit()`; `zoomTo` gọi cả ba.
+- Trước v0.2.48 `zoomTo` gọi thẳng `renderViewer()`: **mỗi nấc lăn chuột** xoá sạch mọi
+  `.page-wrap`, dựng lại canvas + hai IntersectionObserver rồi rasterise. Đó là nguyên nhân
+  “zoom bị khựng/giật”. Cờ `zooming` còn **âm thầm bỏ** những nấc tới trong lúc nó chạy.
+- Luật: **nửa đồng bộ chỉ được đổi CSS box** (`canvas.style.*`, `--scale-factor` của
+  `.text-layer`, `transform` của `.note-layer`/`.search-layer`). Không `page.render`,
+  không tạo/xoá phần tử. Nét lại là việc của `commitScale` sau `SCALE_COMMIT_MS`.
+- **Không được dựng lại `.page-wrap` khi zoom.** Overlay chú thích, ô nhập chữ đang mở,
+  highlight Ctrl+F và cả hình học cuộn đều bám vào đúng phần tử đó — `renderViewer` phá
+  hết (đó là lý do nó chỉ dùng cho **đổi tài liệu**, không dùng cho **đổi tỷ lệ**).
+- `m.paintScale` = tỷ lệ mà bitmap hiện tại được vẽ ở. `commitScale` so nó với
+  `state.scale` để biết trang nào còn đang bị kéo giãn; **quên gán** nó trong
+  `renderPageCanvas` thì trang mờ mãi không bao giờ nét lại.
+- `.note-layer`/`.search-layer` mang `data-pscale` **riêng của nó**, không dùng
+  `m.paintScale`: `gotoMatch` dựng lại lớp tìm kiếm giữa hai nấc zoom, dùng tỷ lệ của
+  trang sẽ scale **hai lần**.
+- Bước lăn chuột là **phép nhân** (`wheelZoomFactor`, cơ số 1.1/nấc, kẹp ±3 nấc), và
+  `zoomTo` làm tròn **3 chữ số thập phân**, không phải 2: cộng cố định 0.1 là nhảy 25% ở
+  mức 40% và chỉ 3% ở mức 300%; còn làm tròn 2 chữ số thì các delta nhỏ của pinch
+  trackpad bị vo về đúng tỷ lệ cũ ⇒ cử chỉ **chết**.
+- **Vỡ khi:** zoom xong trang mờ mãi · chú thích/ô nhập chữ biến mất khi zoom · highlight
+  tìm kiếm lệch sau khi zoom · Ctrl+lăn nhanh mất nấc · pinch trackpad không ăn.
+- Lưới: `npm run test:geom` (`wheelZoomFactor`) + probe Chromium (nửa DOM — xem §1).
+
+### BI-37 · Byte ảnh gốc của ảnh round-trip nằm trong stream `/NabuSrc` **không có `/Filter`**
+- `editor.js` `addManagedAnnot` (nhánh `image`) ghi; `managedSrcBytes` đọc.
+- **Vì sao không nhét vào `/NabuData` như mọi kind khác** (đo trên pdf-lib 1.17.1 đang ship):
+  chuỗi hex tốn ~1.46× cỡ ảnh và >1 s để ghi 1 MB; **và cả** `PDFHexString.decodeText`
+  **lẫn** `PDFString.decodeText` **ném `RangeError`** khi payload > ~150 KB (chúng spread cả
+  buffer qua `String.fromCharCode`) ⇒ một PNG chữ ký đã không đọc lại được. Stream thô =
+  1.00×, ~5 ms cho 2 MB, đọc ra đã là byte.
+- **Không** khôi phục được từ ảnh trong `/AP`: pdf-lib giải mã PNG thành mẫu thô + `/SMask`,
+  bỏ luôn container.
+- **`/Filter` là cái khoá an toàn**: ta ghi không filter, nên có filter = tool khác đã nén
+  lại ⇒ `managedSrcBytes` trả `null`, và khi đó `stripManagedFromPage` **từ chối xoá** annot
+  đó. Mất byte gốc phải thành “ảnh chỉ đọc”, **không bao giờ** thành “ảnh bị xoá lúc bake”.
+- **Vỡ khi:** mở lại file thấy ảnh nhưng bấm Chỉnh sửa thì ảnh biến mất sau khi Áp dụng.
+- Lưới: `npm run test:managed`.
+
+### BI-38 · Bỏ liên kết annot round-trip là **chưa đủ** — phải giải phóng chuỗi object của nó
+- `editor.js` `stripManagedFromPage` → `collectManagedChain` → `freeManagedTrash`.
+- pdf-lib giữ **mọi** object nó đọc được và ghi lại tất cả khi save. Chỉ `arr.remove(i)` thì
+  ảnh/PNG appearance của bản cũ **nằm lại trong file mãi mãi** — một hộp văn bản bake 10 lần
+  là 10 bản PNG. Với ảnh (megabyte) thì file phình đến mức không thể bỏ qua.
+- An toàn được vì chuỗi đó là **của riêng** annot: `embedPng`/`embedJpg` của pdf-lib trả
+  **ref mới mỗi lần gọi** (không bao giờ dedupe theo nội dung), và `/NabuImg` là tên resource
+  không chỗ nào khác ghi. Cái gì **không** giống hệt output của ta thì **bỏ qua** — xấu nhất
+  là phình như cũ, tuyệt đối không được để lại ref treo.
+- **Thứ tự bắt buộc: bỏ liên kết cả tài liệu TRƯỚC, giải phóng SAU.** Một `/NabuSrc` được
+  **chia sẻ** cho mọi trang mà “Áp ảnh/chữ ký cho nhiều trang” đặt lên; xoá bản của trang 1
+  giữa vòng lặp làm `managedSrcBytes` của trang 2 trả `null` ⇒ annot đó **được giữ lại rồi
+  ghi thêm bản mới** = một ảnh hai lần. Vì thế `stripManagedFromPage` nhận `trash` và
+  `bakeWithRedaction` chỉ gọi `freeManagedTrash` **sau** vòng lặp.
+- **Vỡ khi:** lưu vài lần thì file to dần dù nội dung không đổi · áp 1 chữ ký cho 20 trang
+  ra file gấp 20 lần cỡ ảnh · sau khi áp dụng thấy ảnh nhân đôi trên một trang.
+- Lưới: `npm run test:managed` (3 vòng re-bake + ca 5 trang dùng chung + ca `/Filter`).
+
+### BI-39 · “Trang đang xem” trong cột trang **không phải** “trang đang chọn”
+- `app.js` `syncThumbFocus()` + `.thumb.current` trong `app.css`.
+- `state.selected` là tập trang cho Xoá/Tách/Trích/Xoay. Nếu cuộn tài liệu cũng đổi nó thì
+  cuộn qua trang khác rồi bấm Xoá sẽ **xoá trang vừa cuộn tới** — đúng loại hậu quả BI-26.
+  Vì thế `syncThumbFocus` chỉ gắn/bỏ class, **không chạm** `state.selected`.
+- Cue hình phải **khác** `.selected` (viền accent) — hiện dùng nền `--bg-3` + số trang đổi màu.
+- Đang kéo–thả sắp xếp trang (`state.dragSrc != null`) thì **không được cuộn** cột trang:
+  `wireThumb` chọn khe chèn theo `e.clientY` so với đường giữa thumbnail (BI-33).
+- Dùng số học `nearestScrollDelta` chứ **không** `el.scrollIntoView()` — cái đó cuộn cả
+  **phần tử cha** và có animation, đánh nhau với smooth-scroll của viewer.
+- Thứ tự khởi tạo: `renderAll` chạy `renderThumbs` **trước** `renderViewer`, nên
+  `renderThumbs` chỉ **reset** `thumbFocusIdx`; đánh dấu là việc của cuối `renderViewer`
+  (lúc đó `#viewer` mới chứa trang của tài liệu mới).
+- **Vỡ khi:** cuộn tài liệu rồi bấm Xoá trang thì mất trang không mong muốn · thumbnail sáng
+  sai trang sau khi mở file khác · cột trang nhảy khi đang kéo sắp xếp trang.
+- Lưới: `npm run test:geom` (`nearestScrollDelta`) + probe Chromium.
+
 ---
+
+### BI-40 · Chữ và mây có **một** bộ số học, dùng cho **hai** đích — màn hình và PDF đã bake
+- `annot-text.js` `layoutTextBox()` là nguồn duy nhất cho **cả hai**: `measureText()` (hộp
+  trên màn hình người dùng gõ vào) và `renderTextPng()` (PNG thật sự đem bake vào PDF).
+  Hai đường lệch nhau là **lỗi im lặng**: màn hình trông đúng, file đã lưu bị tràn chữ /
+  xuống dòng khác / khác số dòng. Không ai thấy tới khi khách mở hợp đồng.
+- Cùng khuôn: `annot-geom.js` `cloudPath()` / `cloudPathPoly()` trả **một** chuỗi SVG path
+  cho **cả** overlay `<svg>` (viewBox gốc 0) **và** `drawSvgPath` của pdf-lib. Hai luật
+  bất khả xâm phạm: (1) **mọi toạ độ ≥ 0** — đó là việc của `pad`; âm là bị cắt trên
+  overlay và đặt sai chỗ trong PDF; (2) `cloudPathPoly` **phải** trả `minX`/`minY` — bỏ
+  đi là mọi mây freehand nhảy về góc trên-trái trang.
+- Ba luật đã có ca canh gác, đừng “đơn giản hoá” mất:
+  - `letterSpacing` nằm **GIỮA** các glyph ⇒ dòng n ký tự có **n-1** khoảng. Đếm n khoảng
+    là âm thầm nới rộng **mọi** hộp (vô hình ở mặc định 0, sai với mọi ai chỉnh spacing).
+  - `align: justify` **không** áp cho dòng cuối đoạn (`lastOfPara`), kể cả dòng ngay
+    trước một dòng trống — nếu không thì đoạn nào cũng kết bằng một dòng bị kéo giãn.
+  - `bumpOf({bump: 0})` phải trả về mặc định: `0` là falsy **có chủ ý**, vì `bump = 0`
+    làm `Math.round(len / 0)` ra `Infinity` và treo lúc dựng path.
+- Cột chữ của danh sách bullet/số lấy theo marker **rộng nhất** trong khối, không theo
+  marker của từng dòng — nếu không thì “9.” và “10.” làm chữ bị bậc thang.
+- **Quirk đã ghim, chưa sửa:** `fontFamily("")` / `fontFamily(null)` **không** trả stack
+  `sans` mà trả `'"sans", sans-serif'` — tức đi tìm font tên literal `sans` (không tồn tại)
+  rồi rơi về `sans-serif` chung. Vì `textFont(fpx)` gọi **không có** `opts` đi vào nhánh
+  này, **nhãn mũi tên và watermark render bằng Arial** còn hộp văn bản dùng Segoe UI.
+  Có từ trước v0.2.48. `test:text` ghim đúng hành vi hiện tại; sửa cho nhất quán thì
+  **phải** cập nhật ca đó **có chủ ý** (và nhớ rằng nó đổi hình dáng file đã lưu).
+- **Vỡ khi:** gõ chữ Việt có dấu vào hộp rồi Xong mà chữ tràn khỏi khung · đổi
+  letter/word spacing xong hộp rộng hơn chữ · khoanh mây freehand rồi Lưu mà mây nhảy chỗ.
+- Lưới: `npm run test:text` (annot-text.js) + `npm run test:cloud` (annot-geom.js) +
+  `npm run test:geom` (`resizeRect`). Nửa DOM vẫn phải probe — xem §1.
 
 ## 4. Hàm nút thắt (đổi chữ ký = ảnh hưởng diện rộng)
 
@@ -446,6 +618,8 @@ Mỗi mục: **bất biến → ở đâu → vì sao → dấu hiệu vỡ.**
 | `showOverlay/hideOverlay` | `app.js:66/70` | 4 module — xem BI-14 |
 | `binArrayJsonBody()` | **`wire.js`** | 1 chỗ — Ảnh→PDF. Cùng luật BI-24, dạng **mảng** binary trong một trường |
 | `b64ToU8` | **`wire.js`** | 13 chỗ — chiều **giải mã** cho mọi vòng gọi sidecar. Chiều **mã hoá** cố ý **không còn helper** — xem BI-24 |
+| `pushB64Chunks` | **`wire.js`** | 3 chỗ trong `wire.js` + **`editor.js` `managedSrcDataUrl`** (dựng `data:` URL cho MỘT ảnh round-trip). Là bộ mã hoá byte→base64 **duy nhất** được phép dùng; đừng gói lại thành helper tổng quát — BI-24 |
+| `stripManagedFromPage(doc, page, trash)` | `editor.js` | 2 chỗ (`stripManagedAnnots`, `bakeWithRedaction`). Tham số `trash` **không phải tuỳ chọn cho vui**: bỏ nó là giải phóng ngay giữa vòng lặp — xem BI-38 |
 | `planOpen()` | `tabs.js` | 1 chỗ (`tabs:open-paths`) — quyết định tab hay cửa sổ. Thuần + có lưới, xem BI-35 |
 
 ---
@@ -456,7 +630,11 @@ Mỗi mục: **bất biến → ở đâu → vì sao → dấu hiệu vỡ.**
 |---|---|
 | `pushUndo` / `snapshot` / history | Ctrl+Z–Ctrl+Y sau: xoay, xoá trang, ghép, chèn, bake chú thích, sửa nội dung · chấm ● xuất hiện · đóng file bẩn có hỏi |
 | `state.bytes` ở bất kỳ đâu | Lưu ra file mở lại được · in · undo · autosave (BI-3) |
-| Virtualization / `renderPageCanvas` / `freePageCanvas` | Cuộn nhanh lên-xuống PDF nhiều trang · in · so sánh · copy vùng ảnh (BI-4) |
+| Virtualization / `renderPageCanvas` / `freePageCanvas` | Cuộn nhanh lên-xuống PDF nhiều trang · in · so sánh · copy vùng ảnh (BI-4) · **`m.paintScale` còn được gán sau khi vẽ** (BI-36) |
+| Zoom (`zoomTo`, `applyScaleToDom`, `commitScale`, `wheelZoomFactor`, `renderViewer`) | `cd desktop ; npm run test:geom` · Ctrl+lăn **nhanh liên tục** → trang bám tay, dừng lại ~0.2s là **nét**, không nấc nào bị bỏ · Ctrl+lăn trên A0 nhiều trang → không treo · zoom rồi bôi đen chữ → **vệt chọn đúng chỗ** · Ctrl+F có kết quả rồi zoom → highlight đúng chỗ · zoom **khi đang Chú thích** → hình vẽ/hộp chữ theo đúng tỷ lệ, ô nhập chữ đang mở **không mất** · zoom khi đang “Sửa chữ” → ô span đúng chỗ · Vừa bề ngang / Vừa cả trang / Ctrl+0 · F11 vào/ra (BI-36, BI-22) |
+| Cột trang theo trang đang đọc (`syncThumbFocus`, `nearestScrollDelta`, `.thumb.current`) | `npm run test:geom` · cuộn tài liệu → thumbnail sáng đúng trang & tự trượt vào khung nhìn · **tick chọn vài trang rồi cuộn đi đâu đó → Xoá trang vẫn xoá đúng các trang đã tick** (BI-39, BI-26) · đang kéo sắp xếp trang thì cột **không nhảy** (BI-33) · thu sidebar (F4) rồi cuộn → không lỗi console · F11 → dải trang vẫn sáng đúng trang |
+| Ảnh round-trip (`addManagedAnnot` nhánh image, `managedSrcBytes`, `collectManagedChain`, `freeManagedTrash`, `MANAGED_KINDS`) | `cd desktop ; npm run test:managed` · chèn 1 ảnh → Áp dụng → Lưu → **mở lại** → Chỉnh sửa → ảnh **kéo/đổi cỡ/xoá được**, “Áp nhiều trang” vẫn dùng được · lưu 3–4 lần liên tiếp → **cỡ file không phình** · áp 1 chữ ký cho 20 trang → file ~1 lần cỡ ảnh, không 20 · ảnh trên trang **đã xoay** → vẫn dán chết như trước (đúng) · xoá ảnh round-trip rồi **thêm ô redact trên chính trang đó** → Áp dụng: ảnh **không** quay lại thành pixel, và ảnh còn lại **không nhân đôi** (BI-37, BI-38) |
+| Tay nắm đổi cỡ (`resizeRect`, `RESIZABLE_KINDS`, `.handle.h-*`) | `npm run test:geom` · kéo **cả 4 góc** của ảnh/tô sáng/redact/chữ nhật/elip → góc đối diện **đứng yên** · **giữ Shift** → không méo · Esc giữa lúc kéo → về đúng vị trí+cỡ cũ · Ctrl+Z sau khi đổi cỡ · bấm vào tay nắm rồi **không kéo** → không tạo bước undo rỗng |
 | `editor.js` bake | Chú thích → Xong → sửa lại được · số trang không đổi · comment panel còn đúng (BI-5) |
 | Tầng tab/cửa sổ (`main.js`, `tabs.js`) | Toàn bộ `docs/TABS-TEST-L1.md` (24 mục) |
 | Tách tab / kéo tab (`detachTab`, `adoptTab`, `classifyDrop`, `shell.js` dragend) | `docs/TABS-2B-DESIGN.md` §6.2 (18 mục) · BI-15/16/17 · **mục #1 là hồi quy của tính năng sắp xếp tab** |
@@ -474,7 +652,8 @@ Mỗi mục: **bất biến → ở đâu → vì sao → dấu hiệu vỡ.**
 | Cỡ/hình học chữ vẽ lại (`hscale`, `vscale`, `orig_text`, `orig_size`) | `test_edit_text_metrics.py` · sửa 1 dòng trên hoá đơn thật → **không** dài ra đè chữ bên cạnh, **không** cao hơn dòng chưa sửa (BI-25) |
 | Redaction / `add_redact_annot` / `apply_redactions` | `test_edit_text_layout.py` **và** `test_translate_layout.py` · sửa 1 chữ trong ô bảng **có nền** → không vệt trắng, không mất đường kẻ (BI-23) |
 | `wire.js` (`pdfJsonBody` / `binArrayJsonBody` / `pushB64Chunks` / `b64ToU8` / `B64_CHUNK`) hay bất kỳ chỗ gọi sidecar nào có PDF | `cd desktop ; npm run test:wire` (51 ca) · mở file **lớn** (≥100MB) rồi: Sửa nội dung · Nén · So sánh 2 file · Tách — không tab nào chết vì hết bộ nhớ · **Ảnh → PDF với ~50 ảnh máy ảnh**: tạo được file, PDF mở lại đúng số trang và đúng thứ tự (BI-24) |
-| Thứ tự `<script>` trong `index.html` | `wire.js` **trước** `app.js`/`text-edit.js`/`compare.js`; `pan.js` sau `app.js` và trước `editor.js`/`capture.js`. Mở app → console **không** có `ReferenceError` · thử một lệnh gọi sidecar bất kỳ (Nén) (§2, BI-14) |
+| Thứ tự `<script>` trong `index.html` | `wire.js` **trước** `app.js`/`text-edit.js`/`compare.js`/`editor.js`/`sign.js`; `annot-text.js` + `annot-geom.js` **trước** `editor.js`; `pan.js` sau `app.js` và trước `editor.js`/`capture.js`. Mở app → console **không** có `ReferenceError` · thử một lệnh gọi sidecar bất kỳ (Nén) (§2, BI-14, BI-40) |
+| `annot-text.js` / `annot-geom.js` | `npm run test:text` + `test:cloud` + `test:geom` · rồi **test tay**: gõ chữ Việt vào hộp → Xong → mở lại file, chữ **không** tràn khung · khoanh mây (hộp + freehand) → Lưu → mây đúng chỗ · mũi tên có nhãn ở cả hai đầu (BI-40) |
 | Tuỳ chọn “Mở file mới trong” (`prefs.js`, `planOpen`, `tabs:open-paths`, `openPathInApp`) | `cd desktop ; npm run test:tabs` · với **cả hai** giá trị, thử **cả ba** đường: nút Mở · kéo–thả PDF vào tab đang có tài liệu · double-click file trong Explorer — kết quả phải **giống nhau** · chọn 3 file cùng lúc + “Cửa sổ mới” → **một** cửa sổ 3 tab · tab trắng + “Cửa sổ mới” → nạp vào chính tab trắng đó · đổi tuỳ chọn rồi khởi động lại app → vẫn nhớ · xoá `%APPDATA%/Nabu PDF/prefs.json` → về “Tab mới” (BI-35, BI-8) |
 | Chọn font ở `/edit-text` hay `src/pdf/fonts.py` | `test_edit_text_font.py` **và** `test_edit_text_rounds.py` · mở 1 hoá đơn Times New Roman thật, sửa 1 dòng với “Giữ nguyên” → **không** đổi sang DejaVu, **không** ra □ (BI-21) |
 | Toàn màn hình (`setPresentation`, `_layout`, `.presenting`) | `npm run test:tabs` (10 ca cuối) · F11 vào/ra · Esc ra · thoát bằng nút cửa sổ → thanh công cụ phải quay lại · chuyển tab khi đang toàn màn hình · thử bật lúc đang Chú thích (phải từ chối) — BI-22 |
@@ -498,6 +677,15 @@ Mỗi mục: **bất biến → ở đâu → vì sao → dấu hiệu vỡ.**
    (lưới cho logic giành chuột của bàn tay trong `renderer/pan.js`).
 2d. `cd desktop ; npm run test:wire` → phải `N pass, 0 fail`
    (lưới cho bộ mã hoá payload trong `renderer/wire.js` — BI-24).
+2e. `cd desktop ; npm run test:geom` → phải `N pass, 0 fail`
+   (hình học zoom / cột trang **cắt thẳng từ `app.js`**; `resizeRect` `require()` từ
+   `annot-geom.js` từ v0.2.48 — BI-36, BI-39).
+2f. `cd desktop ; npm run test:managed` → phải `N pass, 0 fail`
+   (vòng round-trip của ảnh chèn: ghi → đọc lại → bake lại không phình — BI-37, BI-38).
+2g. `cd desktop ; npm run test:text` → phải `N pass, 0 fail`
+   (bố cục chữ trong `renderer/annot-text.js` — BI-40).
+2h. `cd desktop ; npm run test:cloud` → phải `N pass, 0 fail`
+   (mây revision + nhãn mũi tên trong `renderer/annot-geom.js` — BI-40).
 3. `node --check` mọi file JS đã sửa (renderer **không** có test tự động).
 4. Nếu đụng `*.py` hoặc `sidecar.spec` → **rebuild sidecar**, nếu không OTA giao bản cũ.
 5. Chạy `npm start`, test tay các mục ở §5 tương ứng với thứ vừa sửa.
