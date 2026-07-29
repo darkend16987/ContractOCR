@@ -12,7 +12,7 @@ Chỉ cần **một file duy nhất**:
 
 | Kiểu | File tải về | Dùng khi |
 |------|-------------|----------|
-| **Bản cài đặt** | `NabuPDF-0.2.48-x64.exe` (~455 MB) | Cài vào máy (tạo shortcut, gỡ qua Control Panel), **tự cập nhật** khi có bản mới. |
+| **Bản cài đặt** | `NabuPDF-0.2.49-x64.exe` (~455 MB) | Cài vào máy (tạo shortcut, gỡ qua Control Panel), **tự cập nhật** khi có bản mới. |
 
 > **Từ v0.2.48 không còn bản portable.** Các bản trước có
 > `NabuPDF-<ver>-portable.exe`; nó đã bị bỏ khỏi quy trình đóng gói vì bản cài đặt tự
@@ -31,7 +31,7 @@ Chỉ cần **một file duy nhất**:
 
 ## 2. Cách chạy
 
-1. Copy `NabuPDF-0.2.48-x64.exe` vào máy đích.
+1. Copy `NabuPDF-0.2.49-x64.exe` vào máy đích.
 2. Nháy đúp → chọn thư mục cài → Next → Install.
 3. Chạy từ Start Menu / shortcut desktop. Gỡ qua **Settings → Apps** như phần mềm thường.
 4. Các bản sau app **tự tải và tự cập nhật**, không phải làm lại bước 1–3.
@@ -183,4 +183,4 @@ Nhập key **ngay trong app**, không cần đụng tới file hay biến môi t
 
 ---
 
-*Phiên bản: 0.2.48 · Installer (NSIS, tự cập nhật) cho Windows x64.*
+*Phiên bản: 0.2.49 · Installer (NSIS, tự cập nhật) cho Windows x64.*

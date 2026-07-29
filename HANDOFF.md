@@ -4,9 +4,9 @@
 > [DESIGN.md](DESIGN.md) (kiến trúc), [ROADMAP.md](ROADMAP.md) (tiến độ chi tiết),
 > [SETUP.md](SETUP.md) (dựng môi trường).
 
-_Cập nhật: 2026-07-29 · v0.2.48 đã phát hành + 1 thay đổi **chưa phát hành** (v0.2.49, dưới đây)_
+_Cập nhật: 2026-07-29 · v0.2.49 đã phát hành (dưới đây)_
 
-> **v0.2.49 — CHƯA PHÁT HÀNH · tách `managed-codec` khỏi `editor.js` + sửa font nhãn
+> **v0.2.49 — tách `managed-codec` khỏi `editor.js` + sửa font nhãn
 > mũi tên/watermark** (chỉ renderer + test + tài liệu — **sidecar KHÔNG đổi, không cần
 > rebuild**).
 >
@@ -63,7 +63,11 @@ _Cập nhật: 2026-07-29 · v0.2.48 đã phát hành + 1 thay đổi **chưa ph
 > tên trần**, `window.Editor` đủ 10 key, `Pan`/`AnnotText`/`AnnotGeom`/`ManagedCodec` đủ,
 > hai shim (`pushB64Chunks`, `normTextStyle`) phân giải về **tên trần** trong trình duyệt,
 > **2674 ca tương đương 0 lệch**, **0 lỗi console mới** so với baseline tiền-tách.
-> ⚠️ **Chưa test tay trên GUI.**
+> ⚠️ **Phát hành KHÔNG qua test tay GUI** (quyết định của chủ dự án, 2026-07-29): thay đổi
+> thuần renderer, đã có 538 ca lưới + 2674 ca tương đương trong Electron thật + probe
+> 0 lỗi console mới. Phần lưới **không** phủ là tương tác chuột. Nếu có báo lỗi từ người
+> dùng, hai đường đáng soi trước là **ảnh round-trip** (managed-codec) và **font nhãn mũi
+> tên/watermark**.
 
 > **v0.2.48 — zoom mượt + cột trang chạy theo trang đang đọc + ảnh chèn
 > vẫn là object sửa được** (chỉ renderer + tài liệu — **sidecar KHÔNG đổi, không cần rebuild**).
