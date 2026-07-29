@@ -174,6 +174,75 @@ function cloudPathPoly(rawPts, bump) {
   return { d, minX, minY, pad, W: maxX - minX + 2 * pad, H: maxY - minY + 2 * pad };
 }
 
+// ---- freehand stroke: the Shift-straight rule ----------------------------
+
+// Next point list for a freehand (`draw`) stroke, given the cursor at `p`.
+//
+//   straight   Shift held right now — read LIVE off the mouse event, so it can be
+//              pressed and released mid-drag (same rule as resizeRect's `ratio`).
+//   anchor     index in `pts` the straight segment pivots on, or null while the
+//              user is scribbling freely.
+//
+// Returns { pts, anchor }; the caller stores `anchor` back on its drag state.
+//
+// THE WHOLE POINT OF THE `anchor` PARAMETER, and the only way to get this wrong:
+// the pivot must be captured ONCE, on the first move after Shift goes down, and
+// then reused. Re-deriving it as "the last point" on every mousemove pins it to
+// the point we just wrote, so the segment is always cursor→cursor and the line
+// collapses to nothing. test:cloud has a guard case for exactly that.
+//
+// Releasing Shift hands control back with `anchor: null`, so drawing resumes from
+// wherever the straight segment ended — that is what makes polylines possible
+// (straight, freehand, straight… all inside one stroke).
+//
+// A new array per move rather than an in-place push: `pts` is truncated on the
+// straight path anyway, and the cost is nothing next to renderLayer(), which
+// already rebuilds the entire SVG path string from every point on every move.
+function strokeExtend(pts, p, straight, anchor) {
+  const src = pts || [];
+  if (!straight) return { pts: src.concat([p]), anchor: null };
+  // First move with Shift down → pin the pivot to the stroke's current tip.
+  const at = anchor == null ? Math.max(0, src.length - 1) : anchor;
+  return { pts: src.slice(0, at + 1).concat([p]), anchor: at };
+}
+
+// ---- tick / cross symbols ------------------------------------------------
+
+// Side length (scale-1 PDF points) of a symbol dropped with a plain click rather
+// than dragged out. ~18pt reads at about the size of a checkbox in a contract.
+const SYMBOL_SIZE = 18;
+
+// A ✓ or ✗ as polylines inside the box (x, y, w, h) — annot space, top-left
+// origin, y DOWN. Like cloudPath, this is the SINGLE source of truth read twice:
+// by the on-screen <svg> and by pdf-lib's drawLine at bake time. Two readings of
+// one function can't disagree; two implementations silently would, and the bake
+// half is the one nobody sees until the file is delivered.
+//
+// The fractions keep the ink clear of the box edge so the stroke isn't clipped by
+// the overlay element and lines up with the resize grips. Unknown kind → [], so a
+// stray annot renders as nothing instead of throwing mid-bake.
+function symbolStrokes(kind, x, y, w, h) {
+  const W = Math.max(1, w);
+  const H = Math.max(1, h);
+  const px = (f) => x + W * f;
+  const py = (f) => y + H * f;
+  if (kind === "check") {
+    // Down-stroke to the low point at ~38% across, then the long up-stroke.
+    return [[
+      { x: px(0.1), y: py(0.55) },
+      { x: px(0.38), y: py(0.84) },
+      { x: px(0.9), y: py(0.14) },
+    ]];
+  }
+  if (kind === "cross") {
+    return [
+      [{ x: px(0.14), y: py(0.14) }, { x: px(0.86), y: py(0.86) }],
+      [{ x: px(0.86), y: py(0.14) }, { x: px(0.14), y: py(0.86) }],
+    ];
+  }
+  return [];
+}
+
 // ---- corner-grip resize --------------------------------------------------
 
 // New box for a corner-grip drag. PURE arithmetic in the annot's own scale-1,
@@ -221,13 +290,15 @@ function resizeRect(dir, orig, dx, dy, ratio, min) {
 // probe can assert on. Mirrors the tail of wire.js / annot-text.js exactly.
 if (typeof module !== "undefined" && module.exports) {
   module.exports = {
-    CLOUD_BUMP, CLOUD_BUMP_MIN, CLOUD_BUMP_MAX, bumpOf,
+    CLOUD_BUMP, CLOUD_BUMP_MIN, CLOUD_BUMP_MAX, bumpOf, SYMBOL_SIZE,
     arrowLabelPos, cloudPath, arcApex, cloudPathPoly, resizeRect,
+    strokeExtend, symbolStrokes,
   };
 }
 if (typeof window !== "undefined") {
   window.AnnotGeom = {
-    CLOUD_BUMP, CLOUD_BUMP_MIN, CLOUD_BUMP_MAX, bumpOf,
+    CLOUD_BUMP, CLOUD_BUMP_MIN, CLOUD_BUMP_MAX, bumpOf, SYMBOL_SIZE,
     arrowLabelPos, cloudPath, arcApex, cloudPathPoly, resizeRect,
+    strokeExtend, symbolStrokes,
   };
 }

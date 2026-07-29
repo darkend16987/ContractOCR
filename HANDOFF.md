@@ -4,7 +4,72 @@
 > [DESIGN.md](DESIGN.md) (kiến trúc), [ROADMAP.md](ROADMAP.md) (tiến độ chi tiết),
 > [SETUP.md](SETUP.md) (dựng môi trường).
 
-_Cập nhật: 2026-07-29 · v0.2.49 đã phát hành (dưới đây)_
+_Cập nhật: 2026-07-30 · v0.2.50 đã phát hành (dưới đây)_
+
+> **v0.2.50 — vẽ tay giữ Shift ra đoạn thẳng + dấu ✓/✗, và vá thanh chú thích bị tràn**
+> (chỉ renderer + test + tài liệu — **sidecar KHÔNG đổi, không cần rebuild**).
+>
+> **1. Vẽ tay + Shift.** Giữ Shift giữa nét → đoạn thẳng **góc bất kỳ** từ điểm neo tới
+> con trỏ; thả Shift → vẽ tay tiếp từ đúng đầu mút đó, nên một nét trộn được cả gấp khúc
+> lẫn nét tay. `e.shiftKey` đọc **live từ event** (đúng khuôn `resizeRect` đã có ở
+> `onMove`) nên nhấn/thả giữa chừng ăn ngay — không dùng cờ `keydown` toàn cục, thứ sẽ
+> **kẹt** khi Shift được thả lúc cửa sổ mất focus.
+>
+> Luật nằm ở [`annot-geom.js`](desktop/renderer/annot-geom.js) `strokeExtend()` — thuần,
+> nên vào được lưới. Nó có **đúng một** cái bẫy và bẫy đó im lặng tuyệt đối: điểm neo phải
+> **chốt một lần** lúc Shift vừa nhấn rồi mang theo (`drag.lineFrom`). Suy lại neo =
+> "điểm cuối" ở mỗi `mousemove` sẽ ghim nó vào chính điểm vừa ghi ⇒ đoạn thẳng luôn dài 0
+> ⇒ **Shift trông như không làm gì**, không lỗi, không cảnh báo. `test:cloud` có ca canh
+> gác dựng lại đúng lỗi đó.
+>
+> **2. Dấu ✓ / ✗.** Hai kind chú thích mới (`check` / `cross`), hai nút riêng, phím `K` /
+> `J` (`x` đã là redact). Bấm = cỡ mặc định 18pt căn giữa điểm bấm và **kẹp vào trong
+> trang**; kéo = tự chọn cỡ — việc này nằm ở **`onUp`**, không phải `onDown`, vì lúc
+> `onDown` chưa biết cử chỉ sẽ là bấm hay kéo. Vào `RESIZABLE_KINDS` nên **miễn phí** có
+> 4 tay nắm + Shift-giữ-tỷ-lệ + move + undo.
+>
+> Hình học ở `symbolStrokes()` — **cùng khuôn BI-40**: một hàm, hai người đọc (`<svg>`
+> overlay và `page.drawLine` lúc bake). Viết riêng hình cho phần bake là tái lập đúng lớp
+> lỗi im lặng của BI-40.
+>
+> Màu: ✓ và ✗ **nhớ màu riêng** (`ed.checkColor` xanh / `ed.crossColor` đỏ, khuôn
+> `redactColor`) nhưng **dùng chung ô "Màu"**. `colorSlotFor()` là chỗ duy nhất quyết định
+> ghi vào đâu và nó ưu tiên **kind của mục đang chọn** hơn công cụ hiện tại — nếu không,
+> dưới công cụ Chọn việc đổi màu một dấu ✗ sẽ âm thầm ghi đè màu chung của bút tô
+> sáng/vẽ tay. Hai loại này **flatten** khi bake (như draw/box/cloud), không round-trip.
+>
+> **3. Vá thanh chú thích bị tràn — lỗi CÓ SẴN, phát hiện nhờ đo trước khi thêm nút.**
+> `.edit-bar` là một hàng flex **không** `flex-wrap`. Đo bằng probe Electron trên chính
+> `app.css`, width nhỏ nhất còn bấm được "Xong": `select` 959px · `box/ellipse` 1451px ·
+> **`cloud/cloudpen` 1667px**. Tức laptop **1366px đã mất nút "Xong"/"Hủy bỏ"** ở vài
+> công cụ **từ trước bản này** — chú thích được mà không có đường ghi lại. Kèm theo
+> `#ed-hint` (`min-width: 0`) bị bóp về 0 rồi chữ xuống dòng dựng đứng, đẩy thanh cao
+> **381px**. Mỗi nút công cụ thêm vào tốn **+76px** trên mọi ngưỡng, nên 2 nút mới làm
+> nó nặng thêm. Vá bằng `flex-wrap: wrap` → mọi width 900–1920px đều OK, thanh cao
+> 46–127px. Xem **BI-41**.
+>
+> **Kiểm chứng.** Lưới tự động **566 pass / 0 fail** (8 bộ; +41 ca mới ở `test:cloud`).
+> Ngoài ra ba probe Electron chạy trên **`index.html` thật**: 28/28 (boot + tương tác +
+> bake), 20/20 (hồi quy: phím tắt, Esc giữa chừng, undo/redo, chọn/di chuyển/đổi cỡ, các
+> công cụ cũ), và một probe **render PDF đã bake bằng pdf.js rồi đếm pixel** — 819 px
+> xanh nằm trong đúng ô đã vẽ, **0 px** ở dải y-đối xứng (bẫy lật trục), và **trang xoay
+> 90°** cũng đúng.
+>
+> ⚠️ **Bài học về cách kiểm bake, đáng nhớ hơn cả tính năng:** lần đầu tôi kiểm bake bằng
+> cách đọc lại content stream của PDF. Stream đã **nén Flate** ⇒ regex khớp chuỗi rỗng ⇒
+> `[].every()` là `true` ⇒ **mọi assertion "pass" một cách rỗng tuếch**. Đọc lại output
+> của chính pdf-lib cũng chỉ là nhắc lại thứ mình vừa yêu cầu. Cách đúng là cho byte đã
+> lưu đi qua **một bộ đọc độc lập** (pdf.js — đúng engine app dùng để xem) rồi **nhìn
+> pixel**. Cùng bài học với `open-findings-2026-07-26`.
+>
+> Ghi vào [`docs/REGRESSION-GUARD.md`](docs/REGRESSION-GUARD.md): **BI-41** (ngân sách bề
+> rộng thanh chú thích) + **BI-42** (hai bất biến của tính năng mới), và 3 dòng mới ở ma
+> trận §5.
+>
+> **Hai điểm còn nợ, cố ý không sửa trong đợt này:** (1) tooltip công cụ cũ (`"Vẽ tay"`…)
+> không dịch được sang EN vì registry i18n khớp **nguyên chuỗi** mà `title` thật có hậu tố
+> `"(phím D)"` — lỗi có sẵn, key mới của v0.2.50 đã viết đúng nguyên chuỗi; (2) ✓/✗ chưa
+> round-trip (sửa lại sau khi Lưu) — muốn có thì xem cái giá ở BI-37/38.
 
 > **v0.2.49 — tách `managed-codec` khỏi `editor.js` + sửa font nhãn
 > mũi tên/watermark** (chỉ renderer + test + tài liệu — **sidecar KHÔNG đổi, không cần

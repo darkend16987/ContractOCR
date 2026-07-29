@@ -47,13 +47,19 @@
   // Kinds drawn as a plain x/y/w/h box — the ones that get resize grips. Named
   // because it used to be an inline `||` chain inside renderAnnot, which is the kind
   // of thing that quietly drifts out of step with the .handle rules in app.css.
-  const RESIZABLE_KINDS = new Set(["highlight", "redact", "image", "box", "ellipse"]);
+  const RESIZABLE_KINDS = new Set(["highlight", "redact", "image", "box", "ellipse", "check", "cross"]);
   const HANDLE_DIRS = ["nw", "ne", "sw", "se"];
   // Single-key tool shortcuts (edit mode only). Letters mirror the tool tooltips.
+  // `x` was already redact, so the ✗ symbol takes `j` — j/k are neighbours on the
+  // keyboard and the pair is learned as one, which beats a second lone mnemonic.
   const TOOL_KEYS = {
     v: "select", t: "text", h: "highlight", d: "draw", r: "box", o: "ellipse",
     c: "cloud", f: "cloudpen", a: "arrow", n: "note", i: "image", x: "redact", m: "measure",
+    k: "check", j: "cross",
   };
+  // The ✓ / ✗ stamps. Grouped because six places have to treat them alike, and an
+  // inline `||` chain in each is how those places drift apart (see RESIZABLE_KINDS).
+  const SYMBOL_KINDS = new Set(["check", "cross"]);
   // MANAGED_KINDS / isManagedKind / the /Nabu* keys / sniffImage / strToBytes /
   // makeMap / pageRotate / serializeManaged / pushPageAnnot / managedSrcBytes /
   // managedSrcDataUrl / collectManagedChain / freeManagedTrash /
@@ -69,6 +75,12 @@
     tool: "select",
     color: "#ffd54a", // highlight / draw / new-text colour
     redactColor: "#000000", // redaction fill colour (separate from `color`)
+    // The ✓ / ✗ stamps remember their own colour, like redactColor does: they mean
+    // "đúng" and "sai", so inheriting the highlighter's yellow would make every new
+    // tick meaningless until the user recoloured it by hand. Same "Màu" control —
+    // it just shows whichever default belongs to the current tool (colorSlotFor).
+    checkColor: "#2e7d32", // ✓ — green
+    crossColor: "#d32f2f", // ✗ — red
     fontSize: 16, // points
     font: "sans", // text-box font family key (see FONT_STACKS)
     bold: false,
@@ -703,6 +715,25 @@
       img.src = a.dataUrl;
       img.draggable = false;
       el.appendChild(img);
+    } else if (SYMBOL_KINDS.has(a.kind)) {
+      // Drawn from symbolStrokes — the SAME function the bake reads, so screen and
+      // PDF cannot drift. Local 0-origin viewBox (the element is already positioned
+      // at a.x/a.y above), so the strokes are asked for at the origin.
+      const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+      svg.setAttribute("viewBox", `0 0 ${Math.max(1, a.w)} ${Math.max(1, a.h)}`);
+      svg.setAttribute("width", "100%");
+      svg.setAttribute("height", "100%");
+      for (const line of symbolStrokes(a.kind, 0, 0, a.w, a.h)) {
+        const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+        path.setAttribute("d", line.map((q, k) => (k ? "L" : "M") + q.x + " " + q.y).join(" "));
+        path.setAttribute("fill", "none");
+        path.setAttribute("stroke", a.color);
+        path.setAttribute("stroke-width", String(Math.max(1, a.width || 2)));
+        path.setAttribute("stroke-linecap", "round");
+        path.setAttribute("stroke-linejoin", "round");
+        svg.appendChild(path);
+      }
+      el.appendChild(svg);
     }
     // redact needs no extra content (solid black via CSS)
 
@@ -789,7 +820,7 @@
       setFmtBtn("ed-italic", a.italic);
       setFmtBtn("ed-underline", a.underline);
     }
-    if (["draw", "box", "ellipse", "cloud", "cloudpen", "arrow"].includes(a.kind) && a.width) $("ed-penwidth").value = String(a.width);
+    if (["draw", "box", "ellipse", "cloud", "cloudpen", "arrow", "check", "cross"].includes(a.kind) && a.width) $("ed-penwidth").value = String(a.width);
     if (a.kind === "arrow") $("ed-arrowlabel").value = a.labelEnd === "tail" ? "tail" : "head";
     if (a.kind === "cloud" || a.kind === "cloudpen") {
       const b = bumpOf(a);
@@ -927,6 +958,21 @@
       return;
     }
 
+    if (SYMBOL_KINDS.has(ed.tool)) {
+      // Starts exactly like a rectangle drag. The difference is at mouse-UP: a
+      // drag too small to be a deliberate box becomes a default-size stamp centred
+      // on the click instead of being discarded, so ticking a checkbox is one
+      // click while a big ✗ across a clause is still a drag. See onUp.
+      const a = { id: ed.seq++, kind: ed.tool, x: p.x, y: p.y, w: 1, h: 1,
+                  color: ed[colorSlotFor(ed.tool)], width: ed.penWidth };
+      pushEdUndo(); // dropped again if the gesture is cancelled (see cancelDrag)
+      annotsFor(i).push(a);
+      ed.sel = a.id;
+      drag = { type: "symbol", page: i, id: a.id, layer, sx: p.x, sy: p.y };
+      e.preventDefault();
+      return;
+    }
+
     if (ed.tool === "arrow") {
       const a = { id: ed.seq++, kind: "arrow", x1: p.x, y1: p.y, x2: p.x, y2: p.y, color: ed.color, width: ed.penWidth, labelEnd: ed.arrowLabelEnd };
       pushEdUndo();
@@ -970,7 +1016,8 @@
       pushEdUndo();
       annotsFor(i).push(a);
       ed.sel = a.id;
-      drag = { type: "draw", page: i, id: a.id, layer };
+      // lineFrom: index the Shift-straight segment pivots on; null = freehand.
+      drag = { type: "draw", page: i, id: a.id, layer, lineFrom: null };
       e.preventDefault();
       return;
     }
@@ -1077,13 +1124,20 @@
       a.y = g.y;
       a.w = g.w;
       a.h = g.h;
-    } else if (drag.type === "rect") {
+    } else if (drag.type === "rect" || drag.type === "symbol") {
       a.x = Math.min(drag.sx, p.x);
       a.y = Math.min(drag.sy, p.y);
       a.w = Math.abs(p.x - drag.sx);
       a.h = Math.abs(p.y - drag.sy);
     } else if (drag.type === "draw") {
-      a.pts.push(p);
+      // Shift is read live off the event (same rule as resize above), so it can be
+      // pressed and released mid-stroke: hold → straight segment from the pinned
+      // anchor, release → freehand resumes from where that segment ended. One
+      // stroke can therefore mix both. `drag.lineFrom` carries the anchor across
+      // moves — deriving it fresh each time collapses the line (see strokeExtend).
+      const ext = strokeExtend(a.pts, p, e.shiftKey, drag.lineFrom);
+      a.pts = ext.pts;
+      drag.lineFrom = ext.anchor;
     } else if (drag.type === "cloudpen") {
       // Past the click threshold this stroke is a freehand drag → collect points.
       if (!drag.moved && Math.hypot(p.x - drag.downX, p.y - drag.downY) * state.scale > 5) drag.moved = true;
@@ -1116,6 +1170,25 @@
       drag = null;
       renderLayer(layer, page);
       return;
+    }
+    // A ✓/✗ that was clicked rather than dragged out: give it the default size
+    // centred on the click instead of discarding it as a stray rectangle. Clamped
+    // to the page so a click near the edge still lands fully on paper — the box is
+    // what the four resize grips act on, and one hanging off the sheet can't be
+    // grabbed back.
+    if (drag.type === "symbol") {
+      const h0 = findAnnot(drag.id);
+      if (h0 && (h0.a.w < 4 || h0.a.h < 4)) {
+        const a0 = h0.a;
+        const pw = +drag.layer.dataset.w || 0;
+        const ph = +drag.layer.dataset.h || 0;
+        a0.w = SYMBOL_SIZE;
+        a0.h = SYMBOL_SIZE;
+        a0.x = drag.sx - SYMBOL_SIZE / 2;
+        a0.y = drag.sy - SYMBOL_SIZE / 2;
+        if (pw) a0.x = Math.max(0, Math.min(pw - SYMBOL_SIZE, a0.x));
+        if (ph) a0.y = Math.max(0, Math.min(ph - SYMBOL_SIZE, a0.y));
+      }
     }
     const hit = findAnnot(drag.id);
     if (hit) {
@@ -1204,7 +1277,7 @@
     const hit = findAnnot(d.id);
     if (hit) {
       const a = hit.a;
-      if (d.type === "rect" || d.type === "draw" || d.type === "arrow" || d.type === "cloudpen") {
+      if (d.type === "rect" || d.type === "draw" || d.type === "arrow" || d.type === "cloudpen" || d.type === "symbol") {
         // creation in progress → remove it entirely
         ed.annots[d.page] = ed.annots[d.page].filter((x) => x.id !== d.id);
         ed.sel = null;
@@ -2167,6 +2240,22 @@
           }
           page.drawSvgPath(cp.d, opts);
         }
+      } else if (SYMBOL_KINDS.has(a.kind)) {
+        // Same strokes the overlay drew, endpoint-mapped one at a time — so page
+        // rotation and the redaction "image" mode are handled by `map`, exactly
+        // like arrow/dim. Round caps to match the SVG's stroke-linecap.
+        const c = hexRgb(a.color);
+        const w = Math.max(1, a.width || 2);
+        for (const line of symbolStrokes(a.kind, a.x, a.y, a.w, a.h)) {
+          for (let k = 1; k < line.length; k++) {
+            const [sx, sy] = map(line[k - 1].x, line[k - 1].y);
+            const [ex, ey] = map(line[k].x, line[k].y);
+            page.drawLine({
+              start: { x: sx, y: sy }, end: { x: ex, y: ey },
+              thickness: w, color: c, lineCap: PDFLib.LineCapStyle.Round,
+            });
+          }
+        }
       } else if (a.kind === "arrow") {
         const c = hexRgb(a.color);
         const w = a.width || 2;
@@ -2589,6 +2678,8 @@
     image: [],
     redact: ["redact"],
     measure: ["color", "penwidth", "measure"],
+    check: ["color", "penwidth"],
+    cross: ["color", "penwidth"],
   };
   // Which controls an already-placed annotation of a given kind can tweak. Used
   // by the Select tool so the palette shows only what the *selected* item needs
@@ -2606,6 +2697,8 @@
     image: ["imgpages"],
     redact: ["redact"],
     dim: ["color", "penwidth"],
+    check: ["color", "penwidth"],
+    cross: ["color", "penwidth"],
   };
   // Show the palette controls relevant to the current context: for a drawing
   // tool, the tool's controls; for Select, only the selected annotation's (or
@@ -2624,6 +2717,13 @@
     updateFmtPanel();
   }
 
+  // Which remembered default colour a tool/kind uses. The ✓ and ✗ keep their own
+  // (green / red) while sharing the one "Màu" control — see ed.checkColor. Anything
+  // else falls back to the shared `ed.color`, which is the historical behaviour.
+  function colorSlotFor(k) {
+    return k === "check" ? "checkColor" : k === "cross" ? "crossColor" : "color";
+  }
+
   function setTool(tool) {
     // Leaving the cloud-pen tool abandons a polygon still being clicked out.
     if (ed._poly && tool !== "cloudpen") {
@@ -2636,12 +2736,16 @@
     }
     ed.tool = tool;
     document.querySelectorAll("#ed-tools .tool").forEach((b) => b.classList.toggle("active", b.dataset.tool === tool));
+    // Show the colour this tool actually draws with, or picking ✓ would display
+    // the highlighter's yellow while stamping green.
+    const cpick = $("ed-color");
+    if (cpick) cpick.value = ed[colorSlotFor(tool)];
     syncCtlVisibility(tool);
     const hints = {
       select: SELECT_HINT,
       text: "Bấm lên trang để thêm hộp văn bản (Ctrl+Enter để xong).",
       highlight: "Kéo để tô sáng vùng.",
-      draw: "Giữ chuột và kéo để vẽ.",
+      draw: "Giữ chuột và kéo để vẽ. Giữ thêm Shift để nét thành đoạn thẳng; thả Shift là vẽ tay tiếp.",
       box: "Kéo để khoanh một vùng (khung chữ nhật).",
       ellipse: "Kéo để khoanh vùng bằng elip / hình tròn.",
       cloud: "Kéo để khoanh mây (revision cloud) quanh vùng cần lưu ý.",
@@ -2650,6 +2754,8 @@
       note: "Bấm lên trang để đặt ghi chú; gõ nội dung rồi Ctrl+Enter.",
       image: "Bấm lên trang để đặt ảnh đã chọn.",
       redact: "Kéo để che — nội dung gốc sẽ bị xoá khi áp dụng.",
+      check: "Bấm để đóng dấu ✓ cỡ mặc định, hoặc kéo để tự chọn cỡ.",
+      cross: "Bấm để đóng dấu ✗ cỡ mặc định, hoặc kéo để tự chọn cỡ.",
       measure: ed.measureCal
         ? `Kéo một đoạn để tự ghi kích thước (tỷ lệ đã hiệu chuẩn, đơn vị ${ed.measureUnit}). Bấm "Hiệu chuẩn lại" để đổi.`
         : "Kéo đoạn có kích thước ĐÃ BIẾT rồi nhập số thật để hiệu chuẩn; sau đó các đoạn khác tự ra số.",
@@ -2802,14 +2908,17 @@
   });
 
   $("ed-color").oninput = (e) => {
-    ed.color = e.target.value;
-    if (ed.sel != null) {
-      const hit = findAnnot(ed.sel);
-      if (hit && hit.a.color !== undefined) {
-        pushEdUndo("color:" + ed.sel); // a picker drag = one undo step
-        hit.a.color = ed.color;
-        syncOverlays();
-      }
+    const v = e.target.value;
+    const hit = ed.sel != null ? findAnnot(ed.sel) : null;
+    // The remembered default follows what the picker is actually showing: the
+    // SELECTED annotation's kind when there is one (under Select, recolouring a ✗
+    // must update the ✗ default, not the shared highlight/draw colour), else the
+    // active tool's. For every pre-existing kind this still resolves to ed.color.
+    ed[colorSlotFor(hit ? hit.a.kind : ed.tool)] = v;
+    if (hit && hit.a.color !== undefined) {
+      pushEdUndo("color:" + ed.sel); // a picker drag = one undo step
+      hit.a.color = v;
+      syncOverlays();
     }
   };
   $("ed-redact-color").oninput = (e) => {
@@ -3019,7 +3128,7 @@
     ed.penWidth = Math.max(1, +e.target.value || 2);
     if (ed.sel != null) {
       const hit = findAnnot(ed.sel);
-      if (hit && ["draw", "box", "ellipse", "cloud", "cloudpen", "arrow"].includes(hit.a.kind)) {
+      if (hit && ["draw", "box", "ellipse", "cloud", "cloudpen", "arrow", "check", "cross"].includes(hit.a.kind)) {
         pushEdUndo("pwidth:" + ed.sel);
         hit.a.width = ed.penWidth;
         syncOverlays();

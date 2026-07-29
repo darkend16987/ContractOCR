@@ -134,6 +134,12 @@
     "Khoanh mây (revision cloud) — chuẩn kỹ thuật / xây dựng":
       "Revision cloud — engineering / construction standard",
     "Mũi tên chỉ dẫn": "Callout arrow",
+    // NOTE these two carry the "(phím …)" suffix while their neighbours above do
+    // not. buildRegistry matches the WHOLE title attribute, so a key without the
+    // suffix never fires — which is why the older tool tooltips are in fact still
+    // untranslated. Keep new keys verbatim-identical to the markup.
+    "Dấu tích ✓ — đúng / đã kiểm (phím K)": "Tick ✓ — correct / checked (key K)",
+    "Dấu chéo ✗ — sai / loại bỏ (phím J)": "Cross ✗ — wrong / rejected (key J)",
     "Ghi chú (comment) gắn vào một điểm": "Note (comment) pinned to a point",
     "Chèn ảnh / chữ ký": "Insert image / signature",
     "Che thông tin (an toàn — xoá nội dung gốc)":

@@ -129,6 +129,23 @@ Giới hạn đã biết: sửa trong phạm vi từng đoạn (không tự dàn
 > **Mũi tên kèm nhãn:** chọn công cụ **Mũi tên**, kéo để vẽ — thả ra là hiện ô nhập chữ ngay ở **đầu mũi tên**
 > (gõ nhãn rồi Enter, bỏ trống/Esc nếu không cần). Muốn sửa nhãn sau: **bấm đúp** vào mũi tên.
 
+> **Vẽ tay thành đoạn thẳng (giữ Shift):** chọn công cụ **Vẽ tay** (phím `D`), giữ chuột kéo như thường.
+> Muốn một đoạn **thẳng** thì **giữ thêm Shift** — đoạn đang vẽ duỗi thẳng từ chỗ bạn nhấn Shift tới con
+> trỏ, rê chuột để chỉnh hướng và độ dài. **Thả Shift ra là vẽ tay tiếp** từ đúng đầu mút đó, nên một nét
+> có thể vừa có đoạn thẳng vừa có đoạn nguệch ngoạc. Tiện để gạch chân một dòng hợp đồng hay kẻ một đường
+> dẫn thẳng mà không phải đổi công cụ.
+
+> **Dấu ✓ và ✗:** hai công cụ riêng trên thanh chú thích (phím `K` cho ✓, `J` cho ✗) — chỉ là **ký hiệu**,
+> không kèm ô vuông, nên tích thẳng vào ô checkbox có sẵn trong hợp đồng được.
+> - **Bấm một cái** → ra dấu **cỡ mặc định** ngay tại chỗ bấm (bấm sát mép trang thì dấu tự lùi vào cho
+>   nằm trọn trong trang). **Kéo** → tự chọn cỡ.
+> - Đổi **Màu** và **Nét** (độ dày) như các công cụ vẽ khác. Mỗi loại **nhớ màu riêng** — mặc định ✓ xanh
+>   lá, ✗ đỏ — nên đổi màu dấu ✗ không làm đổi màu bút tô sáng hay vẽ tay.
+> - Đã đặt rồi vẫn **chọn / kéo di chuyển / kéo 4 góc đổi cỡ** được (giữ Shift để giữ đúng tỷ lệ), và
+>   **Ctrl+Z** hoàn tác được.
+> - Lưu ý: sau khi bấm **Xong**, dấu ✓/✗ được **dán chết** vào trang (như vẽ tay và khoanh vùng) — không
+>   sửa lại được như hộp văn bản, ghi chú hay ảnh.
+
 > **Ghi chú dạng chuỗi (thêm bình luận vào ghi chú):** bấm đúp một ghi chú 💬 để mở bảng — phần trên là
 > nội dung gốc + các bình luận đã có (chỉ đọc), ô dưới để **Thêm bình luận** (không xoá nội dung cũ). Nút
 > **Sửa gốc** để chỉnh nội dung gốc. Marker hiện **số bình luận**. Khi Lưu, cả chuỗi được gộp vào ghi chú

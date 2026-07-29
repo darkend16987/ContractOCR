@@ -296,15 +296,142 @@ check("the gap is headLength + 0.6 * fontSize",
 }
 
 // ==========================================================================
-// 6. the module surface (BI-14: a rename here breaks editor.js silently)
+// 6. strokeExtend — the Shift-straight rule for the freehand `draw` tool
+// ==========================================================================
+//
+// Called once per mousemove from editor.js's drag.type === "draw" branch, with
+// Shift read live off the event. Everything below is about ONE thing: the pivot
+// must be captured once and then carried, because the failure mode of getting it
+// wrong is a straight line that is always zero-length — i.e. Shift appears to do
+// nothing at all, with no error anywhere.
+
+const { strokeExtend, symbolStrokes, SYMBOL_SIZE } = G;
+const P = (x, y) => ({ x, y });
+
+{
+  // Plain freehand: append, no anchor.
+  const r = strokeExtend([P(0, 0), P(1, 1)], P(2, 2), false, null);
+  check("freehand appends the point", r.pts, [P(0, 0), P(1, 1), P(2, 2)]);
+  check("freehand keeps no anchor", r.anchor, null);
+}
+{
+  // First move with Shift down pins the pivot to the current tip (index 2 here).
+  const r = strokeExtend([P(0, 0), P(5, 0), P(9, 3)], P(20, 20), true, null);
+  check("Shift pins the anchor to the stroke's tip", r.anchor, 2);
+  check("and the segment runs tip → cursor", r.pts, [P(0, 0), P(5, 0), P(9, 3), P(20, 20)]);
+}
+{
+  // Second move, still Shift: the SAME anchor is reused and the rubber-band tip
+  // is replaced, not accumulated. Length must not change.
+  const a = strokeExtend([P(0, 0), P(9, 3)], P(20, 20), true, null);
+  const b = strokeExtend(a.pts, P(40, 5), true, a.anchor);
+  check("holding Shift replaces the tip instead of stacking points", b.pts,
+    [P(0, 0), P(9, 3), P(40, 5)]);
+  check("the anchor is carried, not re-derived", b.anchor, 1);
+}
+{
+  // GUARD for the bug this parameter exists to prevent. Re-deriving the anchor
+  // each move (passing null every time) pins it to the point just written, so the
+  // segment becomes cursor→cursor: a line of length zero, every frame.
+  const a = strokeExtend([P(0, 0), P(9, 3)], P(20, 20), true, null);
+  const bad = strokeExtend(a.pts, P(40, 5), true, null); // <- the mistake
+  const last2 = bad.pts.slice(-2);
+  check("guard — re-deriving the anchor collapses the segment to a point",
+    last2, [P(20, 20), P(40, 5)]);
+  check("guard — and it grows the stroke instead of replacing the tip",
+    bad.pts.length > 3, true);
+}
+{
+  // Releasing Shift resumes freehand FROM the end of the straight segment, which
+  // is what lets one stroke be polyline → scribble → polyline.
+  const a = strokeExtend([P(0, 0)], P(50, 0), true, null);
+  const b = strokeExtend(a.pts, P(51, 2), false, a.anchor);
+  check("releasing Shift drops the anchor", b.anchor, null);
+  check("and drawing continues from the segment's end", b.pts,
+    [P(0, 0), P(50, 0), P(51, 2)]);
+}
+{
+  // Shift held from the very first move: anchor 0, so the whole stroke is the line.
+  const r = strokeExtend([P(3, 4)], P(80, 90), true, null);
+  check("Shift from the first move makes the whole stroke one segment", r.pts,
+    [P(3, 4), P(80, 90)]);
+  check("anchored at the mousedown point", r.anchor, 0);
+}
+{
+  // Purity: editor.js keeps the previous array inside its undo snapshots.
+  const src = [P(0, 0), P(1, 1)];
+  strokeExtend(src, P(2, 2), false, null);
+  strokeExtend(src, P(9, 9), true, null);
+  check("the input array is never mutated", src, [P(0, 0), P(1, 1)]);
+}
+check("empty/absent pts does not throw", strokeExtend(undefined, P(1, 1), true, null).pts, [P(1, 1)]);
+
+// ==========================================================================
+// 7. symbolStrokes — the ✓ / ✗ stamps
+// ==========================================================================
+//
+// ONE function feeds both the on-screen <svg> and pdf-lib's drawLine at bake
+// time (same arrangement as cloudPath, same reason: two implementations would
+// disagree and only the saved file would show it).
+
+const inBox = (lines, x, y, w, h) =>
+  lines.every((l) => l.every((p) => p.x >= x - 1e-9 && p.x <= x + w + 1e-9 &&
+                                    p.y >= y - 1e-9 && p.y <= y + h + 1e-9));
+
+{
+  const c = symbolStrokes("check", 0, 0, 100, 100);
+  check("a tick is a single 3-point polyline", [c.length, c[0].length], [1, 3]);
+  // Shape sanity: down-stroke then a longer up-stroke ending high and right.
+  check("the tick's elbow is its lowest point", c[0][1].y > c[0][0].y && c[0][1].y > c[0][2].y, true);
+  check("the tick ends up and to the right", c[0][2].x > c[0][1].x && c[0][2].y < c[0][0].y, true);
+}
+{
+  const x = symbolStrokes("cross", 0, 0, 100, 100);
+  check("a cross is two 2-point segments", [x.length, x[0].length, x[1].length], [2, 2, 2]);
+  check("the two strokes run in opposite x directions",
+    (x[0][1].x - x[0][0].x) * (x[1][1].x - x[1][0].x) < 0, true);
+  check("the cross is symmetric about the box centre",
+    [(x[0][0].x + x[0][1].x) / 2, (x[1][0].x + x[1][1].x) / 2], [50, 50]);
+}
+// Containment is what keeps the ink under the four resize grips and inside the
+// overlay element — a stroke escaping the box lands somewhere the user can't grab.
+check("tick stays inside its box", inBox(symbolStrokes("check", 30, 70, 18, 18), 30, 70, 18, 18), true);
+check("cross stays inside its box", inBox(symbolStrokes("cross", 30, 70, 18, 18), 30, 70, 18, 18), true);
+{
+  // Offset + scale: the same shape, translated and stretched. This is the property
+  // the bake relies on when it passes a.x/a.y/a.w/a.h straight through.
+  // Rounded: `200 + 10*0.38 - 200` is not bit-identical to `10*0.38`, and that
+  // difference (1e-14 pt) is meaningless at PDF scale.
+  const r9 = (n) => +n.toFixed(9);
+  const base = symbolStrokes("check", 0, 0, 10, 10)[0];
+  const moved = symbolStrokes("check", 200, 400, 10, 10)[0];
+  check("translating the box translates every point",
+    moved.map((p) => [r9(p.x - 200), r9(p.y - 400)]), base.map((p) => [r9(p.x), r9(p.y)]));
+  const wide = symbolStrokes("check", 0, 0, 20, 10)[0];
+  check("width scales x only", wide.map((p) => r9(p.x)), base.map((p) => r9(p.x * 2)));
+  check("and leaves y alone", wide.map((p) => r9(p.y)), base.map((p) => r9(p.y)));
+}
+// Degenerate boxes: a click-placed stamp is created at w=h=1 and only resized on
+// mouse-up, so zero/negative sizes DO reach this function mid-gesture.
+check("zero size does not divide by zero or escape",
+  inBox(symbolStrokes("cross", 5, 5, 0, 0), 5, 5, 1, 1), true);
+// An unknown kind must render as nothing rather than throw: drawOneAnnot runs
+// inside drawAnnots' per-annot try/catch, where a throw is swallowed into a
+// "bỏ qua N mục lỗi" toast — i.e. silent data loss on save.
+check("an unknown kind yields no strokes", symbolStrokes("wat", 0, 0, 10, 10), []);
+check("the default stamp size is a usable number", SYMBOL_SIZE > 0 && SYMBOL_SIZE < 200, true);
+
+// ==========================================================================
+// 8. the module surface (BI-14: a rename here breaks editor.js silently)
 // ==========================================================================
 
 check("node import exposes exactly the surface editor.js calls by bare name",
   Object.keys(G).sort(),
-  ["CLOUD_BUMP", "CLOUD_BUMP_MAX", "CLOUD_BUMP_MIN", "arcApex", "arrowLabelPos",
-   "bumpOf", "cloudPath", "cloudPathPoly", "resizeRect"]);
-check("the three CLOUD_BUMP entries are numbers, the rest functions",
-  Object.keys(G).map((k) => (k.startsWith("CLOUD_") ? typeof G[k] === "number" : typeof G[k] === "function")).every(Boolean),
+  ["CLOUD_BUMP", "CLOUD_BUMP_MAX", "CLOUD_BUMP_MIN", "SYMBOL_SIZE", "arcApex",
+   "arrowLabelPos", "bumpOf", "cloudPath", "cloudPathPoly", "resizeRect",
+   "strokeExtend", "symbolStrokes"]);
+check("the constants are numbers, the rest functions",
+  Object.keys(G).map((k) => (/^[A-Z]/.test(k) ? typeof G[k] === "number" : typeof G[k] === "function")).every(Boolean),
   true);
 // resizeRect lives here but is exercised by test:geom — assert it is reachable so a
 // move/rename cannot quietly leave that grid testing nothing.

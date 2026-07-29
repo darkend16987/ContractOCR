@@ -562,6 +562,24 @@ body.presenting .viewer .page-wrap { box-shadow: none; }
   background: var(--bg-2);
   border-bottom: 1px solid var(--line);
   flex: 0 0 auto;
+  /* Wrap to a second row instead of overflowing. Without this the bar is a single
+     nowrap line that is simply WIDER than the window on the fuller palettes, and
+     the two items pushed off the right edge are "Hủy bỏ" and "Xong" — i.e. the
+     user can annotate but has no way to commit or discard. Measured in Electron
+     against this stylesheet, narrowest window at which "Xong" stays reachable:
+
+                       nowrap (before)   wrap (now)
+       select tool         959px          any width
+       box / ellipse      1451px          any width
+       cloud / cloudpen   1667px          any width
+
+     so a 1366×768 laptop lost the button on half the tools. The squeezed
+     #ed-hint also rewrapped into ~12 lines, inflating the bar to 381px tall and
+     eating the page view. Wrapped it is 46–127px.
+     Adding a 14th/15th tool button costs +76px on every threshold, which is what
+     surfaced this. Applies to #tedit-bar too (same class) — same failure mode,
+     fewer items. See docs/REGRESSION-GUARD.md BI-41. */
+  flex-wrap: wrap;
 }
 .edit-bar .tools { gap: 4px; }
 .edit-bar .tool { width: 34px; padding: 6px 0; display: inline-flex; align-items: center; justify-content: center; position: relative; }
@@ -616,6 +634,10 @@ body.editing .annot-layer .an { cursor: move; }
 .an-arrow svg { display: block; overflow: visible; }
 .an-cloud svg { display: block; overflow: visible; }
 .an-cloudpen svg { display: block; overflow: visible; }
+/* ✓ / ✗ stamps. `overflow: visible` matters here: the strokes reach ~86% of the
+   box and a thick pen (up to 24pt) puts half its width past that, so a clipped
+   svg would shave the ends off on screen while the baked PDF kept them. */
+.an-check svg, .an-cross svg { display: block; overflow: visible; }
 .an-box, .an-ellipse { background: transparent; }
 .an-note {
   display: flex; align-items: center; justify-content: center;

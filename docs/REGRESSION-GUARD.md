@@ -16,7 +16,7 @@ tài liệu này chỉ có giá trị nếu được cập nhật.
 | `desktop/renderer/editor.js` | ~3180 | Overlay annotation, bake, form. Diff lớn nhất mỗi lần release. |
 | `desktop/renderer/annot-text.js` | ~230 | Bố cục chữ (`layoutTextBox`). Rủi ro **thấp** nhờ lưới `npm run test:text`, nhưng sai ở đây **im lặng**: hộp trên màn hình và PNG đem bake lệch nhau → chữ tràn/xuống dòng khác trong file đã lưu → xem BI-40. |
 | `desktop/renderer/managed-codec.js` | ~275 | Lớp object PDF riêng của chú thích sửa-lại-được. **Hậu quả cao nhất trong repo**: sai là **mất ảnh của người dùng** hoặc phình file âm thầm. Có lưới `npm run test:managed` → xem BI-37, BI-38, BI-14. |
-| `desktop/renderer/annot-geom.js` | ~230 | Đường mây revision + nhãn mũi tên + `resizeRect`. Rủi ro **thấp** nhờ `npm run test:cloud` + `test:geom`; sai ở đây làm mây lệch chỗ **trong PDF đã lưu** (trên màn hình vẫn đúng) → xem BI-40. |
+| `desktop/renderer/annot-geom.js` | ~300 | Đường mây revision + nhãn mũi tên + `resizeRect` + (v0.2.50) `strokeExtend` (luật Shift của vẽ tay) + `symbolStrokes` (hình ✓/✗). Rủi ro **thấp** nhờ `npm run test:cloud` + `test:geom`; sai ở đây làm mây/dấu lệch chỗ **trong PDF đã lưu** (trên màn hình vẫn đúng) → xem BI-40, BI-42. |
 | `desktop/src/main.js` + `src/tabs.js` | — | Tầng cửa sổ/tab — **hệ con mới nhất, ít va đập thực tế nhất** (ra mắt v0.2.41). Có lưới tự động `npm run test:tabs` cho phần logic thuần. |
 | `desktop/renderer/page-range.js` | ~170 | Số học khoảng trang. Rủi ro **thấp** vì có lưới `npm run test:pages`, nhưng hậu quả sai là **mất trang tài liệu** → xem BI-27. |
 | `desktop/renderer/pan.js` | ~380 | Bàn tay/pan. Rủi ro **trung bình**: nó giành sự kiện chuột **trên cùng phần tử** với `editor.js`/`capture.js`. Nửa logic có lưới `npm run test:pan`; nửa DOM thì không → xem BI-30/31. |
@@ -647,6 +647,68 @@ chỉ tên hàm.
 - Lưới: `npm run test:text` (annot-text.js) + `npm run test:cloud` (annot-geom.js) +
   `npm run test:geom` (`resizeRect`). Nửa DOM vẫn phải probe — xem §1.
 
+### BI-41 · `.edit-bar` phải `flex-wrap: wrap` — thanh tràn thì mất nút **Xong**
+- `app.css` khối `.edit-bar` (dùng chung cho `#edit-bar` **và** `#tedit-bar`).
+- Thanh này là **một hàng flex**, và nội dung của nó **phụ thuộc công cụ đang chọn**
+  (`syncCtlVisibility`). Công cụ có palette rộng làm nó rộng hơn cửa sổ. Hai thứ bị đẩy
+  ra ngoài đầu tiên lại đúng là `#ed-exit` và `#ed-apply` — tức người dùng chú thích được
+  mà **không có đường nào ghi lại hay huỷ bỏ**. Kèm theo: `#ed-hint` có `min-width: 0`
+  nên bị bóp về 0 rồi **chữ xuống dòng dựng đứng**, đẩy thanh cao **381px** và nuốt mất
+  vùng xem trang.
+- **Đo bằng probe Electron trên chính `app.css`** (không suy luận) — width nhỏ nhất còn
+  bấm được "Xong", 13 nút công cụ / 15 nút:
+
+  | Công cụ | 13 nút | 15 nút |
+  |---|---|---|
+  | select · image | 959px | 1035px |
+  | highlight · note · redact | 1026px | 1102px |
+  | draw · check · cross | 1110px | 1186px |
+  | measure | 1225px | 1301px |
+  | arrow | 1290px | 1366px |
+  | box · ellipse | 1451px | 1527px |
+  | **cloud · cloudpen** | **1667px** | **1743px** |
+
+  Nghĩa là **trước khi thêm gì cả**, laptop 1366px đã mất nút Xong ở 3 công cụ. Mỗi nút
+  công cụ thêm vào tốn **+76px** trên **mọi** dòng của bảng.
+- Có `wrap` thì ở mọi width 900–1920px nút Xong luôn bấm được, thanh cao **46–127px**.
+- **Luật:** thêm nút vào `#ed-tools` (hay control vào palette) thì phải trả lời câu hỏi
+  bề rộng, không chỉ nhìn cho vừa mắt trên màn hình của mình. Và **đừng gỡ `flex-wrap`**
+  "cho gọn một hàng" — nó là thứ duy nhất đang giữ nút commit trên màn hình.
+- **Vỡ khi:** thu nhỏ cửa sổ khi đang Chú thích → không thấy "Xong"/"Hủy bỏ" · hoặc chọn
+  công cụ Khoanh mây thì thanh công cụ phình cao che mất trang.
+
+### BI-42 · ✓ / ✗ và đoạn thẳng Shift dùng **một** bộ số học ở `annot-geom.js`
+- `annot-geom.js` `symbolStrokes()` + `strokeExtend()`; chỗ gọi ở `editor.js`
+  (`renderAnnot` nhánh `SYMBOL_KINDS`, `drawOneAnnot`, nhánh `drag.type === "draw"`).
+- **`symbolStrokes` là cùng khuôn BI-40**: một hàm, **hai** người đọc — `<svg>` overlay và
+  `page.drawLine` lúc bake. Viết riêng hình ✓ cho phần bake là tái lập đúng lớp lỗi im
+  lặng của BI-40: màn hình đúng, file giao cho khách sai.
+- **`strokeExtend` có đúng một cái bẫy, và nó im lặng hoàn toàn:** điểm neo của đoạn
+  thẳng phải được **chốt một lần** lúc Shift vừa nhấn rồi mang theo qua các lần
+  `mousemove` (`drag.lineFrom`). Suy lại neo = "điểm cuối" ở mỗi lần move sẽ ghim nó vào
+  chính điểm vừa ghi ⇒ đoạn thẳng luôn dài 0 ⇒ **Shift trông như không làm gì**, không
+  lỗi, không cảnh báo. `npm run test:cloud` có ca canh gác dựng lại đúng lỗi đó.
+- `e.shiftKey` đọc **live từ event** (đúng khuôn `resizeRect` ở `onMove`), nên nhấn/thả
+  Shift giữa chừng ăn ngay — đó là thứ cho phép một nét trộn cả gấp khúc lẫn vẽ tay. Nếu
+  đổi sang đọc từ một cờ `keydown` toàn cục thì cờ sẽ **kẹt** khi Shift được thả lúc cửa
+  sổ mất focus.
+- ✓/✗ nằm trong `RESIZABLE_KINDS` ⇒ được 4 tay nắm + Shift-giữ-tỷ-lệ **miễn phí**; đổi lại
+  chúng **bắt buộc** phải có `x/y/w/h` thật (`resizeRect` chỉ biết hộp).
+- Bấm-một-cái ra cỡ mặc định là việc của **`onUp`**, không phải `onDown`: `onDown` không
+  biết cử chỉ sẽ là bấm hay kéo. Hộp bị **kẹp vào trong trang** ở bước đó — dấu treo nửa
+  ngoài mép giấy thì 4 tay nắm không tóm lại được.
+- Màu: ✓ và ✗ có **màu nhớ riêng** (`ed.checkColor`/`ed.crossColor`, khuôn `redactColor`)
+  nhưng **dùng chung ô "Màu"**. `colorSlotFor()` là chỗ duy nhất quyết định ghi vào đâu, và
+  nó ưu tiên **kind của mục đang chọn** hơn công cụ hiện tại — nếu không, dưới công cụ Chọn
+  việc đổi màu một dấu ✗ sẽ âm thầm ghi đè màu chung của bút tô sáng/vẽ tay.
+- Hai loại này **flatten** khi bake (như draw/box/cloud), **không** round-trip — chúng
+  không nằm trong `MANAGED_KINDS`. Muốn sửa lại sau khi Lưu là **tính năng khác** (xem
+  BI-37/38 để biết cái giá).
+- **Vỡ khi:** giữ Shift mà nét vẫn ngoằn ngoèo (hoặc đứng im) · dấu ✓ trên màn hình một
+  nơi, trong PDF đã lưu một nẻo · đổi màu ✗ xong bút tô sáng cũng đổi màu theo · đóng dấu
+  sát mép trang rồi không kéo tay nắm được nữa.
+- Lưới: `npm run test:cloud`. Nửa DOM + nửa bake vẫn phải probe — xem §1.
+
 ## 4. Hàm nút thắt (đổi chữ ký = ảnh hưởng diện rộng)
 
 | Hàm | Định nghĩa | Ai gọi |
@@ -697,6 +759,9 @@ chỉ tên hàm.
 | `wire.js` (`pdfJsonBody` / `binArrayJsonBody` / `pushB64Chunks` / `b64ToU8` / `B64_CHUNK`) hay bất kỳ chỗ gọi sidecar nào có PDF | `cd desktop ; npm run test:wire` (51 ca) · mở file **lớn** (≥100MB) rồi: Sửa nội dung · Nén · So sánh 2 file · Tách — không tab nào chết vì hết bộ nhớ · **Ảnh → PDF với ~50 ảnh máy ảnh**: tạo được file, PDF mở lại đúng số trang và đúng thứ tự (BI-24) |
 | Thứ tự `<script>` trong `index.html` | `wire.js` **trước** `app.js`/`text-edit.js`/`compare.js`/`editor.js`/`sign.js`; `annot-text.js` + `annot-geom.js` + `managed-codec.js` **trước** `editor.js` (và `managed-codec.js` sau `vendor/pdf-lib.min.js` + `wire.js` + `annot-text.js`); `pan.js` sau `app.js` và trước `editor.js`/`capture.js`. Mở app → console **không** có `ReferenceError` · thử một lệnh gọi sidecar bất kỳ (Nén) (§2, BI-14, BI-40) |
 | `annot-text.js` / `annot-geom.js` | `npm run test:text` + `test:cloud` + `test:geom` · rồi **test tay**: gõ chữ Việt vào hộp → Xong → mở lại file, chữ **không** tràn khung · khoanh mây (hộp + freehand) → Lưu → mây đúng chỗ · mũi tên có nhãn ở cả hai đầu (BI-40) |
+| Vẽ tay + Shift (`strokeExtend`, nhánh `drag.type === "draw"`, `drag.lineFrom`) | `npm run test:cloud` · vẽ tay **không** giữ Shift → vẫn ngoằn ngoèo đủ điểm · giữ Shift giữa nét → ra đoạn **thẳng**, rê chuột thì đoạn đó **xoay theo** chứ không dài thêm điểm · **thả** Shift → vẽ tay tiếp từ đúng đầu mút đó · Esc giữa chừng → mất cả nét, không để lại bước undo rỗng · Xong → mở lại file, nét **đúng hình** (BI-42) |
+| Dấu ✓ / ✗ (`SYMBOL_KINDS`, `symbolStrokes`, `colorSlotFor`, `drag.type === "symbol"`) | `npm run test:cloud` · **bấm** một cái → ra dấu cỡ mặc định, **kéo** → ra đúng cỡ đã kéo · bấm sát mép phải-dưới trang → dấu vẫn **nằm trọn trong trang** · chọn rồi kéo 4 góc, giữ Shift giữ tỷ lệ · đổi "Nét" → dấu đậm/mảnh theo · đổi màu ✗ rồi chuyển sang bút Tô sáng → **màu tô sáng không bị đổi theo** · phím K/J đổi công cụ, nhưng đang gõ trong ô số thì **không** · Xong → mở lại file: dấu **đúng chỗ, đúng màu**, kể cả trên trang **đã xoay** (BI-42) |
+| Thêm nút vào `#ed-tools` hay control vào palette | BI-41: thu cửa sổ về 1366px rồi 1024px, lần lượt chọn **mọi** công cụ → nút "Xong"/"Hủy bỏ" luôn thấy được, thanh **không** phình cao che trang · và BI-9 + BI-10 |
 | Tuỳ chọn “Mở file mới trong” (`prefs.js`, `planOpen`, `tabs:open-paths`, `openPathInApp`) | `cd desktop ; npm run test:tabs` · với **cả hai** giá trị, thử **cả ba** đường: nút Mở · kéo–thả PDF vào tab đang có tài liệu · double-click file trong Explorer — kết quả phải **giống nhau** · chọn 3 file cùng lúc + “Cửa sổ mới” → **một** cửa sổ 3 tab · tab trắng + “Cửa sổ mới” → nạp vào chính tab trắng đó · đổi tuỳ chọn rồi khởi động lại app → vẫn nhớ · xoá `%APPDATA%/Nabu PDF/prefs.json` → về “Tab mới” (BI-35, BI-8) |
 | Chọn font ở `/edit-text` hay `src/pdf/fonts.py` | `test_edit_text_font.py` **và** `test_edit_text_rounds.py` · mở 1 hoá đơn Times New Roman thật, sửa 1 dòng với “Giữ nguyên” → **không** đổi sang DejaVu, **không** ra □ (BI-21) |
 | Toàn màn hình (`setPresentation`, `_layout`, `.presenting`) | `npm run test:tabs` (10 ca cuối) · F11 vào/ra · Esc ra · thoát bằng nút cửa sổ → thanh công cụ phải quay lại · chuyển tab khi đang toàn màn hình · thử bật lúc đang Chú thích (phải từ chối) — BI-22 |
