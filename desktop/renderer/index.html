@@ -916,8 +916,12 @@
           </label>
           <label>Số bản <input id="print-copies" type="number" min="1" max="999" value="1" /></label>
         </div>
+        <label>Trang cần in — để trống là in tất cả
+          <input type="text" id="print-pages" placeholder="vd: 1-2, 5, 8-10" spellcheck="false" />
+        </label>
+        <p class="cmp-note" id="print-pages-hint"></p>
         <label class="chk"><input type="checkbox" id="print-system-dialog" /> Mở hộp thoại máy in của hệ thống</label>
-        <p class="cmp-note">Máy in không hỗ trợ 2 mặt sẽ tự in 1 mặt.</p>
+        <p class="cmp-note">Máy in không hỗ trợ 2 mặt sẽ tự in 1 mặt. Khoảng trang gõ ở đây đếm theo trang tài liệu; hộp thoại của hệ thống đếm theo TỜ in ra.</p>
         <div class="modal-actions">
           <button id="print-cancel">Hủy</button>
           <button id="print-ok" class="primary">In</button>

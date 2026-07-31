@@ -1917,22 +1917,68 @@ function clearPrintPages() {
   if (root) root.innerHTML = "";
 }
 
-// Render each page of the canonical bytes into #print-root as a full-page image.
-async function buildPrintPages() {
+// Which pages the job covers, read from the dialog's range box: sorted 0-based
+// indices. A blank box means the whole document — the behaviour from before the
+// box existed, so an untouched dialog prints exactly what it always did.
+//
+// Parsing goes through window.PageRange.parseSpec — the renderer's ONE page-range
+// parser, the only one with a test grid (BI-27). Do not grow a second one here.
+function printPageIndices() {
+  const total = state.numPages || 0;
+  const el = $("print-pages");
+  const spec = el ? el.value.trim() : "";
+  if (!spec) return { all: true, indices: Array.from({ length: total }, (_, i) => i), total };
+  return { all: false, indices: [...window.PageRange.parseSpec(spec, total)].sort((a, b) => a - b), total };
+}
+
+// Live preview + "In" gate — same shape as syncDeleteRange / syncImgPages, and for
+// the same reason (BI-27): parseSpec deliberately SKIPS junk tokens and CLAMPS
+// out-of-range numbers instead of refusing, which is only safe while the user can
+// see what their text resolved to before committing. Removing this preview turns
+// both of those into silent wrong-pages-printed.
+// #print-pages-hint is rewritten on every keystroke → it lives in i18n's SKIP_IDS (BI-10).
+function syncPrintPages() {
+  const hint = $("print-pages-hint");
+  const ok = $("print-ok");
+  const s = printPageIndices();
+  if (ok) ok.disabled = !s.indices.length;
+  if (!hint) return;
+  if (s.all) {
+    hint.textContent = t("Sẽ in tất cả {n} trang.", { n: s.total });
+  } else if (!s.indices.length) {
+    hint.textContent = t("Chưa nhận ra trang nào — vd: 1-2, 5, 8-10.");
+  } else {
+    hint.textContent = t("Sẽ in {n} trang: {list}.", {
+      n: s.indices.length,
+      list: window.PageRange.formatList(s.indices),
+    });
+  }
+}
+
+// Render the pages in `indices` (0-based) into #print-root, one .print-sheet per
+// sheet of paper. Only the CHOSEN pages are rasterised: every image is held in the
+// DOM at once, so printing 2 pages out of 400 must cost 2 pages of heap, not 400.
+async function buildPrintPages(indices) {
   const root = ensurePrintRoot();
   root.innerHTML = "";
   // Copy the bytes: pdf.js may transfer/neuter the buffer it's handed, and
   // state.bytes must stay intact for the live viewer / saving.
   const doc = await pdfjsLib.getDocument({ data: state.bytes.slice() }).promise;
-  const total = doc.numPages;
+  // The spec was parsed against state.numPages; if that ever disagreed with THIS
+  // document, getPage would throw and take the whole job with it.
+  const list = (indices && indices.length
+    ? indices
+    : Array.from({ length: doc.numPages }, (_, k) => k)
+  ).filter((k) => k >= 0 && k < doc.numPages);
+  const total = list.length;
   try {
-    for (let i = 1; i <= total; i++) {
+    for (let n = 0; n < total; n++) {
       // Show progress so multi-page large-format jobs don't look frozen. Let the
       // overlay repaint before the (main-thread) render/encode work of this page.
-      showOverlay(t("Đang chuẩn bị in… (trang {n}/{total})", { n: i, total }));
+      showOverlay(t("Đang chuẩn bị in… (trang {n}/{total})", { n: n + 1, total }));
       await new Promise((r) => setTimeout(r, 0));
 
-      const page = await doc.getPage(i);
+      const page = await doc.getPage(list[n] + 1);
       // Base viewport (scale 1) → page size in pt; pick a memory-safe raster scale.
       const vp1 = page.getViewport({ scale: 1 }); // honours page rotation
       const scale = printScaleFor(vp1.width, vp1.height);
@@ -1945,7 +1991,14 @@ async function buildPrintPages() {
       const img = document.createElement("img");
       img.className = "print-page";
       img.src = canvas.toDataURL("image/png");
-      root.appendChild(img);
+      // One wrapper per sheet of paper: the wrapper is the fixed-size box that
+      // clamps the image inside the printable page, so a page can never spill onto
+      // a second sheet. See app.css §print / BI-43 — the <img> must NOT be a direct
+      // child of #print-root, or the clamp has nothing to clamp against.
+      const sheet = document.createElement("div");
+      sheet.className = "print-sheet";
+      sheet.appendChild(img);
+      root.appendChild(sheet);
       // Release the canvas backing store now (up to `total` of these, each up to
       // ~48 MB for a capped large sheet) — don't wait for GC while we build the rest.
       canvas.width = canvas.height = 0;
@@ -1967,17 +2020,26 @@ async function buildPrintPages() {
   }
 }
 
-// Prepare the print images, then open the Print Options dialog. Actual printing
-// happens in runPrint() (main-process webContents.print with the chosen options).
+// Open the Print Options dialog. NOTHING is rasterised here any more: the dialog's
+// page-range box decides WHICH pages get rendered, so that work moved into
+// runPrint(). `bakePending` stays on this side of the dialog, exactly as before, so
+// the sheets always carry the annotations the user can see on screen — and so a
+// cancelled dialog behaves the way it always has.
 async function printDoc() {
   if (!state.bytes || printing) return;
   printing = true;
   try {
     if (window.Editor) await window.Editor.bakePending();
+    // getPrintersAsync talks to the spooler and can take a second on a network
+    // printer. The raster progress overlay used to cover that wait; now that the
+    // raster happens after the dialog, this is what keeps Ctrl+P from feeling dead.
     showOverlay(t("Đang chuẩn bị in…"));
-    await buildPrintPages();
     await populatePrinters();
     hideOverlay();
+    // Start every job from "all pages"; a range left over from the previous print
+    // would silently drop pages this time.
+    if ($("print-pages")) $("print-pages").value = "";
+    syncPrintPages();
     $("print-modal").hidden = false;
   } catch (e) {
     hideOverlay();
@@ -2018,8 +2080,17 @@ function closePrintModal() {
   clearPrintPages();
 }
 
-// Print the prepared images with the options chosen in the dialog.
+// Rasterise the chosen pages, then print them with the options from the dialog.
 async function runPrint() {
+  // Same guard printDoc uses, and it earns its keep here now: runPrint REBUILDS
+  // #print-root, so a double-click on "In" would wipe the DOM the first job is still
+  // printing from. It also blocks Ctrl+P while a job is being prepared.
+  if (printing) return;
+  const sel = printPageIndices();
+  // Can't happen through the UI (the preview disables "In"), but a keyboard path
+  // into an empty selection must not spool a blank job.
+  if (!sel.indices.length) return;
+  printing = true;
   const opts = {
     deviceName: $("print-printer") ? $("print-printer").value : "",
     pageSize: $("print-size") ? $("print-size").value : "A4",
@@ -2030,6 +2101,9 @@ async function runPrint() {
   };
   $("print-modal").hidden = true;
   try {
+    showOverlay(t("Đang chuẩn bị in…"));
+    await buildPrintPages(sel.indices);
+    hideOverlay();
     const res = await window.desktop.printPage(opts);
     if (res && res.ok) {
       toast(t("Đã gửi lệnh in."), "good");
@@ -2037,9 +2111,12 @@ async function runPrint() {
       toast(t("In lỗi:") + " " + res.reason, "bad");
     }
   } catch (e) {
+    hideOverlay();
     toast(t("In lỗi:") + " " + (e && e.message ? e.message : e), "bad");
   } finally {
+    hideOverlay();
     clearPrintPages();
+    printing = false;
   }
 }
 
@@ -4084,6 +4161,9 @@ document.addEventListener("keydown", (e) => {
 // Convert modals.
 $("print-ok").onclick = runPrint;
 $("print-cancel").onclick = closePrintModal;
+// Live "will print N pages: …" preview + the gate on "In" (BI-27 — the preview is
+// what makes parseSpec's skip-junk / clamp behaviour safe).
+if ($("print-pages")) $("print-pages").oninput = syncPrintPages;
 $("enc-cancel").onclick = () => ($("enc-modal").hidden = true);
 $("enc-ok").onclick = runEncrypt;
 $("enc-pw-toggle").onclick = () => {

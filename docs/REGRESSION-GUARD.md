@@ -23,6 +23,7 @@ tài liệu này chỉ có giá trị nếu được cập nhật.
 | `desktop/renderer/wire.js` | ~130 | Bộ mã hoá payload nhị phân. Rủi ro **thấp** nhờ lưới `npm run test:wire`, nhưng sai ở đây **im lặng**: request vẫn đúng cú pháp, chỉ là base64 hỏng → xem BI-24. |
 | `desktop/renderer/app.js` — khối zoom | ~130 dòng | `applyScaleToDom`/`commitScale` đụng CSS box của **mọi** trang + 4 lớp overlay. Sai là zoom mờ mãi hoặc chú thích lệch. Nửa số học có lưới `npm run test:geom` → xem BI-36. |
 | ~~`editor.js` — ảnh round-trip~~ → `managed-codec.js` (v0.2.49) | ~180 dòng | Ghi/đọc/giải phóng object PDF riêng. Sai ở đây **mất ảnh của người dùng** hoặc phình file âm thầm. Có lưới `npm run test:managed` → xem BI-37, BI-38. |
+| `desktop/renderer/app.css` — khối `@media print` + `app.js` `buildPrintPages` | ~50 dòng | Bố cục **tờ giấy**. Rủi ro **cao và im lặng**: sai ở đây không có lỗi, không có cảnh báo — chỉ là máy in nhả gấp đôi số tờ, hoặc mất phần dưới trang, và **chỉ trên khổ giấy mà người viết code không dùng** (A3/Letter). Nửa số học có lưới `npm run test:print`; nửa CSS chỉ probe `printToPDF` **đếm tờ** mới thấy → xem BI-43, BI-44. |
 | `desktop/src/prefs.js` | ~80 | Tuỳ chọn phía main. Rủi ro thấp; nằm trong lưới `npm run test:tabs`. |
 | `api.py` + `src/pdf/*.py` | — | Có lưới test tự động (`run_tests.py`) → rủi ro thấp hơn renderer. |
 
@@ -709,6 +710,64 @@ chỉ tên hàm.
   sát mép trang rồi không kéo tay nắm được nữa.
 - Lưới: `npm run test:cloud`. Nửa DOM + nửa bake vẫn phải probe — xem §1.
 
+### BI-43 · Ảnh trang in phải **vừa TRONG** tờ giấy, không phải vừa **bề ngang** — và khoảng trang của hộp thoại hệ thống đếm **TỜ**
+- `app.css` khối `@media print` (`.print-sheet` / `.print-page`) + `app.js`
+  `buildPrintPages()` (bọc mỗi ảnh trong `.print-sheet`) + `main.js` `print:page`.
+- **Lỗi gốc, đã có thật (báo 2026-07-31, sửa ở v0.2.51):** ảnh trang nằm thẳng dưới
+  `#print-root` với `width:100%; height:auto` — tức **vừa bề NGANG**, chiều cao thả tự do.
+  Tỷ lệ giấy lệch tỷ lệ trang **một chút** là ảnh cao hơn tờ giấy ⇒ Chromium ngắt phần
+  dưới sang **tờ thứ hai**. Đo bằng probe Electron trên chính stylesheet này, trang nguồn
+  595.2×841.92pt (tỷ lệ 1,414516):
+
+  | Giấy | fit-to-width (cũ) | contain (nay) |
+  |---|---|---|
+  | A4 | 1 tờ/trang | 1 tờ/trang |
+  | **A3** | **2 tờ** — tràn 0,11 mm | 1 tờ/trang |
+  | **Letter** | **2 tờ** — tràn 26 mm | 1 tờ/trang |
+  | Legal / Tabloid | 1 tờ/trang | 1 tờ/trang |
+
+- **Vì sao lỗi chỉ hiện khi "Mở hộp thoại máy in của hệ thống":** `pageSize` ta truyền chỉ
+  có hiệu lực ở nhánh `silent: true`. Mở hộp thoại hệ thống thì **giấy do driver quyết**
+  — máy đầu tiên gặp lỗi này là driver **HP Color LaserJet A3/11x17**, tức A3. Nhưng đây
+  **không** phải lỗi của hộp thoại: chọn **A3 trong hộp thoại của Nabu** (không mở hộp
+  thoại hệ thống) tái hiện y hệt. Đừng đi vá tầng IPC.
+- **Hậu quả tổ hợp — chỗ làm người dùng hiểu sai hoàn toàn:** khoảng trang trong hộp thoại
+  hệ thống đếm **TỜ IN**, không đếm trang tài liệu. Khi 1 trang = 2 tờ, gõ `1-2` in ra
+  **trang 1 hai lần** (nửa trên + dải dưới). Vì vậy bất biến "1 trang = 1 tờ" **là điều
+  kiện để mọi khoảng trang có nghĩa**, không chỉ là chuyện thẩm mỹ.
+- **`html, body { height: 100% }` trong khối print KHÔNG phải trang trí.** Không có nó,
+  `height:100%` của `.print-sheet` rơi về `auto`, clamp thành vô hiệu và lỗi tràn quay lại
+  y như cũ — đã đo đúng cái sai đó trước khi chốt hình dạng này.
+- `<img class="print-page">` **không được** là con trực tiếp của `#print-root`: cái clamp
+  cần hộp `.print-sheet` cỡ cố định để clamp vào. Ai "đơn giản hoá" bỏ wrapper là dựng lại
+  nguyên lỗi.
+- Giữ **đúng tỷ lệ**: giấy rộng/cao hơn trang thì để dải trắng, **không** kéo méo, **không**
+  cắt. Lấp chỗ trắng đó (tự xoay trang ngang) là **tính năng khác**, cố ý chưa làm.
+- **Vỡ khi:** in 4 trang ra 8 tờ, tờ chẵn chỉ có một dải mỏng · chọn `1-2` ở hộp thoại hệ
+  thống ra hai bản của trang 1 · đổi Khổ giấy sang A3/Letter thì số tờ nhân đôi.
+- Lưới: `npm run test:print` (số học khoảng trang, **cắt thẳng từ `app.js`**). Nửa CSS
+  **phải** probe: dựng `.print-sheet` với `app.css` thật rồi `printToPDF` từng khổ giấy và
+  **đếm tờ** — v0.2.51 chạy 40 ca (5 dạng tài liệu × 8 khổ giấy) + một probe boot
+  `index.html` thật lái hộp thoại bằng sự kiện `input` thật. Đọc lại content stream là
+  **vô giá trị** ở đây, phải đếm tờ và đếm pixel (cùng bài học của v0.2.50).
+
+### BI-44 · Ô "Trang cần in" để trống = in tất cả, và bản xem trước là bắt buộc
+- `app.js` `printPageIndices()` + `syncPrintPages()`; `index.html` `#print-pages` +
+  `#print-pages-hint`; lưới `npm run test:print`.
+- Ô trống **phải** ra đúng hành vi có từ trước khi có ô này (in cả tài liệu). Hộp thoại
+  cũng **reset ô về trống mỗi lần mở** — khoảng trang còn sót của lần in trước sẽ âm thầm
+  bỏ trang ở lần này.
+- Dùng `window.PageRange.parseSpec`, **không** viết bộ parse thứ hai (BI-27). Kèm theo là
+  **nghĩa vụ** hiển thị bản xem trước + khoá nút "In": `parseSpec` cố ý **bỏ qua token rác**
+  và **kẹp số vượt trang cuối** thay vì từ chối, nên gõ `99` trên tài liệu 4 trang sẽ in
+  trang 4. Có bản xem trước thì đó là tiện; bỏ nó đi thì đó là **in sai trang trong im lặng**.
+- `#print-pages-hint` phải nằm trong `SKIP_IDS` (BI-10) — nó bị ghi lại mỗi lần gõ.
+- **Chỉ raster những trang được chọn.** Mọi ảnh trang được giữ trong DOM cùng lúc, nên in
+  2 trang của tài liệu 400 trang phải tốn 2 trang bộ nhớ, không phải 400. Đây cũng là lý do
+  `buildPrintPages` **nhận tham số** và `printDoc` **không** raster trước khi mở hộp thoại.
+- **Vỡ khi:** mở hộp thoại In lần thứ hai thì tự nhiên chỉ in vài trang · gõ rác mà vẫn
+  bấm In được · đổi VI↔EN thì dòng gợi ý nhảy về text tĩnh.
+
 ## 4. Hàm nút thắt (đổi chữ ký = ảnh hưởng diện rộng)
 
 | Hàm | Định nghĩa | Ai gọi |
@@ -751,6 +810,8 @@ chỉ tên hàm.
 | `page-range.js` hay hộp thoại xoá theo khoảng | `cd desktop ; npm run test:pages` · gõ “từ 5 đến 12, trừ 7” trên tài liệu thật → trang 7 **còn nguyên** · Ctrl+Z quay lại đủ trang (BI-27, BI-3) |
 | Hộp thoại “Áp ảnh / chữ ký cho nhiều trang” (`imgPagesSpec`, `syncImgPages`) | `npm run test:pages` · chèn 1 ảnh rồi Áp nhiều trang: gõ `1-3` → dòng gợi ý ghi đúng “Sẽ áp sang N trang: …” và nút Áp dụng **mở** · dán `1–3` (gạch en, copy từ Word) → **vẫn nhận** · gõ `abc` → “Chưa nhận ra trang nào”, nút Áp dụng **khoá** · gõ đúng số trang ảnh đang nằm → “Chỉ có đúng trang ảnh đang nằm”, nút **khoá** · gõ số lớn hơn số trang → gợi ý cho thấy nó **kẹp về trang cuối** trước khi bấm · Ctrl+Z hoàn tác được (BI-27, BI-10) |
 | Tên file gợi ý khi Tách trang (`extractFileName`) | `npm run test:pages` · mở PDF ≥200 trang → Chọn tất cả bỏ 1 trang → Tách → tên trong hộp thoại Lưu **ngắn, đọc được**, lưu thành công (BI-27) |
+| Khối `@media print` của `app.css`, `.print-sheet`, `buildPrintPages`, `printScaleFor` | `cd desktop ; npm run test:print` · **đếm TỜ, không tin mắt**: in ra "Microsoft Print to PDF" tài liệu 4 trang với Khổ giấy **A4, rồi A3, rồi Letter** → mỗi lần đúng **4 tờ**, tờ nào cũng thấy đủ 4 mép trang · lặp lại với **tick "Mở hộp thoại máy in của hệ thống"** → vẫn 4 tờ · gõ `1-2` ở hộp thoại hệ thống → ra **trang 1 và trang 2**, không phải trang 1 hai lần · PDF **A0** nhiều trang → không treo, không hết bộ nhớ (BI-43) |
+| Hộp thoại In — ô "Trang cần in" (`printPageIndices`, `syncPrintPages`, `#print-pages`) | `npm run test:print` · để trống → gợi ý "Sẽ in tất cả N trang", nút In **mở**, in đủ cả tài liệu · gõ `1-2` → chỉ 2 tờ · dán `1–2` (gạch en) → **vẫn nhận** · gõ `abc` → nút In **khoá** · gõ `99` trên tài liệu 4 trang → gợi ý cho thấy nó **kẹp về trang 4** trước khi bấm · in xong mở lại hộp thoại → ô **trống lại** · đổi VI↔EN lúc đang gõ → dòng gợi ý **không** bị ghi đè (BI-44, BI-27, BI-10) |
 | Badge trạng thái (`renderSidecarBadge`, `setApiBadge`, `/config`) | Mở app lúc engine chưa lên → OCR chấm rỗng, API “…” · engine lên & chưa có key → API chấm rỗng vàng · nhập key → chuyển xanh **ngay**, không cần khởi động lại · bấm badge API → mở Cài đặt đúng ô nhập · đổi VI↔EN → cả hai badge đổi theo (BI-29) |
 | Bất kỳ điều kiện nào đọc `Editor.active` / `TextEdit.active` | Vào Chú thích rồi bấm ↑/↓/PageUp/PageDown/Delete → **không** có lỗi trong console, trang không bị xoá · thoát Chú thích → Delete xoá lại được (BI-28) |
 | Menu ngữ cảnh dùng chung (`showPageMenu` trong `capture.js`) | Chuột phải lên **trang PDF** (Sao chép ảnh/vùng/Dán) vẫn đúng · mở menu này rồi mở menu kia → menu cũ đóng · cuộn dải thumbnail → menu đóng |
@@ -796,6 +857,10 @@ chỉ tên hàm.
    (bố cục chữ trong `renderer/annot-text.js` — BI-40).
 2h. `cd desktop ; npm run test:cloud` → phải `N pass, 0 fail`
    (mây revision + nhãn mũi tên trong `renderer/annot-geom.js` — BI-40).
+2i. `cd desktop ; npm run test:print` → phải `N pass, 0 fail`
+   (khoảng trang của hộp thoại In, **cắt thẳng từ `app.js`** + kiểm luôn 7 khoá i18n và
+   `SKIP_IDS` — BI-43, BI-44. Nửa CSS "1 trang = 1 tờ" **không** nằm trong lưới này: phải
+   probe `printToPDF` và **đếm tờ**).
 3. `node --check` mọi file JS đã sửa (renderer **không** có test tự động).
 4. Nếu đụng `*.py` hoặc `sidecar.spec` → **rebuild sidecar**, nếu không OTA giao bản cũ.
 5. Chạy `npm start`, test tay các mục ở §5 tương ứng với thứ vừa sửa.

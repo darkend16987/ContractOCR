@@ -4,7 +4,83 @@
 > [DESIGN.md](DESIGN.md) (kiến trúc), [ROADMAP.md](ROADMAP.md) (tiến độ chi tiết),
 > [SETUP.md](SETUP.md) (dựng môi trường).
 
-_Cập nhật: 2026-07-30 · v0.2.50 đã phát hành (dưới đây)_
+_Cập nhật: 2026-07-31 · v0.2.51 đã phát hành (dưới đây)_
+
+> **v0.2.51 — sửa tính năng In: "1 trang = 1 tờ" + ô chọn trang ngay trong Nabu**
+> (chỉ renderer + test + tài liệu — **sidecar KHÔNG đổi, không cần rebuild**).
+>
+> **Lỗi người dùng báo (2026-07-31), trên `BBNT lần 2 - 2 dấu - Habitat.pdf`:** in không
+> mở hộp thoại hệ thống thì đẹp; **tick "Mở hộp thoại máy in của hệ thống" rồi chọn trang
+> 1-2 thì ra 2 tờ đều là trang 1** — nửa trên ở tờ 1, phần dưới cùng bị đẩy sang tờ 2.
+>
+> **Chẩn đoán — không phải lỗi của hộp thoại hệ thống.** `#print-root .print-page` là
+> `width:100%; height:auto`, tức **vừa bề NGANG**, chiều cao thả tự do. Tỷ lệ giấy lệch tỷ
+> lệ trang một chút là ảnh cao hơn tờ giấy ⇒ Chromium ngắt phần dưới sang tờ sau. `pageSize`
+> ta truyền chỉ có hiệu lực ở nhánh `silent: true`; mở hộp thoại hệ thống thì **giấy do
+> driver quyết** — máy báo lỗi dùng driver **HP Color LaserJet A3/11x17**, tức A3. Đo bằng
+> probe `printToPDF` trên chính `app.css` cũ, trang nguồn 595.2×841.92pt (tỷ lệ 1,414516):
+> **A3 → 2 tờ/trang** (tràn 0,11 mm) · **Letter → 2 tờ/trang** (tràn 26 mm) · A4/Legal/
+> Tabloid → 1 tờ. Tức **chọn A3 trong hộp thoại của Nabu cũng tái hiện y hệt**, không cần
+> hộp thoại hệ thống. Và vì khoảng trang của hộp thoại hệ thống đếm **TỜ IN** chứ không
+> đếm trang tài liệu, `1-2` thành "trang 1 hai lần" — đúng hiện tượng đã báo.
+>
+> Tài liệu đó cũng cho thấy vì sao nó chưa lộ sớm hơn: scan thuần (1 ảnh/trang, 0 ký tự),
+> MediaBox **ngang** 841.92×595.2 + `/Rotate 270` ⇒ hiển thị A4 dọc. Mặc định A4 của hộp
+> thoại *tình cờ* khớp tỷ lệ tài liệu (lệch 0,0027%, chưa đủ tràn) — nên "in bình thường,
+> in đẹp" là **may**, không phải đúng.
+>
+> **1. Vá bố cục tờ giấy.** Mỗi ảnh trang nay bọc trong `div.print-sheet` — một hộp **cỡ
+> cố định bằng cả vùng in** — và ảnh bị clamp `max-width/max-height: 100%` **bên trong** nó,
+> giữ đúng tỷ lệ. Trang không thể tràn nữa. `html, body { height: 100% }` trong khối print
+> **không phải trang trí**: thiếu nó thì `height:100%` của wrapper rơi về `auto`, clamp vô
+> hiệu và lỗi quay lại nguyên vẹn — đã đo đúng cái sai đó trước khi chốt hình dạng này.
+> Giấy rộng/cao hơn trang thì để **dải trắng**, không kéo méo, không cắt.
+>
+> **2. Ô "Trang cần in" trong hộp thoại của Nabu** (để trống = in tất cả, đúng hành vi cũ).
+> Dùng `window.PageRange.parseSpec` — **không** parse riêng (BI-27) — nên `1–2` gạch en từ
+> Word cũng nhận. Kèm bản xem trước sống + khoá nút "In", vì `parseSpec` cố ý **bỏ qua
+> token rác** và **kẹp số vượt trang cuối**: gõ `99` trên tài liệu 4 trang sẽ in trang 4, và
+> chỉ có bản xem trước biến điều đó từ "in sai trang trong im lặng" thành "thấy trước khi
+> bấm". Hộp thoại **reset ô mỗi lần mở** — khoảng trang sót lại của lần in trước sẽ âm thầm
+> bỏ trang. `buildPrintPages` nay **nhận danh sách trang** và `printDoc` **không** raster
+> trước khi mở hộp thoại: mọi ảnh trang nằm trong DOM cùng lúc, nên in 2 trang của tài liệu
+> 400 trang phải tốn 2 trang bộ nhớ, không phải 400.
+>
+> **Kiểm chứng.** Lưới tự động **605 pass / 0 fail** (9 bộ; +39 ca ở `npm run test:print`
+> mới — cắt `printPageIndices`/`syncPrintPages` thẳng ra khỏi `app.js` đang ship, và kiểm
+> luôn 7 khoá i18n + `SKIP_IDS`). Hai probe Electron:
+> - **40/40** — `app.css` **thật**, 5 dạng tài liệu (A4 dọc / A4 ngang / trộn dọc-ngang /
+>   nguồn A3 / nguồn A5) × **8 khổ giấy** (A4→A0, Letter, Legal): luôn **1 tờ/trang**, và
+>   cả 4 mép trang còn đủ trên mọi tờ (không cắt, không tràn). Nhóm đối chứng dựng lại DOM
+>   cũ trên cùng stylesheet → vẫn trượt, tức wrapper đúng là thứ đã sửa được lỗi.
+> - **22/23** trên **`index.html` thật** với preload thật: app sống (không trắng — BI-14),
+>   ô + dòng gợi ý có thật và **nối dây**, gõ bằng sự kiện `input` thật ra đúng câu "Sẽ in 2
+>   trang: 1–2.", rác thì khoá nút In, **đổi VI→EN không ghi đè dòng gợi ý** (SKIP_IDS), và
+>   `buildPrintPages([0,2])` trên tài liệu 3 trang cho **2 `.print-sheet`, 0 `<img>` con
+>   trực tiếp**, in ra A3 đúng **2 tờ** lấp trọn giấy từ (0,0). Ca trượt duy nhất là
+>   assertion "console sạch" của chính probe: probe không đăng ký IPC handler của app
+>   (`sidecar:status`, `license:get`, `menu:set-lang`, `recovery:scan`) nên renderer báo lỗi
+>   gọi IPC — **tiếng ồn của giàn probe, không phải của bản sửa**.
+>
+> Ghi vào [`docs/REGRESSION-GUARD.md`](docs/REGRESSION-GUARD.md): **BI-43** (vừa TRONG tờ
+> giấy, và khoảng trang của hộp thoại hệ thống đếm TỜ) + **BI-44** (ô trống = tất cả, bản
+> xem trước là bắt buộc), 1 dòng ở bản đồ rủi ro §1, 2 dòng ở ma trận §5, checkpoint **2i**.
+>
+> **Cố ý CHƯA làm trong đợt này** (quyết định của người dùng 2026-07-31):
+> - **Tự xoay trang ngang cho vừa giấy.** Tài liệu trộn dọc+ngang nay in **đúng** (1 tờ/
+>   trang, không cắt) nhưng trang ngang chỉ chiếm ~50% tờ dọc. Ba phương án đã **đo xong**,
+>   phương án đã chọn cho bản sau là **xoay raster 90°** (lấp 100%, một loại giấy cho cả
+>   job, đúng cả trên Letter). Phương án `@page` đặt tên cho từng trang cũng chạy trên
+>   Chromium 130 (mỗi tờ một hướng, lấp 100%) **nhưng nó ghi đè lựa chọn "Khổ giấy" của
+>   người dùng** — chỉ dùng được nếu thêm mục "Khổ giấy: Tự động theo tài liệu".
+> - **✓/✗ round-trip.** Vẫn flatten như v0.2.50 (BI-42). Người dùng chọn để nguyên. Nếu sau
+>   này làm: `MANAGED_KINDS` + 1 nhánh `serializeManaged` ở `managed-codec.js`, 1 nhánh
+>   `deserializeManaged` + 1 nhánh symbol ở `addManagedAnnot` (`/AP` là form XObject **vector**
+>   từ `symbolStrokes`, không PNG). Điểm đáng giá: ✓/✗ round-trip được **cả trên trang xoay**
+>   — khác text/arrow/image, vì hình học đường thẳng đi qua `map()` là đủ, không cần
+>   `/Matrix` (chính đường flatten hiện tại đã chứng minh). Cái bẫy duy nhất: `/Rect` phải là
+>   bbox của các điểm **đã map**, không phải `map(x, y+h)` + `w`/`h` — trên trang xoay 90/270
+>   rộng và cao đổi chỗ.
 
 > **v0.2.50 — vẽ tay giữ Shift ra đoạn thẳng + dấu ✓/✗, và vá thanh chú thích bị tràn**
 > (chỉ renderer + test + tài liệu — **sidecar KHÔNG đổi, không cần rebuild**).

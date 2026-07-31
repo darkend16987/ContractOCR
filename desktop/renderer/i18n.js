@@ -508,12 +508,18 @@
     "Hai mặt — lật cạnh dài": "Two-sided — long edge",
     "Hai mặt — lật cạnh ngắn": "Two-sided — short edge",
     "Số bản": "Copies",
+    "Trang cần in — để trống là in tất cả": "Pages to print — blank prints them all",
+    "vd: 1-2, 5, 8-10": "e.g. 1-2, 5, 8-10",
     "Mở hộp thoại máy in của hệ thống": "Open the system printer dialog",
-    "Máy in không hỗ trợ 2 mặt sẽ tự in 1 mặt.": "Printers without duplex support print one-sided.",
+    "Máy in không hỗ trợ 2 mặt sẽ tự in 1 mặt. Khoảng trang gõ ở đây đếm theo trang tài liệu; hộp thoại của hệ thống đếm theo TỜ in ra.":
+      "Printers without duplex support print one-sided. The range typed here counts document pages; the system dialog counts printed SHEETS.",
 
     // --- print (dynamic, app.js) ---
     "Đang chuẩn bị in…": "Preparing to print…",
     "Đang chuẩn bị in… (trang {n}/{total})": "Preparing to print… (page {n}/{total})",
+    "Sẽ in tất cả {n} trang.": "Will print all {n} pages.",
+    "Sẽ in {n} trang: {list}.": "Will print {n} pages: {list}.",
+    "Chưa nhận ra trang nào — vd: 1-2, 5, 8-10.": "No pages recognised — e.g. 1-2, 5, 8-10.",
     "Đã gửi lệnh in.": "Sent to printer.",
     "In lỗi:": "Print error:",
     // --- text-box Format panel ---
@@ -561,6 +567,8 @@
     "delrange-preview",
     // Same, for "Áp ảnh / chữ ký cho nhiều trang" (BI-10).
     "imgpages-hint",
+    // Same, for the print dialog's page-range box (BI-10, BI-27).
+    "print-pages-hint",
     // Live page counter shown in full-screen reading mode (BI-10).
     "present-page",
   ]);

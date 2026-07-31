@@ -1,6 +1,6 @@
 {
   "name": "nabu-pdf-desktop",
-  "version": "0.2.50",
+  "version": "0.2.51",
   "private": true,
   "description": "Nabu PDF — desktop PDF suite (Electron + Python sidecar)",
   "author": "darkend16987 <hoangnam.mng@gmail.com>",
@@ -16,6 +16,7 @@
     "build": "electron-builder --config electron-builder.yml",
     "test:tabs": "node test/tabs-logic.test.js",
     "test:pages": "node test/page-range.test.js",
+    "test:print": "node test/print-range.test.js",
     "test:pan": "node test/pan-logic.test.js",
     "test:wire": "node test/wire-codec.test.js",
     "test:geom": "node test/viewer-geom.test.js",

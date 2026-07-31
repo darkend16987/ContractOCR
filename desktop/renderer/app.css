@@ -1098,21 +1098,57 @@ body.editing .text-layer, body.text-editing .text-layer {
 }
 
 /* ---- print ---------------------------------------------------------------
-   #print-root holds one full-page <img> per PDF page, built on demand by
-   printDoc(). Hidden on screen; on print it's the ONLY thing shown, one image
-   per sheet, edge to edge. */
+   #print-root holds one .print-sheet per page being printed, each wrapping the
+   full-page <img> that buildPrintPages() rasterised. Hidden on screen; on print
+   it's the ONLY thing shown — one sheet of paper per page.
+
+   WHY THE WRAPPER EXISTS (BI-43). The image used to sit straight under
+   #print-root as `width:100%; height:auto` — fit to the sheet's WIDTH, height
+   left free. That silently splits ONE page across TWO sheets whenever the
+   paper's aspect ratio differs from the page's by even a hair, and the paper is
+   NOT always the one we asked for: with "Mở hộp thoại máy in của hệ thống" the
+   driver's paper wins and Electron's pageSize is ignored. Measured in Electron
+   against this stylesheet, source page 595.2x841.92pt (ratio 1.414516):
+
+                        fit-to-width (before)      contain (now)
+       A4                  1 sheet/page             1 sheet/page
+       A3                  2 — overflow 0.11mm      1 sheet/page
+       Letter              2 — overflow 26mm        1 sheet/page
+       Legal / Tabloid     1 sheet/page             1 sheet/page
+
+   Now the sheet is a fixed box (the whole page area) and the image is clamped
+   INSIDE it, so a page can never spill over. `html, body { height: 100% }` is
+   NOT decoration: without it the wrapper's percentage height resolves to `auto`,
+   the clamp does nothing, and the split comes straight back — that exact mistake
+   was measured before this shape was settled on.
+
+   Aspect ratio is preserved, so paper wider/taller than the page leaves white
+   bands rather than distorting or cropping. Filling that space is a separate
+   feature (auto-rotate for landscape pages), deliberately not done here. */
 #print-root { display: none; }
 @media print {
-  html, body { margin: 0 !important; padding: 0 !important; background: #fff !important; }
+  html, body { margin: 0 !important; padding: 0 !important; background: #fff !important; height: 100% !important; }
   body > *:not(#print-root) { display: none !important; }
-  #print-root { display: block !important; }
-  #print-root .print-page {
-    display: block;
+  #print-root { display: block !important; height: 100% !important; }
+  #print-root .print-sheet {
+    display: flex;
+    align-items: center;
+    justify-content: center;
     width: 100%;
-    height: auto;
+    height: 100%;
+    overflow: hidden;
     page-break-after: always;
     break-after: page;
+    page-break-inside: avoid;
+    break-inside: avoid;
   }
-  #print-root .print-page:last-child { page-break-after: auto; break-after: auto; }
+  #print-root .print-sheet:last-child { page-break-after: auto; break-after: auto; }
+  #print-root .print-sheet .print-page {
+    display: block;
+    width: auto;
+    height: auto;
+    max-width: 100%;
+    max-height: 100%;
+  }
   @page { margin: 0; }
 }
