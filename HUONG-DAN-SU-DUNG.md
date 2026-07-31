@@ -63,6 +63,7 @@ Chỉ cần **một file duy nhất**:
 | Xem · ghép · tách · chèn · xoay · xóa · sắp xếp · **Lưu** | ❌ Không | Chạy hoàn toàn offline, không cần engine OCR. |
 | Chỉnh sửa overlay: chú thích, khoanh vùng, mũi tên (kèm nhãn), ghi chú (kèm bình luận), watermark, redact, điền form | ❌ Không | Offline. |
 | **Sửa chữ gốc** · **Nén PDF** | ❌ Không | Offline (dùng thư viện PDF gói sẵn). |
+| **Ký số** bằng USB token (mục 5.1) | ⚠️ Chỉ TSA | Bản thân việc ký chạy offline (token + kho chứng thư Windows). Chỉ **dấu thời gian (TSA)** cần mạng — để trống ô đó thì ký offline hoàn toàn. |
 | **So sánh** 2 PDF · **So sánh & Chồng lớp bản vẽ** (CAD/Revit) | ⚠️ Cần engine | Cần engine bật (badge OCR). Bản vẽ chạy offline; PDF scan cần tải model OCR như mục 3.3. |
 | **Chuyển đổi**: Khoá file (đặt mật khẩu) · Xuất ảnh trong PDF · Trang PDF → ảnh · Ảnh → PDF | ❌ Không | Offline (thư viện PDF gói sẵn). Gom trong nút **Chuyển đổi** trên thanh công cụ + menu "Chuyển đổi". |
 | **Searchable** (PDF tìm-kiếm-được) | ⚠️ Lần đầu | Cần engine OCR; lần đầu/máy mới tải model (mục 3.3). |
@@ -110,7 +111,9 @@ sau dùng OCR sẽ tải lại.
 
 ---
 
-## 5. "Sửa chữ gốc" dùng được với loại PDF nào
+## 5. Sửa chữ, chú thích & ký số
+
+**"Sửa chữ gốc" dùng được với loại PDF nào:**
 
 - ✅ **PDF có chữ thật** (xuất từ Word/Excel, in-ra-PDF): bấm **"Sửa chữ"** → các đoạn chữ hiện viền
   bấm được → sửa trực tiếp (kể cả tiếng Việt có dấu) → **Áp dụng** → **Lưu**. Chữ cũ bị xóa thật,
@@ -126,8 +129,10 @@ Giới hạn đã biết: sửa trong phạm vi từng đoạn (không tự dàn
 > **Chèn chữ ký:** dùng nút **Chèn ảnh / chữ ký** → chọn ảnh chữ ký rồi bấm lên trang để đặt.
 > Nên dùng **PNG nền trong** để chữ ký không có hộp trắng đè lên tài liệu (ảnh JPG có nền đặc — app sẽ
 > nhắc). Chỉ nhận **PNG / JPG**.
-> ⚠️ Đây là **dán ảnh chữ ký**, không phải **chữ ký số** (digital signature có chứng thư CA). App
-> hiện chưa hỗ trợ chữ ký số pháp lý.
+> ⚠️ Đây là **dán ảnh chữ ký** — chỉ là hình ảnh trên trang, **không** có giá trị pháp lý và ai cũng
+> xoá/sửa được. Muốn **chữ ký số** thật (có chứng thư CA, kiểm tra được tính toàn vẹn) thì dùng nút
+> **Ký số** trên thanh công cụ — xem mục 5.1 ngay dưới. Hai thứ này dùng chung được: chèn ảnh con dấu
+> cho đẹp, rồi ký số để có hiệu lực.
 
 > **Ảnh vẫn sửa lại được sau khi Lưu:** giống hộp văn bản và ghi chú, ảnh/chữ ký bạn chèn **không bị
 > "dán chết"** vào trang. Mở lại file → bấm **Chỉnh sửa** → ảnh lại là một đối tượng riêng: kéo để
@@ -172,6 +177,31 @@ Giới hạn đã biết: sửa trong phạm vi từng đoạn (không tự dàn
 > - **Chồng lớp**: xếp 2 bản vẽ lên nhau, tự căn chỉnh + **tô màu khác biệt** (đỏ = chỉ có ở bản A,
 >   xanh = chỉ có ở bản B, đen = trùng). Chỉnh **độ mờ** lớp trên, **nudge** (phím mũi tên) để căn tay,
 >   PageUp/PageDown đổi cặp trang. Dùng để soi thay đổi giữa 2 phiên bản bản vẽ.
+
+### 5.1. Ký số (chữ ký số pháp lý, USB token)
+
+Nút **Ký số** ở cuối thanh công cụ. Ký PKI bằng chứng thư số trên **USB token** — VNPT-CA,
+Viettel-CA, FPT-CA, BKAV… — đọc qua kho chứng thư của Windows, giống cách Foxit/Acrobat làm.
+Khác hẳn "Chèn ảnh / chữ ký" ở trên: cái đó là **hình ảnh**, cái này là **niêm phong mã hoá** —
+người nhận mở bằng Foxit/Acrobat sẽ thấy chữ ký được xác thực và biết file có bị sửa sau khi ký không.
+
+1. **Cắm token trước khi ký**, rồi bấm **Ký số**. Ô **Chứng thư số** tự liệt kê chứng thư tìm được
+   (cắm token muộn thì bấm **Làm mới** để quét lại).
+2. Điền **Lý do ký** / **Nơi ký** nếu cần, chọn thêm **Ảnh chữ ký / con dấu** (tuỳ chọn) để chữ ký
+   nhìn thấy có hình con dấu.
+3. **Dấu thời gian (TSA)** — tuỳ chọn, dán URL dịch vụ TSA của nhà cung cấp chữ ký số của bạn. Nó
+   chứng minh **thời điểm** ký nên tăng giá trị pháp lý; để trống nếu bạn chưa có (đây là ô **duy
+   nhất** trong luồng ký cần mạng).
+4. Bấm **Tiếp: kéo khung trên trang** → kéo một khung ở chỗ muốn hiện chữ ký. Bỏ tick *"Hiển thị chữ
+   ký trên trang"* nếu chỉ cần ký ngầm, không hiện gì trên giấy.
+5. **Token tự hỏi mã PIN của nó** — Nabu không bao giờ thấy mã PIN, và **khoá bí mật không rời
+   token**. Xong, app hỏi nơi lưu và ghi ra **một file MỚI**.
+
+> 🔴 **Ký số là bước CUỐI CÙNG.** Ký xong rồi mà còn chỉnh sửa và lưu đè lên file đã ký thì **chữ ký
+> mất hiệu lực** — chữ ký số niêm phong đúng chuỗi byte tại thời điểm ký, đổi một byte là niêm phong
+> vỡ. Vậy nên: làm xong mọi việc (chú thích, sửa chữ, ghép/tách trang, đóng dấu ảnh, đánh số trang…)
+> **trước**, ký sau cùng. Cần sửa thì sửa trên **bản chưa ký** rồi ký lại, đừng sửa bản đã ký. App
+> cũng nhắc đúng điều này ngay sau khi ký xong.
 
 ---
 
