@@ -4,7 +4,144 @@
 > [DESIGN.md](DESIGN.md) (kiến trúc), [ROADMAP.md](ROADMAP.md) (tiến độ chi tiết),
 > [SETUP.md](SETUP.md) (dựng môi trường).
 
-_Cập nhật: 2026-07-31 · v0.2.51 đã phát hành (dưới đây)_
+_Cập nhật: 2026-08-04 · v0.2.52 đã phát hành (dưới đây)_
+
+> **v0.2.52 — mây bake đúng chiều trên trang xoay · copy–paste vật thể · sửa mũi tên · khe
+> chèn khi kéo sắp xếp trang** (chỉ renderer + test + tài liệu — **sidecar KHÔNG đổi, không
+> cần rebuild**; `check-sidecar-fresh` xanh: sidecar dựng từ `e336fcc7` vẫn khớp source Python).
+>
+> Năm phản hồi người dùng, gộp một bản. Thứ tự dưới đây là thứ tự **rủi ro giảm dần**, và
+> mục 1 là mục duy nhất là **lỗi** (bốn mục còn lại là tính năng).
+>
+> **1. Khoanh mây bake bị xoay trên trang landscape — cùng lớp lỗi với v0.2.11, ở chỗ mới.**
+> Người dùng báo: đã sửa được hộp văn bản bị xoay hồi v0.2.11, nhưng **khoanh mây vẫn bị**.
+> Chẩn đoán: `map` = `vp1.convertToPdfPoint` và viewport scale-1 của pdf.js **đã mang sẵn**
+> góc xoay, nên mọi hình dựng từ **các điểm map riêng lẻ** đúng miễn phí (`drawLine` từng
+> đoạn, `drawRectangle` min/max hai góc, `drawEllipse` tâm + bán trục). Cái **không** đúng
+> miễn phí là thứ đưa cho pdf-lib một **hệ toạ độ cục bộ**: v0.2.11 vá đúng ba chỗ
+> `drawImage` và kết luận "hình axis-aligned không bị ảnh hưởng" — đúng **lúc đó**. Mây ra
+> đời **sau**, đi qua `page.drawSvgPath`, thứ có **option `rotate` riêng** mà không ai
+> truyền. Sửa: `rotate: pageRotate(page)` cho cả `cloud` và `cloudpen`.
+>
+> **Đã đo, không suy luận** (pdf.js 3.11.174 + pdf-lib 1.17.1 đang ship): `drawSvgPath` áp
+> `translate(x,y)·R(rotate)·scale(1,-1)`, và `R(gócTrang)·scale(1,-1)` **chính là** phép
+> biến đổi màn-hình→user mà `convertToPdfPoint` hàm ý — khớp ở **cả bốn** góc 0/90/180/270.
+> Ở 0° là ma trận đơn vị ⇒ **tài liệu không xoay không đổi một byte**.
+>
+> **Và đã trả lời câu hỏi người dùng hỏi thẳng — mũi tên / đường thẳng / hình tròn / chữ
+> nhật có bị không?** Không, và đây là **đo** chứ không phải suy: lưới mới
+> `npm run test:rotate` (96 ca) bake **từng kind** lên bốn trang chỉ khác nhau ở `/Rotate`,
+> đọc **điểm mực trong content stream** (dựng lại CTM từ các toán tử `cm`), quy về không
+> gian màn hình rồi đòi cả bốn góc cho **cùng một** tập điểm. Trước khi sửa: **22 ca đỏ,
+> toàn bộ là `cloud` / `cloud+fill` / `cloudpen`** — `arrow`, `draw`, `dim`, `ellipse`,
+> `box`, `check`, `cross`, `highlight` xanh ở mọi góc. Tức chỉ hai kind mây bị, đúng như
+> người dùng thấy. Lưới có **ca canh gác** dựng lại lỗi cũ bằng một `drawSvgPath` thiếu
+> `rotate` và đòi nó **phải khác** 0°, nên xanh không thể là xanh vô nghĩa. Luật mới ghi ở
+> **BI-45**: thêm primitive vẽ mới thì phải trả lời nó thuộc loại nào **và** thêm kind vào
+> `KINDS` của lưới đó.
+>
+> **2. Copy–paste vật thể, clipboard sống qua "Áp dụng" (BI-46).** Chọn một hoặc nhiều mục
+> → Ctrl+C → sang trang khác → Ctrl+V. `clip` là binding **cấp module**, cố ý **ngoài `ed`**:
+> `reset()` và `bakePending()` đều xoá `ed.annots`, nên clipboard nằm trong `ed` là **bấm
+> "Áp dụng" xoá luôn clipboard** — đúng cái mà yêu cầu "kể cả khi đã áp dụng xong" đòi phải
+> sống sót. Dán sang trang **khác** giữ nguyên toạ độ (giống "Áp nhiều trang"); dán lại trên
+> **cùng** trang thì lệch dần 12pt để không đè lên nhau; và cả nhóm bị kẹp vào trong trang
+> bằng **một** `fitShift` tính trên **hộp hợp** (`unionBounds`) — kẹp từng mục sẽ **xé nhóm**
+> khi trang đích nhỏ hơn.
+>
+> **Giới hạn đã nói thẳng với người dùng trước khi làm:** chỉ `MANAGED_KINDS` (chữ · ghi chú
+> · mũi tên · ảnh) quay lại thành đối tượng sống sau khi Lưu; mây/box/elip/vẽ tay/✓✗
+> **flatten thành pixel** (BI-42) nên đã áp dụng rồi thì không còn gì để chọn. Cách dùng
+> đúng: copy **trước** khi Áp dụng — clip sống qua bake. Cho các kind kia round-trip là
+> **tính năng khác** (giá: BI-37/38) và người dùng đã chọn phương án clipboard.
+>
+> **3. Chọn nhiều mục theo chuẩn chung.** Giữ Ctrl bấm để thêm/bớt (`ed.selMore` là **tập
+> phụ**; `ed.sel` giữ nguyên nghĩa "mục chính" — có ~30 chỗ đọc nó và tất cả đều muốn **đúng
+> một** đối tượng, nên biến nó thành Set là viết lại cả file nguy hiểm nhất repo). Nhóm: kéo
+> một mục → **cả nhóm** đi (mọi thành viên tính từ `orig` + tổng delta, không cộng dồn từng
+> bước, nên không lệch nhau qua một cú kéo dài); Màu / Nét áp cho **cả nhóm**; Delete xoá cả
+> nhóm bằng **một** bước undo; Esc giữa lúc kéo trả **cả nhóm** về chỗ cũ. Tay nắm đổi cỡ
+> chỉ hiện khi chọn **một** mục — `resizeRect`/`snapLineEnd` mỗi hàm chỉ biết một annot, tám
+> tay nắm trên hai vật thể là nói dối về việc chúng làm gì. Chọn nhiều **trong một trang**:
+> chính điều đó giữ một cú kéo nhóm chỉ cần **một** `renderLayer` mỗi mousemove.
+>
+> **Bấm phải trong Chú thích** → menu Sao chép / Dán vào trang này / Xoá mục, dùng **đúng
+> một** widget menu của `capture.js` (`window.Capture.showMenu`) như `openThumbMenu`. Giành
+> gesture bằng `stopImmediatePropagation`, **không** `stopPropagation` — `capture.js` nghe
+> `contextmenu` trên **cùng** node `document` ở capture phase, và `stopPropagation` không
+> chặn listener khác **trên chính node đang đứng** (BI-30, đã phải trả giá một lần cho pan).
+> Và nếu **chưa chọn gì + clipboard rỗng** thì editor **rút lui** ⇒ menu ảnh cũ hiện y như
+> trước; hai tính năng không che nhau ở cả hai thứ tự.
+>
+> **Phím tắt đi bằng sự kiện DOM `copy`/`paste`, không phải keydown** — và đó không phải lựa
+> chọn thẩm mỹ: menu Edit ở `main.js` dùng `role: "copy"`/`role: "paste"` mà **không** đặt
+> `registerAccelerator: false` như các mục lân cận (Ctrl+Z/Y/Delete/Ctrl+P đều có), nên phím
+> tắt do menu chiếm; cái nó gây ra là `webContents.copy()/paste()`, thứ **sinh ra sự kiện
+> DOM**. Đó cũng đúng là đường `capture.js` đã dán ảnh clipboard nhiều bản nay. Copy có thêm
+> đường dự phòng `keydown` (gọi hai lần vô hại — `copySelected` idempotent); **paste thì
+> không**, vì bắn hai lần là dán ra hai vật thể. Clipboard hệ điều hành **có ảnh** thì Ctrl+V
+> vẫn thuộc `capture.js`.
+>
+> **4. Mũi tên: xoay / đổi độ dài / đảo chiều — sau khi đã áp dụng.** Mũi tên **round-trip
+> qua `/NabuData`** nên vào lại Chú thích là nó vẫn là đối tượng sống; trước đây chỉ move
+> được cả cái và sửa nhãn. Nay chọn mũi tên có **2 nút tròn** ở hai đầu (`drag.type ===
+> "point"`): kéo để xoay/đổi độ dài quanh đầu kia, giữ Shift **khoá góc 15° và giữ nguyên độ
+> dài** (`snapLineEnd` — "xoay", không phải "resize"). Nút **Đảo chiều** đổi chỗ hai đầu, nên
+> mũi nhọn **và nhãn** sang đầu kia cùng nhau (nhãn chú thích thứ mũi tên đang trỏ, nên nó
+> phải đi theo mũi nhọn). `dim` **cố ý không** có tay nắm: xoay nó sẽ làm số đo đã ghi thành
+> sai. Bẫy đã tránh: nhánh tay nắm mới phải đứng **trước** nhánh tay nắm hộp trong `onDown`
+> — cả hai mang class `.handle` nhưng mũi tên **không có** x/y/w/h, rơi vào nhánh hộp là
+> `orig` toàn `undefined` và Esc không bao giờ hoàn nguyên được.
+>
+> **5. Kéo sắp xếp trang: thấy nó sẽ nằm vào KHE nào (BI-33 mở rộng).** Trước đây kéo
+> trang trong cột chỉ tô viền thumbnail đang trỏ — thứ trả lời "tôi đang ở trên trang nào",
+> **không** trả lời "nó sẽ nằm đâu", mà trang đang trỏ có **một khe ở mỗi bên**. Nay hiện
+> **hai vạch**: dưới trang trên và trên trang dưới của đúng khe đó (`insert-after` +
+> `insert-before` trên **hai** thumbnail cùng lúc). Dùng chung một đường với kéo–thả PDF từ
+> ngoài vào, nên hình vẽ không thể lệch với kết quả. Số học: `thumbGapAt` → khe, và
+> `gapToReorderIndex` bù off-by-one vì `reorderPage` **cắt trang ra trước rồi mới chèn lại**
+> — sai chỗ đó là trang rơi **cách chỗ đã hứa một ô**, im lặng. Hai khe hai bên trang đang
+> kéo là no-op và bị **từ chối** (con trỏ "không cho phép"), vì một cú thả đứng yên vẫn tốn
+> một lần ghi lại cả tài liệu + một bước undo. `.thumb.drag-over` nay là code chết → xoá.
+>
+> **6. Ô nhập chữ to hơn.** Hộp văn bản / ghi chú / nhãn mũi tên / "Sửa nội dung" đều đang
+> dùng textarea mặc định **2 dòng × 20 ký tự**. Nay `TA_ROWS`/`TA_COLS` (3×26; nhãn mũi tên
+> 2 dòng vì nó nổi ngay cạnh mũi nhọn), panel ghi chú 240→288px, và ô "Sửa nội dung" được
+> **thêm 48px** so với bề rộng span nó thay. Rủi ro **bằng không** và đã kiểm: `layoutTextBox`
+> **không bao giờ** wrap (chỉ tách theo `\n`), còn khung annot lấy từ `measureText` lúc
+> commit — **không** lấy từ phần tử DOM. Đây là cỡ **khởi đầu**, `resize: both` vẫn kéo được.
+>
+> **Sửa kèm (phát hiện khi đọc code, không phải yêu cầu):** nhánh `move` của `cancelDrag`
+> xử lý `arrow` mà **bỏ sót `dim`** — cùng hình dạng x1/y1/x2/y2 — nên Esc giữa lúc kéo một
+> đoạn đo để nó lại đúng chỗ con trỏ bỏ dở. Nay cả hai đi qua `restoreMoveOrig`.
+>
+> **Kiểm chứng.** Lưới tự động **775 pass / 0 fail** (10 bộ, +170 ca): `test:rotate` **96**
+> (mới), `test:cloud` 101→**175** (`snapLineEnd` · `annotBounds`/`translateAnnot`/
+> `unionBounds`/`fitShift` · và các ca chốt dây nối UI + khoá i18n), `test:geom` 39→**55**
+> (số học khe chèn, đối chiếu với **một phép splice thật** chứ không với công thức viết lại).
+> Tám bộ còn lại **không đổi một ca** — đó là bằng chứng không hồi quy ở tầng logic.
+>
+> **Probe Electron trên `index.html` thật** (BI-14 là lỗi duy nhất mà node **không thể**
+> thấy — `require()` cho mỗi module một scope riêng, nên ở v0.2.49 đã có 537/537 ca xanh
+> trong lúc app trắng). Bản này thêm **5** lời gọi tên trần mới từ `editor.js` sang
+> `annot-geom.js`, tức đúng loại coupling đó: kết quả **0 `ReferenceError` / `SyntaxError` /
+> `has already been declared`**, `typeof $ === "function"` (canary của `app.js`),
+> `window.Editor` có, `window.AnnotGeom` **18/18** key, ba nút mới có mặt, `#ic-paste` phân
+> giải, và `flex-wrap` của `#edit-bar` vẫn là `wrap` — bất biến BI-41 còn nguyên, thứ duy
+> nhất đang giữ nút "Xong" trên màn hình khi thanh tràn.
+>
+> **Chưa làm, có chủ ý** — để không lẫn "tính năng mới" với "đổi chỗ ở" trong cùng một đợt
+> test tay (luật §1 của sổ này):
+> - **Cho mây/box/elip round-trip** để copy được cả sau khi đã áp dụng ở phiên trước. Người
+>   dùng đã chọn phương án clipboard; việc này là một release riêng, đụng đúng
+>   `managed-codec.js` (BI-37/38).
+> - **Style áp cho cả nhóm** chỉ làm cho **Màu** và **Nét**. Font/cỡ/B/I/U và panel Định dạng
+>   vẫn áp cho **mục chính** — chúng chỉ có nghĩa với hộp văn bản và panel vốn là một-đối-tượng.
+> - **Đo pixel bề rộng `#edit-bar` theo BI-41** (bảng "width nhỏ nhất còn bấm được Xong").
+>   Probe boot đã khẳng định `flex-wrap: wrap` còn đó — thứ mà BI-41 nói là điều kiện đủ để
+>   nút commit không bị đẩy ra ngoài — nhưng **bảng số chưa dựng lại** cho 3 nút mới
+>   (2 nút icon Sao chép/Dán hiện **mọi lúc**, "Đảo chiều" chỉ khi **đã chọn** một mũi tên).
+>   Nếu dựng lại: mỗi nút icon ~+38px trên mọi dòng của bảng.
 
 > **v0.2.51 — sửa tính năng In: "1 trang = 1 tờ" + ô chọn trang ngay trong Nabu**
 > (chỉ renderer + test + tài liệu — **sidecar KHÔNG đổi, không cần rebuild**).

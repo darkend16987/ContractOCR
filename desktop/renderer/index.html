@@ -29,6 +29,9 @@
         <symbol id="ic-save" viewBox="0 0 24 24"><path d="M6 4h9l3 3v12a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1z"/><path d="M9 4v4h6"/><circle cx="12" cy="14" r="2.4"/></symbol>
         <symbol id="ic-print" viewBox="0 0 24 24"><path d="M7 8V3h10v5"/><path d="M7 18H5a2 2 0 0 1-2-2v-4a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v4a2 2 0 0 1-2 2h-2"/><rect x="7" y="14" width="10" height="7" rx="1"/><path d="M17 12h.01"/></symbol>
         <symbol id="ic-copy" viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h8"/></symbol>
+        <!-- Clipboard with a sheet on it — the mirror of ic-copy's two stacked sheets,
+             so the pair reads as one gesture in the annotation bar. -->
+        <symbol id="ic-paste" viewBox="0 0 24 24"><path d="M9 4H7a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2h4"/><path d="M15 4h2a2 2 0 0 1 2 2v3"/><rect x="8.5" y="2.5" width="7" height="3.5" rx="1"/><rect x="12" y="12" width="9" height="9" rx="2"/></symbol>
         <symbol id="ic-file-plus" viewBox="0 0 24 24"><path d="M14 3v4a1 1 0 0 0 1 1h4"/><path d="M19 13V8l-5-5H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h5"/><path d="M16 19h6M19 16v6"/></symbol>
         <symbol id="ic-layers" viewBox="0 0 24 24"><path d="M12 3l9 5-9 5-9-5 9-5z"/><path d="M3 13l9 5 9-5"/></symbol>
         <symbol id="ic-grip" viewBox="0 0 24 24"><circle cx="9" cy="6" r="1"/><circle cx="15" cy="6" r="1"/><circle cx="9" cy="12" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="9" cy="18" r="1"/><circle cx="15" cy="18" r="1"/></symbol>
@@ -274,6 +277,7 @@
           <option value="tail">Ở cuối (gốc)</option>
         </select>
       </label>
+      <button id="ed-arrow-reverse" data-ctl="arrowrev" title="Đảo chiều mũi tên đang chọn — mũi nhọn sang đầu kia (nhãn đi theo mũi nhọn)">Đảo chiều</button>
       <label class="ctl" data-ctl="cloudsize" title="Cỡ vòng mây: kéo nhỏ để mây ken đặc, sát viền hơn">Cỡ mây <input type="range" id="ed-cloudsize" min="6" max="28" step="1" value="12" /><span id="ed-cloudsize-val" class="readout">12</span></label>
       <label class="ctl" data-ctl="fill" title="Màu nền bên trong (khi khoanh vùng)">Nền <input type="color" id="ed-fill" value="#ffffff" /></label>
       <label class="ctl" data-ctl="fill" title="Không tô nền — để trong suốt"><input type="checkbox" id="ed-fill-none" checked /> Trong suốt</label>
@@ -284,6 +288,8 @@
       <button id="ed-watermark" title="Đóng dấu mờ lên mọi trang">Watermark</button>
       <button id="ed-form" title="Điền các trường biểu mẫu PDF">Điền form</button>
       <div class="sep"></div>
+      <button id="ed-copy" class="icon-only" title="Sao chép mục đang chọn (Ctrl+C) — giữ Ctrl bấm để chọn nhiều mục; dán được sang trang khác, kể cả sau khi Áp dụng"><svg class="ic"><use href="#ic-copy"/></svg></button>
+      <button id="ed-paste" class="icon-only" title="Dán mục đã sao chép vào trang đang xem (Ctrl+V)"><svg class="ic"><use href="#ic-paste"/></svg></button>
       <button id="ed-delete" title="Xoá mục đang chọn (Delete)">Xoá mục</button>
       <span id="ed-hint" class="readout"></span>
       <div class="spacer"></div>

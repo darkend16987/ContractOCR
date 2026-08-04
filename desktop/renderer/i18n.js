@@ -95,6 +95,10 @@
     "Sao chép ảnh": "Copy image",
     "Sao chép vùng…": "Copy region…",
     "Dán ảnh vào trang": "Paste image onto page",
+    // Object context menu while annotating (editor.js) — distinct from the image menu
+    // above: these act on overlay OBJECTS (cloud / box / text box / arrow…).
+    "Sao chép": "Copy",
+    "Dán vào trang này": "Paste onto this page",
     "Không có ảnh ở vị trí này": "No image at this spot",
     "Copy ảnh trong trang — bấm vào ảnh để copy, hoặc kéo chọn một vùng. Dán (Ctrl+V) sang app khác hoặc ngược lại vào trang.":
       "Copy an image from the page — click an image, or drag to select a region. Paste (Ctrl+V) into another app, or back onto a page.",
@@ -168,6 +172,13 @@
     "Đóng dấu mờ lên mọi trang": "Stamp a watermark on every page",
     "Điền form": "Fill form",
     "Điền các trường biểu mẫu PDF": "Fill PDF form fields",
+    "Đảo chiều": "Reverse",
+    "Đảo chiều mũi tên đang chọn — mũi nhọn sang đầu kia (nhãn đi theo mũi nhọn)":
+      "Reverse the selected arrow — the head swaps ends (the label follows the head)",
+    "Sao chép mục đang chọn (Ctrl+C) — giữ Ctrl bấm để chọn nhiều mục; dán được sang trang khác, kể cả sau khi Áp dụng":
+      "Copy the selected item (Ctrl+C) — Ctrl+click to select several; can be pasted on another page, even after Apply",
+    "Dán mục đã sao chép vào trang đang xem (Ctrl+V)":
+      "Paste the copied item onto the page you are viewing (Ctrl+V)",
     "Xoá mục": "Delete item",
     "Xoá mục đang chọn (Delete)": "Delete the selected item (Delete)",
     "Ghi mọi thay đổi vào tài liệu và thoát": "Bake all changes into the document and exit",

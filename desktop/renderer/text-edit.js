@@ -194,6 +194,11 @@
     }
   }
 
+  // Extra px of typing room the span editor gets beyond the span it replaces.
+  // Screen px, NOT document points, so it stays a constant amount of room at any
+  // zoom instead of shrinking away when zoomed out.
+  const SPAN_INPUT_SLACK = 48;
+
   function beginEdit(sp, box) {
     const layer = box.parentElement;
     if (!layer) return;
@@ -206,10 +211,17 @@
 
     const ta = document.createElement("textarea");
     ta.className = "span-input";
+    ta.rows = 2; // a plain textarea is 2 rows already, but say so — see minWidth below
     ta.value = te.edits[sp.id] ? te.edits[sp.id].new_text : sp.text;
     ta.style.left = box.style.left;
     ta.style.top = box.style.top;
-    ta.style.minWidth = box.style.width;
+    // Floor the box at the span's own width PLUS room to grow: sized to exactly the
+    // span, retyping a longer line scrolls sideways inside a box the width of the
+    // original, which is where the "ô sửa chữ quá bé" complaint comes from. Only a
+    // FLOOR — `resize: both` still applies, and the width has no bearing on the
+    // result: what gets written is `ta.value`, and the redraw geometry comes from
+    // the span's own bbox on the server side (BI-25), never from this element.
+    ta.style.minWidth = `calc(${box.style.width} + ${SPAN_INPUT_SLACK}px)`;
     ta.style.fontSize = Math.max(9, sp.size * state.scale * 0.92) + "px";
     layer.appendChild(ta);
     ta.focus();

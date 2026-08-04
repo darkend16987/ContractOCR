@@ -286,11 +286,19 @@ body.presenting .sidebar-resizer { display: none; }
    make it look as though scrolling had re-aimed Xoá/Tách trang at it (BI-26). */
 .thumb.current { background: var(--bg-3); }
 .thumb.current .num { background: var(--accent); color: var(--accent-fg); font-weight: 600; }
-.thumb.drag-over { border-color: var(--ok); }
 .thumb.dragging { opacity: 0.4; }
-/* external PDF dragged from OS: show the gap it will drop into */
-.thumb.insert-before { box-shadow: 0 -4px 0 -1px var(--ok); }
-.thumb.insert-after { box-shadow: 0 4px 0 -1px var(--ok); }
+/* The drop gap, for BOTH drags into the strip: reordering a page and dropping a PDF in
+   from the OS (app.js showThumbGapCue). The two classes are drawn on DIFFERENT
+   thumbnails at once — `insert-after` on the page above the gap, `insert-before` on the
+   page below it — so the pair reads as one bar in the space between them, which is the
+   question the user is actually asking ("where will it land?"). One class alone would
+   only mark an edge of one page and leave the other side of the gap unnamed.
+   Deliberately NOT `border-color`: the border is spoken for by .selected (accent) and
+   would make a drop target look like a selection — the same confusion BI-26/BI-39 keep
+   apart. An inset+outset shadow pair keeps the bar visible over both a light
+   thumbnail and the panel background. */
+.thumb.insert-before { box-shadow: 0 -3px 0 0 var(--ok), 0 -6px 6px -4px var(--ok); }
+.thumb.insert-after { box-shadow: 0 3px 0 0 var(--ok), 0 6px 6px -4px var(--ok); }
 .thumb canvas { width: 100%; display: block; border-radius: 3px; background: #fff; }
 .thumb-check {
   position: absolute;
@@ -664,9 +672,24 @@ body.editing .annot-layer .an { cursor: move; }
 .annot-layer .handle.h-ne { right: -5px; top: -5px; cursor: nesw-resize; }
 .annot-layer .handle.h-sw { left: -5px; bottom: -5px; cursor: nesw-resize; }
 .annot-layer .handle.h-se { right: -5px; bottom: -5px; cursor: nwse-resize; }
+/* Arrow END grips (data-pt="1"/"2"). Round, not square, and centred ON the endpoint
+   rather than offset to a corner: they grab a POINT, not a box corner, and dragging one
+   swings the arrow instead of resizing a rectangle. The shape is the tell that the two
+   gestures are different — see renderAnnot's arrow branch. */
+.annot-layer .handle.h-pt {
+  width: 12px; height: 12px;
+  margin-left: -6px; margin-top: -6px;
+  border-radius: 50%; cursor: crosshair;
+}
+/* Inline text-entry box (text box / note / arrow label). `rows`+`cols` in editor.js
+   (TA_ROWS/TA_COLS) set the starting size in CHARACTERS so it tracks the zoom level;
+   these two are the px FLOOR for when the font is tiny. Both are starting sizes only —
+   `resize: both` keeps the box draggable, and neither number can affect the saved
+   result (layoutTextBox never re-wraps; the annot box comes from measureText). */
 .annot-text-edit {
   position: absolute;
-  min-width: 80px;
+  min-width: 150px;
+  min-height: 52px;
   background: rgba(255, 255, 255, 0.92);
   color: #000;
   border: 1px solid var(--accent);
@@ -682,7 +705,9 @@ body.editing .annot-layer .an { cursor: move; }
 .annot-note-panel {
   position: absolute; z-index: 31;
   display: flex; flex-direction: column; gap: 6px;
-  width: 240px; padding: 8px;
+  /* The panel, not the textarea, owns the reply box's width (see the width:100%
+     override below), so widening a cramped comment box means widening this. */
+  width: 288px; padding: 8px;
   background: rgba(255, 255, 255, 0.97); color: #000;
   border: 1px solid var(--accent); border-radius: 6px;
   box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35);

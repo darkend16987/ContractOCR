@@ -141,12 +141,20 @@ Giới hạn đã biết: sửa trong phạm vi từng đoạn (không tự dàn
 > - **Giữ Shift** khi kéo góc → co giãn **đúng tỷ lệ** (không bị méo). Áp dụng cho cả khoanh vùng
 >   chữ nhật/elip, tô sáng và ô che (redact).
 > - Ngoại lệ: trang **đã bị xoay** (PDF có `/Rotate`, thường gặp ở bản scan) thì ảnh vẫn dán chết như
->   trước — giống hộp văn bản và mũi tên trên trang xoay.
+>   trước — giống hộp văn bản và mũi tên trên trang xoay. (Từ **v0.2.52** thì *vị trí và chiều* của
+>   mọi hình trên trang xoay đều đúng — trước đó **khoanh mây** bị xoay 90° sau khi Áp dụng.)
 > - Ảnh chèn ở các bản **trước v0.2.48** đã dán chết rồi thì không lấy lại được thành đối tượng; chỉ
 >   ảnh chèn từ bản này trở đi mới sửa lại được.
 
 > **Mũi tên kèm nhãn:** chọn công cụ **Mũi tên**, kéo để vẽ — thả ra là hiện ô nhập chữ ngay ở **đầu mũi tên**
 > (gõ nhãn rồi Enter, bỏ trống/Esc nếu không cần). Muốn sửa nhãn sau: **bấm đúp** vào mũi tên.
+> - **Xoay / đổi độ dài (từ v0.2.52):** chọn mũi tên → hiện **2 nút tròn** ở hai đầu. Kéo một đầu thì
+>   đầu kia **đứng yên**, nên mũi tên xoay quanh nó. **Giữ Shift** để khoá góc theo bước **15°** mà
+>   **không đổi độ dài** — tiện khi cần đường dẫn ngang/dọc/chéo cho thẳng thớm.
+> - **Đảo chiều:** nút **Đảo chiều** trên thanh chú thích (chỉ hiện khi đang chọn một mũi tên) lật
+>   mũi nhọn sang đầu kia; **nhãn đi theo mũi nhọn**.
+> - Tất cả những thao tác trên **vẫn làm được sau khi Áp dụng / Lưu rồi mở lại** — mũi tên là đối
+>   tượng sống lại được, như hộp văn bản, ghi chú và ảnh.
 
 > **Vẽ tay thành đoạn thẳng (giữ Shift):** chọn công cụ **Vẽ tay** (phím `D`), giữ chuột kéo như thường.
 > Muốn một đoạn **thẳng** thì **giữ thêm Shift** — đoạn đang vẽ duỗi thẳng từ chỗ bạn nhấn Shift tới con
@@ -164,6 +172,23 @@ Giới hạn đã biết: sửa trong phạm vi từng đoạn (không tự dàn
 >   **Ctrl+Z** hoàn tác được.
 > - Lưu ý: sau khi bấm **Xong**, dấu ✓/✗ được **dán chết** vào trang (như vẽ tay và khoanh vùng) — không
 >   sửa lại được như hộp văn bản, ghi chú hay ảnh.
+
+> **Chọn nhiều mục & sao chép sang trang khác (từ v0.2.52):** dưới công cụ **Chọn**:
+> - **Giữ Ctrl bấm** để thêm/bớt mục vào vùng chọn (bấm lại lần nữa là bỏ mục đó ra). Chọn nhiều
+>   mục thì **kéo một mục là cả nhóm đi theo**, đổi **Màu** hoặc **Nét** áp cho cả nhóm, và **Delete**
+>   xoá cả nhóm bằng **một** bước hoàn tác. (Tay nắm đổi cỡ chỉ hiện khi chọn **một** mục — muốn đổi
+>   cỡ một mục trong nhóm thì bấm riêng nó trước.)
+> - **Ctrl+C** để sao chép, sang trang khác rồi **Ctrl+V** để dán — hoặc **bấm chuột phải** lên mục
+>   để có menu **Sao chép / Dán vào trang này / Xoá mục**. Dán sang trang khác thì mục nằm **đúng vị
+>   trí cũ** (tiện để lặp lại một khoanh mây hay một hộp chữ ở cùng chỗ trên nhiều trang); dán lại
+>   trên **cùng** trang thì mỗi bản lệch xuống một chút cho khỏi đè nhau. Dán vào trang **nhỏ hơn**
+>   thì cả nhóm tự lùi vào trong trang, **không** bị rời ra.
+> - **Clipboard không mất khi bấm "Áp dụng"**: sao chép → Áp dụng → vẫn dán được. Lưu ý ngược lại:
+>   sau khi Áp dụng thì **khoanh mây, khoanh vùng, vẽ tay, ✓/✗ đã dán chết** thành hình trên trang nên
+>   **không chọn lại được để copy** — hãy **copy trước khi Áp dụng**. Hộp văn bản, ghi chú, mũi tên và
+>   ảnh thì vẫn là đối tượng sống nên copy được cả sau khi Lưu và mở lại.
+> - Nếu clipboard hệ điều hành đang có **ảnh** (copy từ app khác) thì Ctrl+V vẫn là **dán ảnh vào
+>   trang** như trước — hai đường không lẫn nhau.
 
 > **Ghi chú dạng chuỗi (thêm bình luận vào ghi chú):** bấm đúp một ghi chú 💬 để mở bảng — phần trên là
 > nội dung gốc + các bình luận đã có (chỉ đọc), ô dưới để **Thêm bình luận** (không xoá nội dung cũ). Nút

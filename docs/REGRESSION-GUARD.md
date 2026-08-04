@@ -16,7 +16,8 @@ tài liệu này chỉ có giá trị nếu được cập nhật.
 | `desktop/renderer/editor.js` | ~3180 | Overlay annotation, bake, form. Diff lớn nhất mỗi lần release. |
 | `desktop/renderer/annot-text.js` | ~230 | Bố cục chữ (`layoutTextBox`). Rủi ro **thấp** nhờ lưới `npm run test:text`, nhưng sai ở đây **im lặng**: hộp trên màn hình và PNG đem bake lệch nhau → chữ tràn/xuống dòng khác trong file đã lưu → xem BI-40. |
 | `desktop/renderer/managed-codec.js` | ~275 | Lớp object PDF riêng của chú thích sửa-lại-được. **Hậu quả cao nhất trong repo**: sai là **mất ảnh của người dùng** hoặc phình file âm thầm. Có lưới `npm run test:managed` → xem BI-37, BI-38, BI-14. |
-| `desktop/renderer/annot-geom.js` | ~300 | Đường mây revision + nhãn mũi tên + `resizeRect` + (v0.2.50) `strokeExtend` (luật Shift của vẽ tay) + `symbolStrokes` (hình ✓/✗). Rủi ro **thấp** nhờ `npm run test:cloud` + `test:geom`; sai ở đây làm mây/dấu lệch chỗ **trong PDF đã lưu** (trên màn hình vẫn đúng) → xem BI-40, BI-42. |
+| `desktop/renderer/annot-geom.js` | ~420 | Đường mây revision + nhãn mũi tên + `resizeRect` + (v0.2.50) `strokeExtend` (luật Shift của vẽ tay) + `symbolStrokes` (hình ✓/✗) + (v0.2.52) `snapLineEnd` (kéo một đầu mũi tên) và `annotBounds`/`translateAnnot`/`unionBounds`/`fitShift` (số học của copy–paste vật thể). Rủi ro **thấp** nhờ `npm run test:cloud` + `test:geom`; sai ở đây làm mây/dấu lệch chỗ **trong PDF đã lưu** (trên màn hình vẫn đúng), hoặc dán một mục ra **ngoài mép giấy** nơi không tay nắm nào tóm lại được → xem BI-40, BI-42, BI-46. |
+| `desktop/renderer/editor.js` — khối bake (`drawOneAnnot`) | ~200 dòng | Bù xoay trang. Rủi ro **cao và im lặng**: overlay trên màn hình luôn đúng, chỉ **file đã lưu** sai, và **chỉ trên trang có `/Rotate`** — tức đúng loại tài liệu (scan nằm ngang) mà người viết code không mở hằng ngày. Nay có lưới `npm run test:rotate` đi qua **mọi** kind → xem BI-45. |
 | `desktop/src/main.js` + `src/tabs.js` | — | Tầng cửa sổ/tab — **hệ con mới nhất, ít va đập thực tế nhất** (ra mắt v0.2.41). Có lưới tự động `npm run test:tabs` cho phần logic thuần. |
 | `desktop/renderer/page-range.js` | ~170 | Số học khoảng trang. Rủi ro **thấp** vì có lưới `npm run test:pages`, nhưng hậu quả sai là **mất trang tài liệu** → xem BI-27. |
 | `desktop/renderer/pan.js` | ~380 | Bàn tay/pan. Rủi ro **trung bình**: nó giành sự kiện chuột **trên cùng phần tử** với `editor.js`/`capture.js`. Nửa logic có lưới `npm run test:pan`; nửa DOM thì không → xem BI-30/31. |
@@ -464,6 +465,26 @@ Mỗi mục: **bất biến → ở đâu → vì sao → dấu hiệu vỡ.**
   bằng `e.clientY` so với **đường giữa dọc** của thumbnail. Xếp thành lưới thì
   “trên/dưới” thành câu hỏi sai ⇒ chèn nhầm vị trí trang, im lặng.
 - Muốn làm lưới thật thì phải sửa **cả** gợi ý chèn sang trục ngang **trước**.
+- **v0.2.52 — cùng số học đó nay lo CẢ hai loại kéo, và số hiệu “khe” là hợp đồng:**
+  `thumbGapAt` trả về **khe** (`gap`), nghĩa là “giữa trang `gap-1` và trang `gap`”, nên
+  0 là trên trang đầu và `numPages` là dưới trang cuối. Đó **đúng** là con số
+  `insertBuffersAt` đã nhận từ trước ⇒ kéo–thả file dùng thẳng. Nhưng `reorderPage`
+  **cắt trang ra trước rồi mới chèn lại**, nên chỉ số đo trên danh sách **gốc** bị lệch
+  1 khi trang đang di chuyển nằm **trước** khe đó — đó là `gapToReorderIndex`, và sai nó
+  là trang **rơi cách chỗ đã hứa một ô**, im lặng.
+- Gợi ý phải nằm ở **hai** thumbnail cùng lúc (`insert-after` trên trang trên +
+  `insert-before` trên trang dưới): tô một mép của một trang mới chỉ trả lời “tôi đang ở
+  trên trang nào”, chứ không trả lời “nó sẽ nằm đâu” — mà trang đang trỏ có **một khe ở
+  mỗi bên**. Đó là lý do `showThumbGapCue` xoá cue **toàn dải** rồi vẽ lại: `dragover`
+  của thumbnail vừa vào và `dragleave` của thumbnail vừa rời **không** có thứ tự bảo
+  đảm với nhau.
+- Hai khe hai bên trang đang kéo là **no-op** (`gapIsNoOp`) và bị **từ chối**
+  (không `preventDefault` ⇒ con trỏ hiện “không cho phép”): một cú thả đứng yên vẫn tốn
+  một lần ghi lại cả tài liệu + một bước undo.
+- **Vỡ khi:** kéo trang 1 xuống giữa trang 3–4 mà nó rơi vào giữa 2–3 · thả đúng chỗ cũ
+  mà tài liệu vẫn “bẩn” (có dấu ●) · kéo ra ngoài dải rồi quay lại thì cue vẫn còn dính.
+- Lưới: `npm run test:geom` (`gapToReorderIndex`/`gapIsNoOp`, **cắt thẳng từ `app.js`**,
+  đối chiếu với một phép splice thật chứ không với một công thức viết lại).
 
 ### BI-34 · Trần bề rộng sidebar bị quy định bởi **raster thumbnail**, không phải thẩm mỹ
 - `app.js` `SIDEBAR_W_MAX` + `renderThumbCanvas` (`150 / base.width`).
@@ -768,6 +789,76 @@ chỉ tên hàm.
 - **Vỡ khi:** mở hộp thoại In lần thứ hai thì tự nhiên chỉ in vài trang · gõ rác mà vẫn
   bấm In được · đổi VI↔EN thì dòng gợi ý nhảy về text tĩnh.
 
+### BI-45 · Bù xoay trang là chuyện của **primitive**, không phải của “ảnh”
+- `editor.js` `drawOneAnnot` + `drawWatermark` (khối chú thích ở đầu `drawAnnots`);
+  lưới `npm run test:rotate`.
+- `map` = `vp1.convertToPdfPoint`, và viewport scale-1 của pdf.js **đã mang sẵn** góc
+  xoay. Nên chia làm hai loại, và ranh giới **không** phải “ảnh / không phải ảnh”:
+  1. **Hình học dựng từ các điểm ĐÃ MAP RIÊNG LẺ thì đúng miễn phí** — `drawLine` từng
+     đoạn (vẽ tay · thân + đầu mũi tên · thân + gạch đầu dim · nét ✓/✗),
+     `drawRectangle` lấy min/max của hai góc đã map (box · tô sáng), `drawEllipse` lấy
+     tâm + bán trục từ khoảng đã map (hai bán trục **tự đổi chỗ** theo trang — đúng).
+  2. **Thứ nào đưa cho pdf-lib một HỆ TOẠ ĐỘ CỤC BỘ rồi để pdf-lib đặt hệ đó** thì
+     **bắt buộc** `rotate: pageRotate(page)`, vì trục cục bộ đang ở không gian **màn
+     hình** mà pdf-lib đọc như không gian user. Hôm nay gồm `drawImage` (chữ · ảnh ·
+     watermark · PNG nhãn mũi tên/dim) **và `drawSvgPath` (mây · mây tự do)**.
+- **Lỗi thật, do người dùng báo 2026-08-04:** v0.2.11 vá đúng ba chỗ `drawImage` và kết
+  luận “hình axis-aligned không bị ảnh hưởng” — **đúng lúc đó**. Khoanh mây ra đời
+  **sau**, đi qua `drawSvgPath`, và `drawSvgPath` có **option `rotate` riêng** mà không
+  ai truyền ⇒ mây bake bị xoay 90/180/270° trên mọi trang có `/Rotate` (tức mọi trang
+  “landscape” do xoay), suốt từ khi có mây tới v0.2.52.
+- **Đã đo, không suy luận** (pdf.js 3.11.174 + pdf-lib 1.17.1 đang ship): `drawSvgPath`
+  áp `translate(x,y)·R(rotate)·scale(1,-1)`, và `R(gócTrang)·scale(1,-1)` **chính là**
+  phép biến đổi màn-hình→user mà `convertToPdfPoint` hàm ý, ở **cả bốn** góc. Ở 0° nó là
+  ma trận đơn vị ⇒ tài liệu không xoay **không đổi một byte**.
+- **Luật:** thêm một primitive vẽ mới vào `drawOneAnnot` thì phải trả lời nó thuộc loại
+  1 hay loại 2, **và** thêm kind đó vào `KINDS` của `test/annot-rotate.test.js`. Lớp lỗi
+  ở đây là “primitive mới âm thầm không tham gia bù xoay”, nên phòng tuyến duy nhất là
+  một lưới đi qua **mọi** kind.
+- **Vỡ khi:** khoanh mây / đóng dấu / khoanh vùng trên trang scan nằm ngang → Áp dụng
+  xong hình nhảy sang chỗ khác hoặc quay 90°. Trên màn hình **vẫn đúng** (overlay vẽ ở
+  không gian màn hình) — chỉ file đã lưu sai, đúng khuôn im lặng của BI-40.
+- Lưới: `npm run test:rotate` (96 ca — mỗi kind × 4 góc, so **điểm mực trong content
+  stream** quy về không gian màn hình; có **ca canh gác** dựng lại đúng lỗi cũ bằng một
+  `drawSvgPath` thiếu `rotate` và đòi nó **phải khác** 0°, nên một lưới xanh mới có
+  nghĩa là bù xoay đang thật sự hoạt động).
+
+### BI-46 · Clipboard vật thể sống **ngoài** `ed` — đó chính là tính năng
+- `editor.js` `let clip` + `copySelected` / `pasteClip`; lưới `npm run test:cloud`
+  (mục `annotBounds` / `translateAnnot` / `unionBounds` / `fitShift` + ca chốt vị trí
+  khai báo).
+- `reset()` **và** `bakePending()` đều xoá `ed.annots`. Nhét clipboard vào `ed` là
+  **bấm “Áp dụng” sẽ xoá clipboard** — đúng cái mà yêu cầu “copy … paste ở trang khác,
+  **ngay cả khi đã áp dụng xong**” đòi phải sống sót. Vì thế nó là binding cấp module.
+  Không lưu ra đĩa, **không** chia sẻ giữa các tab (mỗi tab một renderer — §2).
+- **Giới hạn phải nói ra, đừng đi tìm bug:** chỉ `MANAGED_KINDS` (chữ · ghi chú · mũi
+  tên · ảnh) quay lại thành đối tượng sống sau khi Lưu. Mây, box, elip, vẽ tay, ✓/✗
+  **flatten thành pixel** (BI-42) ⇒ đã áp dụng rồi thì **không còn đối tượng để chọn**.
+  Cách dùng đúng: copy **trước** khi Áp dụng — clip sống qua bake, đó là điều làm cho
+  trình tự đó chạy được. Cho các kind kia round-trip là **tính năng khác** (giá: BI-37/38).
+- **Nhóm bị kẹp theo HỘP HỢP (`unionBounds`), không kẹp từng mục**: kẹp riêng lẻ sẽ
+  **xé nhóm** — mục sát mép trượt còn mục bên cạnh đứng yên ⇒ dán một bản vẽ sang trang
+  nhỏ hơn là nó rời ra. Một `fitShift` cho cả nhóm, cùng một delta cho mọi thành viên.
+- Chọn nhiều là **trong MỘT trang** (`toggleSelect`). Không phải hạn chế tạm: chính nó
+  giữ cho một cú kéo nhóm chỉ cần **một** `renderLayer` mỗi mousemove, và cho
+  copy/delete được phép giả định một trang.
+- `ed.selMore` là **tập phụ**, `ed.sel` vẫn là “mục chính” với nghĩa cũ — có ~30 chỗ đọc
+  `ed.sel` và tất cả đều muốn **đúng một** đối tượng. Tay nắm đổi cỡ (`gripsFor`) chỉ vẽ
+  khi chọn **một** mục: `resizeRect`/`snapLineEnd` mỗi hàm chỉ biết một annot.
+- Ctrl+C đi bằng **sự kiện DOM `copy`** + đường dự phòng `keydown`, Ctrl+V **chỉ** bằng
+  sự kiện DOM `paste`: menu Edit của `main.js` dùng `role: "copy"`/`role: "paste"` (và
+  **không** đặt `registerAccelerator: false` như các mục lân cận), nên phím tắt do menu
+  chiếm và cái nó gây ra là `webContents.copy()/paste()` → sinh **sự kiện DOM**. Đó cũng
+  là đường `capture.js` đã dùng để dán ảnh từ clipboard hệ điều hành nhiều bản nay.
+  **Paste không có đường dự phòng keydown** — bắn hai lần là dán ra hai vật thể.
+- **Bàn giao gesture:** clipboard hệ điều hành **có ảnh** thì Ctrl+V vẫn thuộc
+  `capture.js` (handler của editor rút lui, không `preventDefault`). Bấm phải mà **không
+  chọn gì và clipboard vật thể rỗng** thì cũng rút lui ⇒ menu ảnh cũ hiện y như trước.
+  Hai tính năng không che nhau, ở cả hai thứ tự.
+- **Vỡ khi:** copy xong bấm Áp dụng rồi Ctrl+V không ra gì · dán nhóm sang trang khác
+  thì các mục rời rạc ra · Ctrl+V dán ảnh hệ điều hành không còn chạy · chọn 3 mục rồi
+  đổi màu chỉ 1 mục đổi · Esc giữa lúc kéo nhóm chỉ 1 mục về chỗ cũ.
+
 ## 4. Hàm nút thắt (đổi chữ ký = ảnh hưởng diện rộng)
 
 | Hàm | Định nghĩa | Ai gọi |
@@ -820,6 +911,10 @@ chỉ tên hàm.
 | `wire.js` (`pdfJsonBody` / `binArrayJsonBody` / `pushB64Chunks` / `b64ToU8` / `B64_CHUNK`) hay bất kỳ chỗ gọi sidecar nào có PDF | `cd desktop ; npm run test:wire` (51 ca) · mở file **lớn** (≥100MB) rồi: Sửa nội dung · Nén · So sánh 2 file · Tách — không tab nào chết vì hết bộ nhớ · **Ảnh → PDF với ~50 ảnh máy ảnh**: tạo được file, PDF mở lại đúng số trang và đúng thứ tự (BI-24) |
 | Thứ tự `<script>` trong `index.html` | `wire.js` **trước** `app.js`/`text-edit.js`/`compare.js`/`editor.js`/`sign.js`; `annot-text.js` + `annot-geom.js` + `managed-codec.js` **trước** `editor.js` (và `managed-codec.js` sau `vendor/pdf-lib.min.js` + `wire.js` + `annot-text.js`); `pan.js` sau `app.js` và trước `editor.js`/`capture.js`. Mở app → console **không** có `ReferenceError` · thử một lệnh gọi sidecar bất kỳ (Nén) (§2, BI-14, BI-40) |
 | `annot-text.js` / `annot-geom.js` | `npm run test:text` + `test:cloud` + `test:geom` · rồi **test tay**: gõ chữ Việt vào hộp → Xong → mở lại file, chữ **không** tràn khung · khoanh mây (hộp + freehand) → Lưu → mây đúng chỗ · mũi tên có nhãn ở cả hai đầu (BI-40) |
+| Bất kỳ lệnh vẽ nào trong `drawOneAnnot` / `drawWatermark` (thêm kind, đổi anchor, đổi primitive) | `cd desktop ; npm run test:rotate` **và thêm kind mới vào `KINDS` của lưới đó** · rồi test tay trên **trang đã xoay**: mở PDF scan nằm ngang (hoặc Xoay phải 90° một trang bất kỳ) → khoanh mây · khoanh vùng · mũi tên · dấu ✓ · hộp chữ → **Áp dụng** → mở lại file: mọi thứ **đúng chỗ, đúng chiều** như lúc vẽ · lặp lại trên trang **không** xoay để chắc không có gì dịch đi (BI-45, BI-40) |
+| Sắp xếp trang bằng kéo–thả trong cột trang (`thumbGapAt`, `showThumbGapCue`, `gapToReorderIndex`, `gapIsNoOp`, `.thumb.insert-*`) | `npm run test:geom` · kéo trang 1 xuống **giữa trang 3 và 4** → thấy **hai vạch** ở đúng khe đó, thả ra thì trang nằm đúng giữa 3 và 4 · kéo rồi thả **đúng chỗ cũ** → con trỏ báo “không cho phép”, tài liệu **không** bẩn (không có ●) · kéo–thả **1 PDF từ ngoài** vào giữa dải → vẫn chèn đúng khe (BI-33) · Ctrl+Z sau khi sắp xếp · đang kéo thì cột **không** tự cuộn (BI-39) |
+| Chọn nhiều mục / clipboard vật thể (`ed.selMore`, `selIds`, `toggleSelect`, `gripsFor`, `clip`, `copySelected`, `pasteClip`, menu bấm phải trong Chú thích) | `npm run test:cloud` · **giữ Ctrl bấm 3 mục** → cả 3 có viền chọn, **không** hiện tay nắm · kéo một mục trong nhóm → **cả nhóm** đi cùng, Esc giữa lúc kéo → **cả nhóm** về chỗ cũ · đổi Màu / Nét → **cả nhóm** đổi · Delete → mất cả nhóm, **một** Ctrl+Z lấy lại hết · Ctrl+C rồi sang trang khác Ctrl+V → dán đúng vị trí cũ, còn nguyên khoảng cách giữa các mục · dán **lại** trên cùng trang → lệch dần chứ không đè lên nhau · dán vào trang **nhỏ hơn** → cả nhóm bị kéo vào trong trang mà **không rời ra** · **copy → Áp dụng → Ctrl+V** vẫn dán được (BI-46) · bấm phải lên một mục → menu Sao chép/Dán/Xoá · bấm phải lên **giấy trắng** khi chưa copy gì → vẫn ra menu **ảnh** cũ · copy một ảnh từ app khác rồi Ctrl+V → vẫn là đường dán ảnh của `capture.js` (BI-30) |
+| Sửa mũi tên (`drag.type === "point"`, `snapLineEnd`, `.handle.h-pt`, `reverseSelectedArrow`) | `npm run test:cloud` · chọn mũi tên → thấy **2 nút tròn** ở hai đầu · kéo một đầu → mũi tên xoay/dài ra, đầu kia **đứng yên** · giữ Shift → khoá góc 15°, **độ dài không đổi** · Esc giữa lúc kéo → về đúng cũ, không để lại bước undo rỗng · "Đảo chiều" → mũi nhọn **và nhãn** sang đầu kia · **Áp dụng → mở lại → Chỉnh sửa** → vẫn kéo/đảo/sửa nhãn được (arrow round-trip qua `/NabuData`) |
 | Vẽ tay + Shift (`strokeExtend`, nhánh `drag.type === "draw"`, `drag.lineFrom`) | `npm run test:cloud` · vẽ tay **không** giữ Shift → vẫn ngoằn ngoèo đủ điểm · giữ Shift giữa nét → ra đoạn **thẳng**, rê chuột thì đoạn đó **xoay theo** chứ không dài thêm điểm · **thả** Shift → vẽ tay tiếp từ đúng đầu mút đó · Esc giữa chừng → mất cả nét, không để lại bước undo rỗng · Xong → mở lại file, nét **đúng hình** (BI-42) |
 | Dấu ✓ / ✗ (`SYMBOL_KINDS`, `symbolStrokes`, `colorSlotFor`, `drag.type === "symbol"`) | `npm run test:cloud` · **bấm** một cái → ra dấu cỡ mặc định, **kéo** → ra đúng cỡ đã kéo · bấm sát mép phải-dưới trang → dấu vẫn **nằm trọn trong trang** · chọn rồi kéo 4 góc, giữ Shift giữ tỷ lệ · đổi "Nét" → dấu đậm/mảnh theo · đổi màu ✗ rồi chuyển sang bút Tô sáng → **màu tô sáng không bị đổi theo** · phím K/J đổi công cụ, nhưng đang gõ trong ô số thì **không** · Xong → mở lại file: dấu **đúng chỗ, đúng màu**, kể cả trên trang **đã xoay** (BI-42) |
 | Thêm nút vào `#ed-tools` hay control vào palette | BI-41: thu cửa sổ về 1366px rồi 1024px, lần lượt chọn **mọi** công cụ → nút "Xong"/"Hủy bỏ" luôn thấy được, thanh **không** phình cao che trang · và BI-9 + BI-10 |
@@ -861,7 +956,19 @@ chỉ tên hàm.
    (khoảng trang của hộp thoại In, **cắt thẳng từ `app.js`** + kiểm luôn 7 khoá i18n và
    `SKIP_IDS` — BI-43, BI-44. Nửa CSS "1 trang = 1 tờ" **không** nằm trong lưới này: phải
    probe `printToPDF` và **đếm tờ**).
+2j. `cd desktop ; npm run test:rotate` → phải `N pass, 0 fail`
+   (bù xoay trang cho **mọi** kind của `drawOneAnnot`, **cắt thẳng từ `editor.js`** và
+   chạy trên chính pdf.js + pdf-lib đang ship — BI-45. Có ca canh gác dựng lại đúng lỗi
+   mây bị xoay, nên lưới này **không thể** xanh một cách vô nghĩa).
 3. `node --check` mọi file JS đã sửa (renderer **không** có test tự động).
+3b. Nếu đụng `editor.js` / `app.js` / bất kỳ file nào được `<script>` nạp: **probe boot**
+   — chạy `index.html` thật bằng Electron của dự án (`BrowserWindow({show:false})`),
+   nghe `console-message`, và đòi **0** `ReferenceError` / `SyntaxError` /
+   `has already been declared`, **cộng với** một câu hỏi khẳng định (`typeof $`,
+   `!!window.Editor`, số key của `window.AnnotGeom`, các `id` nút mới có mặt). Chỉ
+   “không có lỗi” là chưa đủ — nó cũng đúng khi script **không hề chạy**. Đây là cửa duy
+   nhất bắt được BI-14: node cho mỗi module một scope riêng nên lưới vẫn xanh trong khi
+   app trắng. Probe là **file dùng một lần, không commit**.
 4. Nếu đụng `*.py` hoặc `sidecar.spec` → **rebuild sidecar**, nếu không OTA giao bản cũ.
 5. Chạy `npm start`, test tay các mục ở §5 tương ứng với thứ vừa sửa.
 6. Cập nhật `HANDOFF.md` + tài liệu này nếu phát sinh bất biến mới.

@@ -187,6 +187,60 @@ check("garbage delta is treated as no movement", wheelZoomFactor(undefined), 1);
 check("even clamped, one notch can't exceed the 40–300% span in a single step",
   Math.pow(1.1, 3) < 3 / 0.4, true);
 
+// ---- drop-gap arithmetic for reordering pages (v0.2.52) -------------------
+//
+// The page column drops into a GAP between two pages, not "onto" a page: gap g means
+// "between page g-1 and page g". `reorderPage` then splices the page OUT and back IN,
+// so an index measured on the ORIGINAL list is one too high once the moved page sat
+// before it — that off-by-one is `gapToReorderIndex`, and getting it wrong silently
+// files the page one slot away from where the cue promised. Which is why it is here and
+// not inline: this is page-order arithmetic, and BI-27's lesson is that page arithmetic
+// gets a grid because the failure mode is a document quietly in the wrong order.
+//
+// The cases below assert against a real splice rather than against a restated formula —
+// a formula compared to itself proves nothing.
+
+const gapToReorderIndex = extractConst("renderer/app.js", "gapToReorderIndex");
+const gapIsNoOp = extractConst("renderer/app.js", "gapIsNoOp");
+
+// What the document order becomes when page `from` is dropped into gap `gap`.
+const orderAfter = (n, from, gap) => {
+  const order = [...Array(n).keys()];
+  const [m] = order.splice(from, 1);
+  order.splice(gapToReorderIndex(gap, from), 0, m);
+  return order;
+};
+
+check("drop page 0 into the gap before the last page", orderAfter(4, 0, 3), [1, 2, 0, 3]);
+check("drop page 0 to the very bottom", orderAfter(4, 0, 4), [1, 2, 3, 0]);
+check("drop the last page to the very top", orderAfter(4, 3, 0), [3, 0, 1, 2]);
+check("drop the last page into the gap after the first", orderAfter(4, 3, 1), [0, 3, 1, 2]);
+check("drop a middle page upward", orderAfter(5, 3, 1), [0, 3, 1, 2, 4]);
+check("drop a middle page downward", orderAfter(5, 1, 4), [0, 2, 3, 1, 4]);
+check("a two-page swap is reachable from either side", orderAfter(2, 0, 2), [1, 0]);
+check("dropping into the gap just above yourself is identity", orderAfter(4, 2, 2), [0, 1, 2, 3]);
+check("dropping into the gap just below yourself is identity", orderAfter(4, 2, 3), [0, 1, 2, 3]);
+
+// Those last two are exactly the drops the dragover handler refuses, so the identity
+// above is a belt-and-braces property and `gapIsNoOp` is the thing users feel: it is
+// what stops a stationary drop from costing a full document rewrite + an undo step.
+check("the gap above a page is a no-op", gapIsNoOp(2, 2), true);
+check("the gap below a page is a no-op", gapIsNoOp(3, 2), true);
+check("the gap two above is a real move", gapIsNoOp(1, 2), false);
+check("the gap two below is a real move", gapIsNoOp(4, 2), false);
+check("first page: only gaps 0 and 1 are no-ops",
+  [0, 1, 2].map((g) => gapIsNoOp(g, 0)), [true, true, false]);
+check("last page of 4: only gaps 3 and 4 are no-ops",
+  [2, 3, 4].map((g) => gapIsNoOp(g, 3)), [false, true, true]);
+
+// Every gap on a 5-page document either moves the page or is refused — no gap may do
+// something in between (that would be a page landing where no cue was drawn).
+check("no gap on a 5-page doc both counts as a move and changes nothing",
+  [0, 1, 2, 3, 4, 5].filter((g) => {
+    const moved = JSON.stringify(orderAfter(5, 2, g)) !== JSON.stringify([0, 1, 2, 3, 4]);
+    return moved === gapIsNoOp(g, 2); // a real move that is flagged no-op, or vice versa
+  }), []);
+
 // ---- summary -------------------------------------------------------------
 
 console.log(`\n${pass} pass, ${fail} fail`);

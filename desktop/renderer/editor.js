@@ -106,7 +106,21 @@
     annots: {}, // pageIndex -> [annot]
     watermark: null, // { text, size, angle, opacity, color }
     seq: 1,
-    sel: null, // selected annot id (numbers are unique across pages)
+    sel: null, // PRIMARY selected annot id (numbers are unique across pages)
+    // Additional ids in a Ctrl+click multi-selection, NOT including `ed.sel`.
+    //
+    // Deliberately a side-set instead of turning `ed.sel` into a Set: `ed.sel` is read
+    // in ~30 places (style controls, the format panel, syncCtlVisibility, the fmt
+    // panel's arrange…) and every one of them wants exactly ONE object. Making it a
+    // collection would mean rewriting all of them in the file the guard doc calls the
+    // highest-diff in the repo. This way the primary keeps its old meaning and old
+    // behaviour, and only the operations that genuinely act on a group — select
+    // outline, move, copy, delete, colour, stroke width — consult selIds().
+    //
+    // A multi-selection is ALWAYS within one page (see toggleSelect). That is not a
+    // limitation to route around later: it is what keeps a group drag to a single
+    // renderLayer() per mousemove, and what lets copy/delete assume one page.
+    selMore: new Set(),
     pendingImage: null, // { dataUrl, mime } awaiting a placement click
     _poly: null, // freehand-cloud polygon in progress: { page, id, layer, cx, cy }
     _form: null,
@@ -207,6 +221,7 @@
     ed.annots = s.annots;
     ed.watermark = s.watermark;
     ed.sel = null;
+    ed.selMore.clear(); // ids from before the undo may not exist any more
     syncOverlays();
     syncUndoBtns();
   }
@@ -425,7 +440,7 @@
     el.className = "an an-" + a.kind;
     el.dataset.id = String(a.id);
     el.dataset.kind = a.kind;
-    if (ed.sel === a.id) el.classList.add("sel");
+    if (isSelected(a.id)) el.classList.add("sel");
 
     if (a.kind === "draw") {
       // SVG sized to the path's bounding box; coords relative to that box.
@@ -514,6 +529,26 @@
         svg.appendChild(t);
       }
       el.appendChild(svg);
+      // Two end grips on a selected arrow: drag either one to re-aim or re-length it
+      // (Shift snaps the angle — see snapLineEnd). An arrow is the one kind whose
+      // shape is two POINTS rather than a box, so `RESIZABLE_KINDS`' four corner
+      // grips would be meaningless for it — dragging a corner of its bounding box
+      // says nothing about which end should move. That is why arrows had no grips at
+      // all until v0.2.52 and could only be moved wholesale; `data-pt` is read back
+      // by onDown exactly as `data-dir` is for boxes.
+      if (gripsFor(a.id)) {
+        for (const [pt, gx, gy] of [["1", sx, sy], ["2", ex, ey]]) {
+          const g = document.createElement("div");
+          g.className = "handle h-pt";
+          g.dataset.pt = pt;
+          // Positioned in the padded box's own coordinates, like the cloud's grip:
+          // the svg viewBox is 1 unit per PDF point, so multiplying by `s` lands the
+          // grip on the endpoint at any zoom.
+          g.style.cssText = `left:${gx * s}px; top:${gy * s}px; right:auto; bottom:auto;`;
+          g.title = pt === "1" ? "Kéo để xoay / đổi độ dài (gốc)" : "Kéo để xoay / đổi độ dài (mũi nhọn)";
+          el.appendChild(g);
+        }
+      }
       return el;
     }
 
@@ -595,7 +630,7 @@
       path.setAttribute("stroke-linejoin", "round");
       svg.appendChild(path);
       el.appendChild(svg);
-      if (ed.sel === a.id) {
+      if (gripsFor(a.id)) {
         const hnd = document.createElement("div");
         hnd.className = "handle";
         // Pin the resize grip to the true box corner, not the padded corner.
@@ -737,7 +772,7 @@
     }
     // redact needs no extra content (solid black via CSS)
 
-    if (ed.sel === a.id && RESIZABLE_KINDS.has(a.kind)) {
+    if (gripsFor(a.id) && RESIZABLE_KINDS.has(a.kind)) {
       for (const dir of HANDLE_DIRS) {
         const h = document.createElement("div");
         h.className = "handle h-" + dir;
@@ -762,26 +797,99 @@
 
   // ---- selection -----------------------------------------------------------
 
+  // Every selected id, primary first. `[]` when nothing is selected.
+  function selIds() {
+    if (ed.sel == null) return [];
+    return [ed.sel, ...ed.selMore];
+  }
+  const isSelected = (id) => id === ed.sel || ed.selMore.has(id);
+  // Reshape grips (corner, cloud, arrow-end) are drawn only on a LONE selection.
+  // `resizeRect` and `snapLineEnd` each reshape exactly one annot, so grips over a
+  // group would be lying about what they do — and eight of them on screen at once
+  // gives no clue which object they belong to. A multi-selection can still be dragged
+  // and recoloured; to resize one member, click it on its own first. Same call as the
+  // `.sel` outline so the two can't disagree about what "selected" means.
+  const gripsFor = (id) => id === ed.sel && ed.selMore.size === 0;
+  // The live annots behind the current selection, in the order they sit on the page
+  // (NOT selection order) — so a copied group pastes back in the same z-order it had.
+  function selAnnots() {
+    const ids = new Set(selIds());
+    if (!ids.size) return [];
+    const hit = findAnnot(ed.sel);
+    if (!hit) return [];
+    return annotsFor(hit.page).filter((a) => ids.has(a.id));
+  }
+
+  // Ctrl/Cmd+click: add to (or remove from) the selection, the convention everywhere
+  // from Explorer to Illustrator. Clicking an object on ANOTHER page starts a fresh
+  // selection rather than extending across pages — a cross-page group would have to
+  // repaint two layers on every mousemove of a drag, and "copy these, paste on page 7"
+  // is the workflow, not "select things on pages 3 and 7 at once".
+  function toggleSelect(id) {
+    const hit = findAnnot(id);
+    if (!hit) return;
+    const cur = ed.sel != null ? findAnnot(ed.sel) : null;
+    if (!cur || cur.page !== hit.page) {
+      select(id);
+      return;
+    }
+    if (id === ed.sel) {
+      // Deselecting the primary promotes one of the others, so the palette always has
+      // a subject; the last one out clears the selection entirely.
+      const next = ed.selMore.values().next();
+      if (next.done) {
+        deselect();
+        return;
+      }
+      ed.selMore.delete(next.value);
+      ed.sel = next.value;
+    } else if (ed.selMore.has(id)) {
+      ed.selMore.delete(id);
+    } else {
+      ed.selMore.add(id);
+    }
+    syncOverlays();
+    afterSelectionChange();
+  }
+
   function select(id) {
     ed.sel = id;
+    ed.selMore.clear(); // a plain click is always a fresh single selection
     syncOverlays();
+    afterSelectionChange();
+  }
+  // Everything the UI has to re-read once the selection changes, in one place so
+  // `select` and `toggleSelect` cannot fall out of step (they did, on the hint: the
+  // group message was unreachable from `select`, which clears the group one line
+  // earlier, and `toggleSelect` reset the hint to the generic one).
+  function afterSelectionChange() {
     syncControls();
     if (ed.tool === "select") syncCtlVisibility("select");
     updateFmtPanel(); // reflect a newly-selected text box (or hide otherwise)
-    // Discoverability: the editable kinds reopen their editor on double-click.
-    const hit = findAnnot(id);
+    if (ed.selMore.size) {
+      setSelHint(`Đang chọn ${ed.selMore.size + 1} mục — kéo để di chuyển cả nhóm; Ctrl+C để sao chép; Delete để xoá cả nhóm.`);
+      return;
+    }
+    // Discoverability: the editable kinds reopen their editor on double-click, and an
+    // arrow additionally has grips + Đảo chiều that nothing else on the bar hints at.
+    const hit = ed.sel != null ? findAnnot(ed.sel) : null;
     const k = hit && hit.a.kind;
-    setSelHint(k === "text" || k === "note" || k === "arrow" ? "Bấm đúp để sửa nội dung." : null);
+    setSelHint(k === "arrow" ? ARROW_HINT : k === "text" || k === "note" ? "Bấm đúp để sửa nội dung." : null);
   }
   function deselect() {
     if (ed.sel == null) return;
     ed.sel = null;
+    ed.selMore.clear();
     syncOverlays();
     setSelHint(null);
     if (ed.tool === "select") syncCtlVisibility("select");
     updateFmtPanel();
   }
-  const SELECT_HINT = "Kéo để di chuyển; 4 góc để đổi cỡ (giữ Shift = giữ đúng tỷ lệ); Delete để xoá.";
+  const SELECT_HINT = "Kéo để di chuyển; 4 góc để đổi cỡ (giữ Shift = giữ đúng tỷ lệ); giữ Ctrl bấm để chọn nhiều mục; Ctrl+C / Ctrl+V (hoặc bấm phải) để sao chép sang trang khác; Delete để xoá.";
+  // Arrows get their own line: their gesture set is genuinely different (two end grips
+  // instead of four corner grips, plus Đảo chiều), and the generic hint would send the
+  // user hunting for corners an arrow does not have.
+  const ARROW_HINT = "Kéo thân để di chuyển; kéo 2 đầu tròn để xoay / đổi độ dài (giữ Shift = khoá góc 15°); \"Đảo chiều\" để lật mũi nhọn; bấm đúp để sửa nhãn.";
   // Update the edit-bar readout for the select tool. `null` restores the generic
   // select hint; the per-tool hints in setTool own the same slot when other tools
   // are active, so this only writes while the select tool is current.
@@ -793,13 +901,169 @@
     if (ed.sel == null) return;
     const hit = findAnnot(ed.sel);
     if (!hit) return;
+    const ids = new Set(selIds());
+    const hadNote = selAnnots().some((a) => a.kind === "note");
     pushEdUndo();
-    ed.annots[hit.page] = ed.annots[hit.page].filter((x) => x.id !== ed.sel);
+    // One undo step for the whole group: the user made one gesture, so Ctrl+Z should
+    // undo one thing. Deleting per-id with a push each would need N presses to reverse.
+    ed.annots[hit.page] = ed.annots[hit.page].filter((x) => !ids.has(x.id));
     ed.sel = null;
+    ed.selMore.clear();
     syncOverlays();
     setSelHint(null);
     if (ed.tool === "select") syncCtlVisibility("select");
-    if (hit.a.kind === "note" && window.updateComments) window.updateComments();
+    if (hadNote && window.updateComments) window.updateComments();
+  }
+
+  // True when `el` is somewhere the user is entering text, so a clipboard gesture
+  // aimed at it means characters, not objects. Target-based on purpose: the `copy` /
+  // `paste` events carry the element the gesture landed on, which is more precise than
+  // app.js's activeElement-based `isTyping()` — an inline annotation editor can be open
+  // while the click that produced the event was somewhere else entirely.
+  function isTypingTarget(el) {
+    if (!el || !el.closest) return false;
+    if (el.closest(".annot-text-edit, .annot-note-panel, .span-input")) return true;
+    return /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName) || !!el.isContentEditable;
+  }
+
+  // ---- clipboard (copy an object, paste it on another page) ----------------
+  //
+  // THE CLIPBOARD DELIBERATELY LIVES OUTSIDE `ed`, and that is the whole feature.
+  // `reset()` and `bakePending()` both clear `ed.annots` — so a clip stored in `ed`
+  // would be wiped by the very act of pressing "Áp dụng", which is exactly the
+  // workflow asked for ("copy … và paste ở 1 trang khác, ngay cả khi đã áp dụng
+  // xong"). Kept as its own module-level binding, it survives a bake, a discard, and
+  // leaving/re-entering Chỉnh sửa, for as long as the renderer lives. It is NOT
+  // persisted to disk and NOT shared between tabs — each tab is its own renderer
+  // process (§2), so every tab has its own clipboard. That is a limitation, not an
+  // oversight: sharing it would mean putting annotation payloads through IPC.
+  //
+  // WHAT IT CANNOT DO, so nobody goes looking for the bug: only kinds that round-trip
+  // (text / note / arrow / image — MANAGED_KINDS) come back as live objects after a
+  // save. Clouds, boxes, ellipses, freehand and ✓/✗ are FLATTENED TO PIXELS when baked
+  // (BI-42), so once applied there is no object left to select and copy. Copy them
+  // BEFORE applying — the clip outlives the bake, which is what makes that sequence
+  // work. Making those kinds re-selectable after a save is a different feature with a
+  // known price (BI-37/38).
+  let clip = null; // { items: [<annot minus id>], page: <source page>, dropped: {page: n} }
+  const PASTE_STEP = 12; // pt of cascade per repeat paste, so copies don't hide
+
+  // Deep copy via JSON, which is sound here BECAUSE every field an annotation holds is
+  // a JSON primitive: numbers, strings (including an image's `dataUrl`), booleans, and
+  // arrays of {x,y} points or {text,ts} replies. No Date, no Map, no undefined-valued
+  // key that matters. structuredClone would also work; JSON additionally drops the
+  // `undefined` fields the editor uses to mean "absent" (e.g. a cleared arrow label),
+  // which is the behaviour we want anyway.
+  const cloneAnnot = (a) => JSON.parse(JSON.stringify(a));
+
+  // Put the whole selection on the clipboard — one object or a Ctrl+click group.
+  // Idempotent: copying twice is the same as copying once, which is what lets the
+  // button, the context menu, the `copy` DOM event and the Ctrl+C fallback all call it
+  // without having to coordinate (see the listeners at the bottom of this file).
+  function copySelected() {
+    const picked = selAnnots();
+    if (!picked.length) return false;
+    const items = picked.map((src) => {
+      const a = cloneAnnot(src);
+      delete a.id; // the paste mints a fresh one from ed.seq
+      delete a._managed; // "came back from /NabuData" is about the ORIGINAL, not the copy
+      return a;
+    });
+    clip = { items, page: findAnnot(ed.sel).page, dropped: {} };
+    toast(
+      items.length > 1
+        ? `Đã sao chép ${items.length} mục. Sang trang khác rồi Ctrl+V để dán.`
+        : `Đã sao chép 1 mục (${items[0].kind}). Sang trang khác rồi Ctrl+V để dán.`,
+      ""
+    );
+    syncCtlVisibility(ed.tool); // lights up "Dán"
+    return true;
+  }
+
+  // Drop the clipboard onto `pageIndex` (default: the page being read). Returns true if
+  // something was pasted.
+  function pasteClip(pageIndex) {
+    if (!clip || !clip.items.length) return false;
+    if (!ed.active || !state.numPages) return false;
+    let i = pageIndex;
+    if (i == null) i = typeof currentPageIndex === "function" ? currentPageIndex() : clip.page;
+    if (!(i >= 0 && i < state.numPages)) i = 0;
+
+    const fresh = clip.items.map((src) => {
+      const a = cloneAnnot(src);
+      a.id = ed.seq++;
+      return a;
+    });
+
+    // Cascade repeats so a second paste is visible instead of sitting exactly on the
+    // first. Landing on a DIFFERENT page starts at the original coordinates — that is
+    // the point of pasting across pages (same stamp, same spot, like "Áp nhiều
+    // trang"); landing back on the SOURCE page starts one step off, or the copy would
+    // be perfectly hidden under its original.
+    clip.dropped[i] = (clip.dropped[i] || 0) + 1;
+    const k = clip.dropped[i] - (i === clip.page ? 0 : 1);
+    // Both shifts below are applied to EVERY member with the SAME delta, and the clamp
+    // is computed from the group's union box — clamping members individually would
+    // shear the group apart on a smaller page (see unionBounds).
+    const layer = document.querySelector(`#viewer .page-wrap[data-index="${i}"] .annot-layer`);
+    const pw = layer ? +layer.dataset.w : 0;
+    const ph = layer ? +layer.dataset.h : 0;
+    if (k > 0) for (const a of fresh) translateAnnot(a, PASTE_STEP * k, PASTE_STEP * k);
+    const s = fitShift(unionBounds(fresh), pw, ph);
+    if (s.dx || s.dy) for (const a of fresh) translateAnnot(a, s.dx, s.dy);
+
+    pushEdUndo(); // one step for the whole paste, however many objects it was
+    for (const a of fresh) {
+      annotsFor(i).push(a);
+      // A pasted text/note/arrow/image is a managed annot on a page that may never have
+      // held one, so that page has to repaint on the next bake — same bookkeeping the
+      // create paths do (see openTextEditor / placeImage).
+      if (isManagedKind(a.kind)) ed._managedPages.add(i);
+    }
+    if (typeof scrollToPage === "function" && i !== currentPageIndex()) scrollToPage(i);
+    syncOverlays();
+    // Leave the paste selected so it can be dragged into place immediately — and if it
+    // was a group, selected AS a group, so one drag moves all of it.
+    select(fresh[0].id);
+    if (fresh.length > 1) {
+      for (const a of fresh.slice(1)) ed.selMore.add(a.id);
+      // select() already ran afterSelectionChange() while selMore was still empty, so
+      // run it again now the group is complete — otherwise the outline, the palette and
+      // the hint would all describe a single object.
+      syncOverlays();
+      afterSelectionChange();
+    }
+    if (fresh.some((a) => a.kind === "note") && window.updateComments) window.updateComments();
+    toast(
+      fresh.length > 1 ? `Đã dán ${fresh.length} mục vào trang ${i + 1}.` : `Đã dán vào trang ${i + 1}.`,
+      "good"
+    );
+    return true;
+  }
+
+  // Flip the selected arrow end for end. Swapping the two points is the WHOLE job:
+  // the head is drawn at (x2,y2) and arrowLabelPos reads `labelEnd` against the same
+  // pair, so the arrowhead AND its label move to the other end together — which is
+  // what "đảo chiều" means on a drawing (the label annotates whatever the arrow is
+  // pointing at, so it has to travel with the point).
+  //
+  // Works on an arrow that was already applied because arrows round-trip: they are in
+  // MANAGED_KINDS, so re-entering Chỉnh sửa re-imports them from /NabuData as live
+  // objects. Nothing here is bake-aware, and that is deliberately not a coincidence —
+  // it is why this feature was possible for arrows but not for clouds/boxes, which
+  // flatten to pixels (BI-42).
+  function reverseSelectedArrow() {
+    if (ed.sel == null) return;
+    const hit = findAnnot(ed.sel);
+    if (!hit || hit.a.kind !== "arrow") return;
+    const a = hit.a;
+    pushEdUndo();
+    const { x1, y1 } = a;
+    a.x1 = a.x2;
+    a.y1 = a.y2;
+    a.x2 = x1;
+    a.y2 = y1;
+    syncOverlays();
   }
 
   // Reflect the selected annotation's style in the palette controls.
@@ -850,6 +1114,29 @@
 
   let drag = null; // { type, page, id, layer, sx, sy, orig }
 
+  // Pre-drag snapshot of whichever coordinate fields a kind moves by. Named because a
+  // group drag needs one of these per member and cancelDrag needs to put them all back
+  // — three copies of this ternary is how the three would drift apart.
+  function moveOrigOf(a) {
+    if (a.kind === "draw" || a.kind === "cloudpen") return { pts: a.pts.map((q) => ({ ...q })) };
+    if (a.kind === "arrow" || a.kind === "dim") return { x1: a.x1, y1: a.y1, x2: a.x2, y2: a.y2 };
+    return { x: a.x, y: a.y };
+  }
+  // Put one annot back where `orig` says it was. The inverse of a move, used by
+  // cancelDrag (Esc mid-drag) for every member of the group.
+  function restoreMoveOrig(a, orig) {
+    if (a.kind === "draw" || a.kind === "cloudpen") a.pts = orig.pts;
+    else if (a.kind === "arrow" || a.kind === "dim") {
+      a.x1 = orig.x1;
+      a.y1 = orig.y1;
+      a.x2 = orig.x2;
+      a.y2 = orig.y2;
+    } else {
+      a.x = orig.x;
+      a.y = orig.y;
+    }
+  }
+
   function onDown(e) {
     if (!ed.active || e.button !== 0) return;
     // Clicks inside an open inline editor (textarea / note panel) belong to it:
@@ -864,6 +1151,25 @@
     if (!layer) return;
     const i = +layer.dataset.index;
     const p = layerPoint(layer, e);
+
+    // Arrow end grip — checked BEFORE the box-corner branch below, because both wear
+    // the `.handle` class but they carry different data and drive different maths:
+    // `data-pt` moves ONE POINT of a two-point annot, `data-dir` reshapes a BOX. An
+    // arrow has no x/y/w/h at all, so falling into the box branch would read four
+    // undefineds into `orig` and cancelDrag could never put it back.
+    if (e.target.classList.contains("handle") && e.target.dataset.pt) {
+      const id = +e.target.closest(".an").dataset.id;
+      const a = findAnnot(id).a;
+      drag = {
+        type: "point", page: i, id, layer,
+        pt: e.target.dataset.pt === "1" ? 1 : 2,
+        sx: p.x, sy: p.y,
+        orig: { x1: a.x1, y1: a.y1, x2: a.x2, y2: a.y2 },
+        pushed: false, // undo pushed lazily on the first real move, like move/resize
+      };
+      e.preventDefault();
+      return;
+    }
 
     if (e.target.classList.contains("handle")) {
       const id = +e.target.closest(".an").dataset.id;
@@ -901,16 +1207,27 @@
           else openArrowLabelEditor(layer, i, a, true);
           return;
         }
-        select(id);
-        const orig =
-          a.kind === "draw" || a.kind === "cloudpen"
-            ? { pts: a.pts.map((q) => ({ ...q })) }
-            : a.kind === "arrow" || a.kind === "dim"
-            ? { x1: a.x1, y1: a.y1, x2: a.x2, y2: a.y2 }
-            : { x: a.x, y: a.y };
+        // Ctrl/Cmd+click extends the selection and does NOT start a drag: the modifier
+        // means "also this one", and letting the same gesture nudge the group would
+        // make building a selection a minefield.
+        if (e.ctrlKey || e.metaKey) {
+          e.preventDefault();
+          toggleSelect(id);
+          return;
+        }
+        // Clicking a member of an existing multi-selection KEEPS it (so a group can be
+        // dragged by grabbing any of its objects, the usual convention); clicking
+        // anything else selects just that object.
+        if (!isSelected(id)) select(id);
         // undo pushed lazily on the first real move (see onMove); a bare select
-        // click must not dirty the session or leave a no-op undo step
-        drag = { type: "move", page: i, id, layer, sx: p.x, sy: p.y, orig, pushed: false };
+        // click must not dirty the session or leave a no-op undo step. `group` carries
+        // one origin per selected object so a multi-selection drags as a unit.
+        drag = {
+          type: "move", page: i, id, layer, sx: p.x, sy: p.y,
+          orig: moveOrigOf(a),
+          group: selAnnots().map((m) => ({ id: m.id, orig: moveOrigOf(m) })),
+          pushed: false,
+        };
         e.preventDefault();
       } else {
         deselect();
@@ -1085,10 +1402,11 @@
     }
     const a = hit.a;
 
-    // Lazy undo/dirty for move & resize: only the first gesture that genuinely
-    // shifts a point records a snapshot. A click that merely selects (or grabs a
-    // handle) without dragging leaves the session clean, so exiting won't re-bake.
-    if ((drag.type === "move" || drag.type === "resize") && !drag.pushed && (p.x !== drag.sx || p.y !== drag.sy)) {
+    // Lazy undo/dirty for move, resize & end-grip drags: only the first gesture that
+    // genuinely shifts a point records a snapshot. A click that merely selects (or
+    // grabs a handle) without dragging leaves the session clean, so exiting won't
+    // re-bake.
+    if ((drag.type === "move" || drag.type === "resize" || drag.type === "point") && !drag.pushed && (p.x !== drag.sx || p.y !== drag.sy)) {
       drag.pushed = true;
       pushEdUndo();
     }
@@ -1096,17 +1414,36 @@
     if (drag.type === "move") {
       const dx = p.x - drag.sx;
       const dy = p.y - drag.sy;
-      if (a.kind === "draw" || a.kind === "cloudpen") {
-        a.pts = drag.orig.pts.map((q) => ({ x: q.x + dx, y: q.y + dy }));
-      } else if (a.kind === "arrow" || a.kind === "dim") {
-        a.x1 = drag.orig.x1 + dx;
-        a.y1 = drag.orig.y1 + dy;
-        a.x2 = drag.orig.x2 + dx;
-        a.y2 = drag.orig.y2 + dy;
-      } else {
-        a.x = drag.orig.x + dx;
-        a.y = drag.orig.y + dy;
+      // Always driven from `orig` + the total delta, never by accumulating per-move
+      // steps: the same rule the single-object drag already used, and the reason the
+      // group cannot drift apart over a long drag. Every member is on `drag.page`
+      // (toggleSelect keeps a selection within one page), so one renderLayer below
+      // repaints all of them.
+      for (const m of drag.group || [{ id: drag.id, orig: drag.orig }]) {
+        const mh = findAnnot(m.id);
+        if (!mh) continue;
+        const t = mh.a;
+        if (t.kind === "draw" || t.kind === "cloudpen") {
+          t.pts = m.orig.pts.map((q) => ({ x: q.x + dx, y: q.y + dy }));
+        } else if (t.kind === "arrow" || t.kind === "dim") {
+          t.x1 = m.orig.x1 + dx;
+          t.y1 = m.orig.y1 + dy;
+          t.x2 = m.orig.x2 + dx;
+          t.y2 = m.orig.y2 + dy;
+        } else {
+          t.x = m.orig.x + dx;
+          t.y = m.orig.y + dy;
+        }
       }
+    } else if (drag.type === "point") {
+      // Swing / re-length one end of an arrow about the other. Shift is read live off
+      // the event (same rule as resize and freehand — BI-42) so it can be pressed and
+      // released mid-drag; snapLineEnd keeps the length and quantises the angle.
+      const fixedX = drag.pt === 1 ? drag.orig.x2 : drag.orig.x1;
+      const fixedY = drag.pt === 1 ? drag.orig.y2 : drag.orig.y1;
+      const q = snapLineEnd(fixedX, fixedY, p.x, p.y, e.shiftKey);
+      a["x" + drag.pt] = q.x;
+      a["y" + drag.pt] = q.y;
     } else if (drag.type === "arrow") {
       a.x2 = p.x;
       a.y2 = p.y;
@@ -1282,25 +1619,30 @@
         ed.annots[d.page] = ed.annots[d.page].filter((x) => x.id !== d.id);
         ed.sel = null;
       } else if (d.type === "move") {
-        if (a.kind === "draw" || a.kind === "cloudpen") a.pts = d.orig.pts;
-        else if (a.kind === "arrow") {
-          a.x1 = d.orig.x1;
-          a.y1 = d.orig.y1;
-          a.x2 = d.orig.x2;
-          a.y2 = d.orig.y2;
-        } else {
-          a.x = d.orig.x;
-          a.y = d.orig.y;
+        // Every member of the group, not just the one grabbed. (This branch also used
+        // to miss `dim`, which shares the arrow's x1/y1/x2/y2 shape — Esc mid-drag left
+        // a measured segment where the cursor abandoned it. restoreMoveOrig covers it.)
+        for (const m of d.group || [{ id: d.id, orig: d.orig }]) {
+          const mh = findAnnot(m.id);
+          if (mh) restoreMoveOrig(mh.a, m.orig);
         }
       } else if (d.type === "resize") {
         a.x = d.orig.x;
         a.y = d.orig.y;
         a.w = d.orig.w;
         a.h = d.orig.h;
+      } else if (d.type === "point") {
+        // Both ends restored, not just the dragged one: `orig` holds the whole line
+        // and putting back a single point would leave the other wherever a snap had
+        // already moved it.
+        a.x1 = d.orig.x1;
+        a.y1 = d.orig.y1;
+        a.x2 = d.orig.x2;
+        a.y2 = d.orig.y2;
       }
-      // Creation gestures push on mousedown; move/resize push lazily. Only drop a
-      // snapshot this gesture actually recorded, else we'd pop a prior step.
-      if ((d.type !== "move" && d.type !== "resize") || d.pushed) dropLastEdUndo();
+      // Creation gestures push on mousedown; move/resize/end-grip push lazily. Only
+      // drop a snapshot this gesture actually recorded, else we'd pop a prior step.
+      if ((d.type !== "move" && d.type !== "resize" && d.type !== "point") || d.pushed) dropLastEdUndo();
     }
     renderLayer(d.layer, d.page);
   }
@@ -1327,9 +1669,25 @@
 
   // ---- text editor (inline textarea; Electron has no window.prompt) --------
 
+  // Starting size of every inline text-entry box in the editor (text box, note,
+  // arrow label). One pair of numbers rather than three literals, so the three
+  // boxes can't drift apart the next time one of them is tuned. `cols` is in
+  // characters, so a box scales with the zoom level for free — a px min-width
+  // alone would stay small at 300%.
+  const TA_ROWS = 3;
+  const TA_COLS = 26;
+
   function openTextEditor(layer, i, p, existing) {
     const ta = document.createElement("textarea");
     ta.className = "annot-text-edit";
+    // A textarea with no rows/cols is 2×20 — cramped enough that users reported
+    // typing into a slot barely taller than one line. These are the STARTING size
+    // only: `resize: both` (app.css) still lets it be dragged, and the size has no
+    // effect on the result, because layoutTextBox never re-wraps (it splits on \n
+    // and nothing else) and the annot's own w/h come from measureText on commit,
+    // not from this element. So this is free to tune — BI-40 is not in play.
+    ta.rows = TA_ROWS;
+    ta.cols = TA_COLS;
     const fs = existing ? existing.fontSize : ed.fontSize;
     const st = existing ? normTextStyle(existing) : edTextStyle();
     ta.style.left = p.x * state.scale + "px";
@@ -1421,6 +1779,7 @@
 
     const ta = document.createElement("textarea");
     ta.className = "annot-text-edit annot-note-edit";
+    ta.rows = TA_ROWS; // see TA_ROWS — cols is overridden by the panel's width:100%
     ta.placeholder = existing ? "Thêm bình luận…" : "Nội dung ghi chú…";
     panel.appendChild(ta);
 
@@ -1507,6 +1866,11 @@
   function openArrowLabelEditor(layer, i, a, editing) {
     const ta = document.createElement("textarea");
     ta.className = "annot-text-edit annot-note-edit";
+    // Two rows, not TA_ROWS: an arrow label is a short phrase and this box floats
+    // over the drawing right next to the arrowhead, so extra height covers the very
+    // thing the label is pointing at. The width still comes from TA_COLS.
+    ta.rows = 2;
+    ta.cols = TA_COLS;
     ta.placeholder = "Nhãn mũi tên… (Enter xong, Esc bỏ qua)";
     // Anchor the input at the end the label belongs to (tail = base, else tip).
     const anchorX = a.labelEnd === "tail" ? a.x1 : a.x2;
@@ -2129,10 +2493,31 @@
   }
 
   // Pages with a /Rotate entry (common in scans) display rotated, but pdf-lib
-  // draws images in *unrotated* user space. Without compensating, baked PNGs
-  // (text comment, image, watermark) come out rotated 90/180/270°. We pin the
-  // image's visual lower-left to the already-mapped anchor and spin the glyphs
-  // back by the page rotation so they read upright after the viewer applies it.
+  // draws in *unrotated* user space. Without compensating, baked PNGs (text
+  // comment, image, watermark) come out rotated 90/180/270°. We pin the image's
+  // visual lower-left to the already-mapped anchor and spin the glyphs back by
+  // the page rotation so they read upright after the viewer applies it.
+  //
+  // WHICH PRIMITIVES NEED THAT, and why the answer is not "the images" (v0.2.52).
+  // `map` = vp1.convertToPdfPoint, and the pdf.js scale-1 viewport already carries
+  // the rotation — so anything whose geometry is built from INDEPENDENTLY MAPPED
+  // POINTS is correct for free: drawLine per segment (draw / arrow line + head /
+  // dim line + ticks / ✓✗ strokes), drawRectangle from min/max of two mapped
+  // corners (box / highlight), drawEllipse from a mapped centre + mapped extents
+  // (its semi-axes swap with the page, which is exactly right).
+  // Anything that instead hands pdf-lib a LOCAL coordinate system and lets it
+  // place that system needs `rotate:` explicitly, because the local axes are in
+  // DISPLAY space while pdf-lib reads them as user space. Today that is
+  // `drawImage` (text / image / watermark / the arrow + dim label PNGs) AND
+  // `drawSvgPath` (cloud / cloudpen) — the second one was missed when revision
+  // clouds landed after the v0.2.11 image fix, so khoanh mây baked spun on every
+  // rotated page until v0.2.52. Measured on the shipped pdf.js 3.11.174 +
+  // pdf-lib 1.17.1: drawSvgPath applies translate(x,y)·R(rotate)·scale(1,-1), and
+  // R(pageAngle)·scale(1,-1) IS the display→user linear map convertToPdfPoint
+  // implies, at all four angles; at 0° it is the identity, so unrotated documents
+  // are bit-for-bit unchanged. `npm run test:rotate` pins all of the above per
+  // kind and carries a guard case that fails if the option is removed. BI-45.
+  //
   // `share` is the per-bake embed cache threaded down to addManagedAnnot; a bake
   // that doesn't pass one simply embeds every image separately (still correct).
   async function drawAnnots(doc, page, anns, vp1, mode, share) {
@@ -2223,7 +2608,7 @@
         // so at rotation 0 the bake matches the overlay pixel-for-pixel.
         const { d, pad } = cloudPath(a.w, a.h, bumpOf(a));
         const [bx, by] = map(a.x - pad, a.y - pad);
-        const opts = { x: bx, y: by, borderColor: hexRgb(a.color), borderWidth: a.width || 2 };
+        const opts = { x: bx, y: by, borderColor: hexRgb(a.color), borderWidth: a.width || 2, rotate: pageRotate(page) };
         if (a.fill && a.fill !== "none") {
           opts.color = hexRgb(a.fill);
           opts.opacity = a.fillOpacity != null ? a.fillOpacity : 1;
@@ -2233,7 +2618,7 @@
         const cp = cloudPathPoly(a.pts, bumpOf(a));
         if (cp) {
           const [bx, by] = map(cp.minX - cp.pad, cp.minY - cp.pad);
-          const opts = { x: bx, y: by, borderColor: hexRgb(a.color), borderWidth: a.width || 2 };
+          const opts = { x: bx, y: by, borderColor: hexRgb(a.color), borderWidth: a.width || 2, rotate: pageRotate(page) };
           if (a.fill && a.fill !== "none") {
             opts.color = hexRgb(a.fill);
             opts.opacity = a.fillOpacity != null ? a.fillOpacity : 1;
@@ -2673,6 +3058,8 @@
     ellipse: ["color", "penwidth", "fill"],
     cloud: ["color", "penwidth", "fill", "cloudsize"],
     cloudpen: ["color", "penwidth", "fill", "cloudsize"],
+    // No "arrowrev" here: reversing needs an arrow to reverse, and under the arrow
+    // TOOL nothing is selected yet. It is a KIND_CTLS-only control (see below).
     arrow: ["color", "penwidth", "arrowlabel"],
     note: ["color"],
     image: [],
@@ -2692,7 +3079,7 @@
     ellipse: ["color", "penwidth", "fill"],
     cloud: ["color", "penwidth", "fill", "cloudsize"],
     cloudpen: ["color", "penwidth", "fill", "cloudsize"],
-    arrow: ["color", "penwidth", "arrowlabel"],
+    arrow: ["color", "penwidth", "arrowlabel", "arrowrev"],
     note: ["color"],
     image: ["imgpages"],
     redact: ["redact"],
@@ -2714,6 +3101,15 @@
     document.querySelectorAll("#edit-bar [data-ctl]").forEach((el) => {
       el.hidden = !show.includes(el.dataset.ctl);
     });
+    // Copy/Paste stay VISIBLE at all times and go grey instead, unlike the data-ctl
+    // controls above which hide. A control that vanishes is one the user stops looking
+    // for; "Dán" greyed out is what tells them a clipboard exists at all — and it is
+    // enabled across pages and across an Áp dụng, which is the whole point of the
+    // clip living outside `ed`.
+    const bCopy = $("ed-copy");
+    if (bCopy) bCopy.disabled = ed.sel == null;
+    const bPaste = $("ed-paste");
+    if (bPaste) bPaste.disabled = !clip || !clip.items.length;
     updateFmtPanel();
   }
 
@@ -2875,6 +3271,112 @@
   $("ed-apply").onclick = exit; // "Xong" = bake pending edits AND leave edit mode
   $("ed-exit").onclick = discardExit; // "Hủy bỏ" = drop pending edits AND leave
   $("ed-delete").onclick = deleteSelected;
+  $("ed-arrow-reverse").onclick = reverseSelectedArrow;
+  $("ed-copy").onclick = () => {
+    if (!copySelected()) toast("Chọn một mục trên trang trước khi sao chép.", "bad");
+  };
+  $("ed-paste").onclick = () => {
+    if (!pasteClip()) toast("Chưa có mục nào được sao chép.", "bad");
+  };
+
+  // Ctrl+C / Ctrl+V for the object clipboard, ridden on the `copy` / `paste` DOM
+  // events rather than on keydown. THAT IS NOT A STYLE CHOICE:
+  //   · main.js's Edit menu uses `role: "copy"` / `role: "paste"`, and unlike the
+  //     entries around them those roles do NOT set `registerAccelerator: false` — so
+  //     the accelerator is claimed by the menu and a renderer `keydown` for Ctrl+C is
+  //     not something we can rely on firing. What the roles DO cause is
+  //     webContents.copy()/paste(), which dispatch these DOM events. Same reason
+  //     capture.js hangs its OS-image paste off `paste`.
+  //   · Capture phase, so this runs BEFORE capture.js's own bubble-phase `paste`
+  //     listener and can decide which of the two owns the gesture.
+  //
+  // THE HAND-OFF RULE, and the reason paste is not simply "ours": an image on the OS
+  // clipboard still belongs to capture.js's beginImagePaste flow. We bow out for it
+  // (no preventDefault → the bubble listener runs as before), and only claim Ctrl+V
+  // when the clipboard carries no image AND we have an object to paste. So neither
+  // feature can shadow the other, in either order.
+  document.addEventListener(
+    "copy",
+    (e) => {
+      if (!ed.active || ed.sel == null) return;
+      // A real text selection (or a focused field) is the user copying TEXT — leave it.
+      if (isTypingTarget(e.target)) return;
+      const sel = window.getSelection && window.getSelection();
+      if (sel && String(sel).length) return;
+      if (copySelected()) e.preventDefault();
+    },
+    true
+  );
+  // Right-click on a page while annotating → Sao chép / Dán / Xoá for OBJECTS, instead
+  // of capture.js's image menu. Reuses capture.js's ONE menu widget (window.Capture.
+  // showMenu) so there is a single menu look, a single dismiss behaviour, and opening
+  // either kind closes the other — the arrangement openThumbMenu already follows.
+  //
+  // `stopImmediatePropagation`, NOT `stopPropagation`: capture.js listens for
+  // `contextmenu` on the SAME node (`document`, capture phase), and stopPropagation
+  // only stops the event moving to the next node — it does not stop another listener
+  // on the node we are standing on. That is BI-30, measured the hard way for the pan
+  // tool. editor.js loads before capture.js, so this capture-phase listener runs first.
+  document.addEventListener(
+    "contextmenu",
+    (e) => {
+      if (!ed.active) return;
+      const layer = e.target.closest && e.target.closest(".annot-layer");
+      if (!layer) return; // not over a page — let the native/main-process menu have it
+      if (!(window.Capture && window.Capture.showMenu)) return; // capture.js absent
+      const i = +layer.dataset.index;
+      const anEl = e.target.closest(".an");
+      // Right-clicking an object SELECTS it first, unless it is already part of the
+      // selection — then the group is kept, so "Sao chép" means the group. Exactly the
+      // rule openThumbMenu uses for pages (BI-26's neighbour).
+      if (anEl && anEl.dataset.kind !== "watermark") {
+        const id = +anEl.dataset.id;
+        if (!isSelected(id)) select(id);
+      }
+      // Nothing selected AND nothing on the clipboard → every entry would be greyed
+      // out, so DON'T claim the gesture: bow out and let capture.js's image menu
+      // ("Sao chép ảnh" / "Sao chép vùng…" / "Dán ảnh vào trang") open exactly as it
+      // did before this menu existed. Right-clicking empty paper while annotating keeps
+      // its old behaviour, and the object menu only appears when it can actually do
+      // something.
+      const hasClip = !!(clip && clip.items.length);
+      if (ed.sel == null && !hasClip) return;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      const n = selIds().length;
+      const tr = (vi) => (window.t ? window.t(vi) : vi);
+      window.Capture.showMenu(e.clientX, e.clientY, [
+        {
+          label: n > 1 ? tr("Sao chép") + ` (${n} mục)` : tr("Sao chép"),
+          enabled: n > 0,
+          onClick: copySelected,
+        },
+        { label: tr("Dán vào trang này"), enabled: hasClip, onClick: () => pasteClip(i) },
+        { separator: true },
+        {
+          label: n > 1 ? tr("Xoá mục") + ` (${n} mục)` : tr("Xoá mục"),
+          enabled: n > 0,
+          danger: true,
+          onClick: deleteSelected,
+        },
+      ]);
+    },
+    true
+  );
+
+  document.addEventListener(
+    "paste",
+    (e) => {
+      if (!ed.active || !clip) return;
+      if (isTypingTarget(e.target)) return; // Ctrl+V inside a textarea is plain text
+      const items = (e.clipboardData && e.clipboardData.items) || [];
+      for (const it of items) if (it.type && it.type.indexOf("image/") === 0) return; // capture.js's
+      e.preventDefault();
+      e.stopPropagation(); // we own this gesture now — don't let capture.js re-handle it
+      pasteClip();
+    },
+    true
+  );
   $("ed-watermark").onclick = openWatermark;
   $("ed-form").onclick = openForm;
   $("ed-img-pages").onclick = openImgPages;
@@ -2915,9 +3417,14 @@
     // must update the ✗ default, not the shared highlight/draw colour), else the
     // active tool's. For every pre-existing kind this still resolves to ed.color.
     ed[colorSlotFor(hit ? hit.a.kind : ed.tool)] = v;
-    if (hit && hit.a.color !== undefined) {
+    // Recolour EVERY selected object, not just the primary: with a Ctrl+click group,
+    // changing the colour of one of them and silently leaving the rest is the kind of
+    // half-applied edit users then have to undo by hand. The `color !== undefined`
+    // guard is per-object (a redact carries its colour in the other picker).
+    const targets = hit ? selAnnots().filter((a) => a.color !== undefined) : [];
+    if (targets.length) {
       pushEdUndo("color:" + ed.sel); // a picker drag = one undo step
-      hit.a.color = v;
+      for (const a of targets) a.color = v;
       syncOverlays();
     }
   };
@@ -3126,13 +3633,14 @@
 
   $("ed-penwidth").oninput = (e) => {
     ed.penWidth = Math.max(1, +e.target.value || 2);
-    if (ed.sel != null) {
-      const hit = findAnnot(ed.sel);
-      if (hit && ["draw", "box", "ellipse", "cloud", "cloudpen", "arrow", "check", "cross"].includes(hit.a.kind)) {
-        pushEdUndo("pwidth:" + ed.sel);
-        hit.a.width = ed.penWidth;
-        syncOverlays();
-      }
+    // Applies to the whole selection, same reasoning as the colour picker above.
+    const targets = selAnnots().filter((a) =>
+      ["draw", "box", "ellipse", "cloud", "cloudpen", "arrow", "check", "cross"].includes(a.kind)
+    );
+    if (targets.length) {
+      pushEdUndo("pwidth:" + ed.sel);
+      for (const a of targets) a.width = ed.penWidth;
+      syncOverlays();
     }
   };
   // Arrow label position (head/tail). Sets the default for new arrows and, if an
@@ -3236,6 +3744,17 @@
         ed.pendingImage = null; // a pending image placement is cancelled too
         setTool("select");
       }
+    }
+    // Ctrl+C fallback for the object clipboard. The `copy` DOM event above is the
+    // primary route; this covers the case where Chromium declines to dispatch one
+    // because there is no text selection to copy. Safe to have both: copySelected() is
+    // idempotent, so a double fire stores the same clip twice and changes nothing.
+    // Paste has NO such fallback on purpose — a double fire there would insert two
+    // objects, so it stays on the single `paste` event, which webContents.paste()
+    // reliably dispatches (capture.js has shipped on that same guarantee for releases).
+    if ((e.key === "c" || e.key === "C") && (e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && !typing && ed.sel != null) {
+      const sel = window.getSelection && window.getSelection();
+      if (!(sel && String(sel).length)) copySelected();
     }
     // Single-key tool shortcuts (no modifiers, not while typing) — mirror the
     // toolbar; each letter is shown in that tool's tooltip.

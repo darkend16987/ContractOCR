@@ -49,6 +49,35 @@ function arrowLabelPos(a, sx, sy, ex, ey, ang, hl, fs) {
   return { x: ex + Math.cos(ang) * gap, y: ey + Math.sin(ang) * gap };
 }
 
+// ---- dragging one end of a two-point annotation --------------------------
+
+// New position for the end of a line being dragged, with `fx,fy` the end that stays
+// put and `px,py` the cursor. Plain follow-the-cursor unless `snap` (Shift held), in
+// which case the direction is quantised to ANGLE_SNAP_DEG about the fixed end while the
+// LENGTH is left alone — so Shift reads as "swing this arrow to a clean angle", not as
+// "resize it". That is the useful gesture on a drawing: 0/15/…/345° covers horizontal,
+// vertical, both diagonals and the common leader-line angles.
+//
+// `snap` is read LIVE off the mouse event by the caller, the same rule as `resizeRect`'s
+// `ratio` and `strokeExtend`'s `straight` (BI-42): pressing or releasing Shift mid-drag
+// has to take effect on the next move, and a latched keydown flag would stick on if
+// Shift were released while the window had lost focus.
+//
+// A zero-length drag has no angle to quantise, so it passes the cursor through rather
+// than picking an arbitrary one — otherwise grabbing an endpoint and holding Shift
+// without moving would snap the arrow to 0° on the first pixel of travel.
+const ANGLE_SNAP_DEG = 15;
+function snapLineEnd(fx, fy, px, py, snap) {
+  if (!snap) return { x: px, y: py };
+  const dx = px - fx;
+  const dy = py - fy;
+  const len = Math.hypot(dx, dy);
+  if (len < 1e-6) return { x: px, y: py };
+  const step = (ANGLE_SNAP_DEG * Math.PI) / 180;
+  const ang = Math.round(Math.atan2(dy, dx) / step) * step;
+  return { x: fx + Math.cos(ang) * len, y: fy + Math.sin(ang) * len };
+}
+
 // ---- revision clouds -----------------------------------------------------
 
 // Revision-cloud outline as an SVG path. The perimeter of the a.w×a.h box is
@@ -243,6 +272,105 @@ function symbolStrokes(kind, x, y, w, h) {
   return [];
 }
 
+// ---- moving a whole annotation (used by copy/paste) -----------------------
+
+// The box an annotation's INK occupies, whatever shape it is underneath — the three
+// families the editor stores are a box (x/y/w/h), a point list (`pts`) and a pair of
+// endpoints (x1,y1,x2,y2), and every caller that has to reason about "where is this
+// thing" would otherwise re-derive that split. Returns { x, y, w, h }.
+//
+// Clouds report their PADDED box, i.e. including the scallops: the bulges are ink, and
+// a caller clamping a cloud to the page using the bare w×h would let a whole ring of
+// them hang over the edge. `cloudPath`'s `pad` is the same number the overlay <svg>
+// and the bake both use (BI-40), so this stays in step with them by construction.
+//
+// This is a BOUND, not a promise about every pixel: an arrow's text label and a thick
+// pen's stroke width both reach a little past it. Callers use it to keep an object
+// reachable on the page, not to compute a crop.
+function annotBounds(a) {
+  if (!a) return { x: 0, y: 0, w: 0, h: 0 };
+  if (a.kind === "arrow" || a.kind === "dim") {
+    const x = Math.min(a.x1, a.x2);
+    const y = Math.min(a.y1, a.y2);
+    return { x, y, w: Math.abs(a.x2 - a.x1), h: Math.abs(a.y2 - a.y1) };
+  }
+  if (a.kind === "draw" || a.kind === "cloudpen") {
+    const pts = a.pts || [];
+    if (!pts.length) return { x: 0, y: 0, w: 0, h: 0 };
+    const xs = pts.map((p) => p.x);
+    const ys = pts.map((p) => p.y);
+    // A freehand cloud is scalloped outward like a boxed one, so it carries the same
+    // one-bump margin; a plain `draw` stroke is just the polyline.
+    const pad = a.kind === "cloudpen" ? bumpOf(a) : 0;
+    const x = Math.min(...xs) - pad;
+    const y = Math.min(...ys) - pad;
+    return { x, y, w: Math.max(...xs) + pad - x, h: Math.max(...ys) + pad - y };
+  }
+  if (a.kind === "cloud") {
+    const pad = bumpOf(a);
+    return { x: (a.x || 0) - pad, y: (a.y || 0) - pad,
+             w: (a.w || 0) + 2 * pad, h: (a.h || 0) + 2 * pad };
+  }
+  return { x: a.x || 0, y: a.y || 0, w: a.w || 0, h: a.h || 0 };
+}
+
+// Shift an annotation by (dx, dy) IN PLACE, touching whichever coordinate fields its
+// kind actually has. Mutating rather than returning a copy matches the existing drag
+// handlers, which move the live object the overlay is already rendering. Returns `a`.
+function translateAnnot(a, dx, dy) {
+  if (!a) return a;
+  if (a.kind === "arrow" || a.kind === "dim") {
+    a.x1 += dx; a.y1 += dy;
+    a.x2 += dx; a.y2 += dy;
+  } else if (a.kind === "draw" || a.kind === "cloudpen") {
+    a.pts = (a.pts || []).map((p) => ({ x: p.x + dx, y: p.y + dy }));
+  } else {
+    a.x = (a.x || 0) + dx;
+    a.y = (a.y || 0) + dy;
+  }
+  return a;
+}
+
+// The single box enclosing a whole list of annotations — what a Ctrl+click group has to
+// be clamped by. Clamping each member on its own instead would SHEAR the group: an
+// object near the edge would slide while its neighbours stayed, and a diagram pasted
+// onto a smaller page would come apart. Empty list → a zero box.
+function unionBounds(list) {
+  const bs = (list || []).map(annotBounds);
+  if (!bs.length) return { x: 0, y: 0, w: 0, h: 0 };
+  const x = Math.min(...bs.map((b) => b.x));
+  const y = Math.min(...bs.map((b) => b.y));
+  return {
+    x, y,
+    w: Math.max(...bs.map((b) => b.x + b.w)) - x,
+    h: Math.max(...bs.map((b) => b.y + b.h)) - y,
+  };
+}
+
+// The extra (dx, dy) that pulls box `b` fully onto a pageW×pageH page. Zero when it is
+// already inside, so it is safe to apply unconditionally.
+//
+// WHY THIS EXISTS: BI-42 recorded the same requirement for the ✓/✗ stamps — an object
+// left hanging over the edge of the sheet cannot be grabbed back, because the grips
+// that would move it are off-paper too. Pasting hits that harder than stamping did: the
+// target page can be a DIFFERENT SIZE from the one copied from (one PDF, many page
+// sizes is normal in this app's world), so coordinates that were comfortably inside the
+// source page can land outside the destination.
+//
+// An object BIGGER than the page can't be made to fit; pin its top-left instead of
+// pushing it up and left off the other side, so at least its origin and one grip stay
+// reachable. A non-positive page size means "unknown" (the caller could not read the
+// page box) → don't move it, since guessing would be worse than leaving it be.
+function fitShift(b, pageW, pageH) {
+  const axis = (lo, size, page) => {
+    if (!(page > 0)) return 0;
+    if (size >= page || lo < 0) return -lo;
+    if (lo + size > page) return page - (lo + size);
+    return 0;
+  };
+  return { dx: axis(b.x, b.w, pageW), dy: axis(b.y, b.h, pageH) };
+}
+
 // ---- corner-grip resize --------------------------------------------------
 
 // New box for a corner-grip drag. PURE arithmetic in the annot's own scale-1,
@@ -291,14 +419,16 @@ function resizeRect(dir, orig, dx, dy, ratio, min) {
 if (typeof module !== "undefined" && module.exports) {
   module.exports = {
     CLOUD_BUMP, CLOUD_BUMP_MIN, CLOUD_BUMP_MAX, bumpOf, SYMBOL_SIZE,
-    arrowLabelPos, cloudPath, arcApex, cloudPathPoly, resizeRect,
-    strokeExtend, symbolStrokes,
+    ANGLE_SNAP_DEG,
+    annotBounds, arrowLabelPos, cloudPath, arcApex, cloudPathPoly, fitShift,
+    resizeRect, snapLineEnd, strokeExtend, symbolStrokes, translateAnnot, unionBounds,
   };
 }
 if (typeof window !== "undefined") {
   window.AnnotGeom = {
     CLOUD_BUMP, CLOUD_BUMP_MIN, CLOUD_BUMP_MAX, bumpOf, SYMBOL_SIZE,
-    arrowLabelPos, cloudPath, arcApex, cloudPathPoly, resizeRect,
-    strokeExtend, symbolStrokes,
+    ANGLE_SNAP_DEG,
+    annotBounds, arrowLabelPos, cloudPath, arcApex, cloudPathPoly, fitShift,
+    resizeRect, snapLineEnd, strokeExtend, symbolStrokes, translateAnnot, unionBounds,
   };
 }

@@ -1349,6 +1349,49 @@ function refreshSelectionUI() {
 
 // ---- thumbnail interaction (select + drag reorder) -----------------------
 
+// Drop-gap cue for the page column. BOTH kinds of drag into the strip — reordering a
+// page and dropping a PDF in from the OS — land in a GAP BETWEEN two pages, never "on"
+// a page, so the cue has to name the gap: a bar under the page above it and a bar over
+// the page below it. Before v0.2.52 the reorder drag only lit the hovered thumbnail's
+// border, which answers "which page am I over" and not "where will it go" — and the
+// two differ, because the hovered page has a gap on each side.
+//
+// A gap index is the SAME number `insertBuffersAt` already takes: gap g means "between
+// page g-1 and page g", so 0 is above the first page and numPages is below the last.
+// Picked from the cursor's Y against the thumbnail's horizontal midline — that is the
+// arithmetic BI-33 pins (one column at every width; a grid layout would make
+// "above/below" the wrong question), and it is unchanged here.
+const THUMB_CUES = ["insert-before", "insert-after"];
+function clearThumbCues() {
+  document
+    .querySelectorAll(".thumb.insert-before, .thumb.insert-after")
+    .forEach((el) => el.classList.remove(...THUMB_CUES));
+}
+// Clear globally, then light both sides of `gap`. Global rather than per-element on
+// purpose: dragover on the newly-entered thumbnail and dragleave on the one just left
+// are not ordered against each other, so a handler that only cleaned up its own
+// element could wipe a cue the other had just drawn. Doing the whole strip every time
+// is self-healing and costs one querySelectorAll per dragover event.
+function showThumbGapCue(gap) {
+  clearThumbCues();
+  const at = (k) => document.querySelector(`#thumbs .thumb[data-index="${k}"]`);
+  const above = at(gap - 1);
+  const below = at(gap);
+  if (above) above.classList.add("insert-after");
+  if (below) below.classList.add("insert-before");
+}
+// Which gap the cursor is aiming at, given the thumbnail it is over.
+function thumbGapAt(div, i, e) {
+  const r = div.getBoundingClientRect();
+  return e.clientY > r.top + r.height / 2 ? i + 1 : i;
+}
+// `reorderPage` splices the page OUT before splicing it back IN, so an index measured
+// on the original list shifts by one once the page being moved sat before it.
+const gapToReorderIndex = (gap, from) => (gap > from ? gap - 1 : gap);
+// The two gaps either side of a page are where it already is — dropping there is a
+// no-op, and a no-op still costs a full document rewrite + re-render + undo step.
+const gapIsNoOp = (gap, from) => gap === from || gap === from + 1;
+
 function wireThumb(div) {
   const i = +div.dataset.index;
 
@@ -1391,12 +1434,18 @@ function wireThumb(div) {
     // Mark as an internal move so the window file-drop handler ignores it.
     e.dataTransfer.setData("application/x-thumb", String(i));
   });
-  div.addEventListener("dragend", () => div.classList.remove("dragging"));
+  // dragend fires after drop, and ALSO when the drag is abandoned outside the strip —
+  // which is the only place `state.dragSrc` gets cleaned up in that case. Leaving it
+  // set would make the next hover over any thumbnail draw reorder cues for a drag that
+  // ended long ago.
+  div.addEventListener("dragend", () => {
+    div.classList.remove("dragging");
+    state.dragSrc = null;
+    clearThumbCues();
+  });
   // Drop targets: internal reorder (state.dragSrc set) OR an external PDF file
-  // dragged from the OS. For files we pick the gap above/below the hovered thumb
-  // by cursor position so the user drops "between" pages, like reorder.
-  const clearCues = () =>
-    div.classList.remove("drag-over", "insert-before", "insert-after");
+  // dragged from the OS. Both resolve to a gap between two pages and both show the
+  // same two-bar cue — one code path, so the picture can't disagree with the result.
   const fileDrag = (e) =>
     e.dataTransfer && [...e.dataTransfer.types].includes("Files");
   div.addEventListener("dragover", (e) => {
@@ -1404,38 +1453,42 @@ function wireThumb(div) {
       e.preventDefault();
       e.stopPropagation(); // keep the window "open fresh" handler from firing
       e.dataTransfer.dropEffect = "copy";
-      const r = div.getBoundingClientRect();
-      const after = e.clientY > r.top + r.height / 2;
-      div.classList.toggle("insert-after", after);
-      div.classList.toggle("insert-before", !after);
+      showThumbGapCue(thumbGapAt(div, i, e));
       return;
     }
     if (state.dragSrc == null) return;
+    const gap = thumbGapAt(div, i, e);
+    // The gaps on either side of the dragged page mean "leave it where it is". Refuse
+    // the drop instead of accepting a rewrite that changes nothing: no preventDefault
+    // means the cursor shows "not allowed", so the user can see it before letting go.
+    if (gapIsNoOp(gap, state.dragSrc)) {
+      clearThumbCues();
+      e.dataTransfer.dropEffect = "none";
+      return;
+    }
     e.preventDefault();
-    div.classList.add("drag-over");
+    e.dataTransfer.dropEffect = "move";
+    showThumbGapCue(gap);
   });
-  div.addEventListener("dragleave", clearCues);
   div.addEventListener("drop", async (e) => {
     e.preventDefault();
     e.stopPropagation();
     clearDropCue(); // stopPropagation hides this drop from the window handler
+    const gap = thumbGapAt(div, i, e);
+    clearThumbCues();
     if (fileDrag(e)) {
-      const r = div.getBoundingClientRect();
-      const at = e.clientY > r.top + r.height / 2 ? i + 1 : i;
-      clearCues();
       const buffers = [];
       for (const f of e.dataTransfer.files) {
         if (f.name.toLowerCase().endsWith(".pdf"))
           buffers.push(new Uint8Array(await f.arrayBuffer()));
       }
-      if (buffers.length) await insertBuffersAt(buffers, at);
+      if (buffers.length) await insertBuffersAt(buffers, gap);
       return;
     }
-    clearCues();
     const from = state.dragSrc;
-    const to = i;
     state.dragSrc = null;
-    if (from != null && from !== to) reorderPage(from, to);
+    if (from == null || gapIsNoOp(gap, from)) return;
+    reorderPage(from, gapToReorderIndex(gap, from));
   });
 }
 

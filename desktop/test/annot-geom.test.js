@@ -15,6 +15,8 @@
 //
 // Run:  node desktop/test/annot-geom.test.js       (or: npm run test:cloud)
 
+const fs = require("fs");
+const path = require("path");
 const G = require("../renderer/annot-geom.js");
 const { arrowLabelPos, cloudPath, cloudPathPoly, arcApex, bumpOf } = G;
 
@@ -427,15 +429,321 @@ check("the default stamp size is a usable number", SYMBOL_SIZE > 0 && SYMBOL_SIZ
 
 check("node import exposes exactly the surface editor.js calls by bare name",
   Object.keys(G).sort(),
-  ["CLOUD_BUMP", "CLOUD_BUMP_MAX", "CLOUD_BUMP_MIN", "SYMBOL_SIZE", "arcApex",
-   "arrowLabelPos", "bumpOf", "cloudPath", "cloudPathPoly", "resizeRect",
-   "strokeExtend", "symbolStrokes"]);
+  ["ANGLE_SNAP_DEG", "CLOUD_BUMP", "CLOUD_BUMP_MAX", "CLOUD_BUMP_MIN", "SYMBOL_SIZE",
+   "annotBounds", "arcApex", "arrowLabelPos", "bumpOf", "cloudPath", "cloudPathPoly",
+   "fitShift", "resizeRect", "snapLineEnd", "strokeExtend", "symbolStrokes",
+   "translateAnnot", "unionBounds"]);
 check("the constants are numbers, the rest functions",
   Object.keys(G).map((k) => (/^[A-Z]/.test(k) ? typeof G[k] === "number" : typeof G[k] === "function")).every(Boolean),
   true);
 // resizeRect lives here but is exercised by test:geom — assert it is reachable so a
 // move/rename cannot quietly leave that grid testing nothing.
 check("resizeRect is exported for test:geom", typeof G.resizeRect, "function");
+
+// ==========================================================================
+// snapLineEnd — dragging ONE end of an arrow (v0.2.52)
+// ==========================================================================
+//
+// The gesture: grab an arrow's end grip and swing it about the other end. Shift
+// quantises the ANGLE to 15° and must leave the LENGTH alone — "xoay", not "resize".
+// Getting that backwards is the kind of thing that looks fine on a horizontal test
+// arrow and is obviously wrong on a diagonal one, so the cases below are deliberately
+// diagonal.
+
+const { snapLineEnd, ANGLE_SNAP_DEG } = G;
+const len = (fx, fy, q) => Math.hypot(q.x - fx, q.y - fy);
+const degOf = (fx, fy, q) => (Math.atan2(q.y - fy, q.x - fx) * 180) / Math.PI;
+
+check("the snap step is still 15°", ANGLE_SNAP_DEG, 15);
+// Without Shift the cursor wins outright — no rounding, no clamping.
+check("no snap → the cursor position, verbatim", snapLineEnd(10, 10, 137.4, -22.9, false), { x: 137.4, y: -22.9 });
+check("no snap → passes through even at zero length", snapLineEnd(10, 10, 10, 10, false), { x: 10, y: 10 });
+
+// A cursor 4° off horizontal snaps back to 0° and keeps its distance.
+near("snap: 4° off horizontal → 0°", degOf(0, 0, snapLineEnd(0, 0, 100, 7, true)), 0, 1e-9);
+near("snap: 4° off horizontal keeps the length", len(0, 0, snapLineEnd(0, 0, 100, 7, true)), Math.hypot(100, 7), 1e-9);
+// 40° is nearer 45° than 30°.
+near("snap: 40° → 45°", degOf(0, 0, snapLineEnd(0, 0, Math.cos(0.698) * 80, Math.sin(0.698) * 80, true)), 45, 1e-6);
+// 37° is nearer 30°: the rounding is to the NEAREST step, not always upward.
+near("snap: 37° → 30°", degOf(0, 0, snapLineEnd(0, 0, Math.cos(0.6458) * 80, Math.sin(0.6458) * 80, true)), 30, 1e-6);
+// Every snapped result must sit on a multiple of the step, from any fixed point and in
+// any quadrant — this is the property, the individual cases above are just samples.
+check("snap: every angle lands on a multiple of 15°",
+  [[13, -71], [-40, 5], [-9, -60], [88, 3], [0, -50], [-50, 0]]
+    .map(([dx, dy]) => degOf(30, 40, snapLineEnd(30, 40, 30 + dx, 40 + dy, true)))
+    .map((d) => Math.abs(((d % ANGLE_SNAP_DEG) + ANGLE_SNAP_DEG) % ANGLE_SNAP_DEG) < 1e-6)
+    .every(Boolean),
+  true);
+check("snap: length is preserved from any fixed point",
+  [[13, -71], [-40, 5], [-9, -60], [88, 3]]
+    .map(([dx, dy]) => {
+      const q = snapLineEnd(30, 40, 30 + dx, 40 + dy, true);
+      return Math.abs(len(30, 40, q) - Math.hypot(dx, dy)) < 1e-9;
+    })
+    .every(Boolean),
+  true);
+// An angle already on the grid must come back untouched, or holding Shift would jitter
+// an arrow the user had already lined up.
+check("snap: an exact 45° is left alone", (() => {
+  const q = snapLineEnd(0, 0, 50, 50, true);
+  return [Math.abs(q.x - 50) < 1e-9, Math.abs(q.y - 50) < 1e-9];
+})(), [true, true]);
+// GUARD (the quiet one): with no length there is no angle to quantise. Rounding
+// atan2(0,0)=0 would fling the arrow to 0° the moment the user grabbed a grip and
+// pressed Shift without moving — so a degenerate drag must pass through instead.
+check("snap: a zero-length drag passes through instead of snapping to 0°",
+  snapLineEnd(25, 25, 25, 25, true), { x: 25, y: 25 });
+check("snap: a sub-epsilon drag passes through too",
+  snapLineEnd(25, 25, 25.0000000001, 25, true), { x: 25.0000000001, y: 25 });
+
+// ==========================================================================
+// annotBounds / translateAnnot / fitShift — copy & paste an object (v0.2.52)
+// ==========================================================================
+//
+// Paste has to answer "where is this thing and will it fit on the target page", for
+// three different coordinate shapes (box, point list, endpoint pair). The failure is
+// quiet in the BI-42 way: an object pasted past the edge of the paper is invisible AND
+// unreachable, because the grips that would drag it back are off-paper too. Pasting
+// makes that likelier than stamping ever did — the destination page can be a different
+// SIZE from the source.
+
+const { annotBounds, translateAnnot, fitShift, unionBounds } = G;
+
+// --- annotBounds, one case per coordinate shape ---
+check("bounds: a plain box is itself",
+  annotBounds({ kind: "box", x: 10, y: 20, w: 30, h: 40 }), { x: 10, y: 20, w: 30, h: 40 });
+check("bounds: an arrow is the box spanned by its two ends, whichever way round",
+  annotBounds({ kind: "arrow", x1: 90, y1: 10, x2: 30, y2: 70 }), { x: 30, y: 10, w: 60, h: 60 });
+check("bounds: a dim measures like an arrow",
+  annotBounds({ kind: "dim", x1: 5, y1: 5, x2: 25, y2: 15 }), { x: 5, y: 5, w: 20, h: 10 });
+check("bounds: a freehand stroke is the hull of its points",
+  annotBounds({ kind: "draw", pts: [{ x: 10, y: 50 }, { x: 40, y: 5 }, { x: 25, y: 30 }] }),
+  { x: 10, y: 5, w: 30, h: 45 });
+// The two cloud kinds must include their SCALLOPS. Bounding a cloud by its bare box
+// would let a whole ring of bulges hang over the page edge after a clamp.
+check("bounds: a boxed cloud includes one bump of scallop on every side",
+  annotBounds({ kind: "cloud", x: 100, y: 100, w: 50, h: 40, bump: 12 }),
+  { x: 88, y: 88, w: 74, h: 64 });
+check("bounds: a freehand cloud includes its scallops too",
+  annotBounds({ kind: "cloudpen", bump: 10, pts: [{ x: 50, y: 50 }, { x: 90, y: 80 }] }),
+  { x: 40, y: 40, w: 60, h: 50 });
+check("bounds: a cloud with no bump falls back to the default, like bumpOf",
+  annotBounds({ kind: "cloud", x: 100, y: 100, w: 50, h: 40 }).x, 100 - bumpOf({}));
+// Degenerate input must not produce NaN — it would propagate into a style attribute
+// and the object would silently fail to render at all.
+check("bounds: an empty point list is a zero box",
+  annotBounds({ kind: "draw", pts: [] }), { x: 0, y: 0, w: 0, h: 0 });
+check("bounds: a missing annot is a zero box", annotBounds(null), { x: 0, y: 0, w: 0, h: 0 });
+check("bounds: a box with absent x/y/w/h reads as zeros",
+  annotBounds({ kind: "highlight" }), { x: 0, y: 0, w: 0, h: 0 });
+
+// --- translateAnnot: the same shift, expressed in whatever fields the kind has ---
+check("translate: a box moves its origin",
+  translateAnnot({ kind: "box", x: 10, y: 20, w: 5, h: 5 }, 3, -4),
+  { kind: "box", x: 13, y: 16, w: 5, h: 5 });
+check("translate: an arrow moves BOTH ends by the same amount",
+  translateAnnot({ kind: "arrow", x1: 0, y1: 0, x2: 10, y2: 20 }, 5, 5),
+  { kind: "arrow", x1: 5, y1: 5, x2: 15, y2: 25 });
+check("translate: a point list moves every point",
+  translateAnnot({ kind: "draw", pts: [{ x: 1, y: 2 }, { x: 3, y: 4 }] }, 10, 10).pts,
+  [{ x: 11, y: 12 }, { x: 13, y: 14 }]);
+// Translating must not change SHAPE — that is what separates a paste from a resize.
+check("translate: the bounding box keeps its size for every shape",
+  [
+    { kind: "box", x: 10, y: 20, w: 30, h: 40 },
+    { kind: "arrow", x1: 90, y1: 10, x2: 30, y2: 70 },
+    { kind: "draw", pts: [{ x: 10, y: 50 }, { x: 40, y: 5 }] },
+    { kind: "cloud", x: 100, y: 100, w: 50, h: 40, bump: 12 },
+    { kind: "cloudpen", bump: 10, pts: [{ x: 50, y: 50 }, { x: 90, y: 80 }] },
+  ].map((a) => {
+    const before = annotBounds(a);
+    const after = annotBounds(translateAnnot(a, 17, -23));
+    return after.w === before.w && after.h === before.h &&
+           after.x === before.x + 17 && after.y === before.y - 23;
+  }),
+  [true, true, true, true, true]);
+check("translate: a missing annot is returned untouched", translateAnnot(null, 1, 1), null);
+
+// --- fitShift: pull it back onto the paper ---
+const A4 = [595, 842]; // page size the fit cases clamp against, in points
+check("fit: something already inside is not moved",
+  fitShift({ x: 100, y: 100, w: 50, h: 50 }, ...A4), { dx: 0, dy: 0 });
+check("fit: hanging off the right edge is pulled left by exactly the overhang",
+  fitShift({ x: 570, y: 100, w: 50, h: 50 }, ...A4), { dx: -25, dy: 0 });
+check("fit: hanging off the bottom is pulled up by exactly the overhang",
+  fitShift({ x: 100, y: 800, w: 50, h: 60 }, ...A4), { dx: 0, dy: -18 });
+check("fit: negative coordinates are pushed back to the origin",
+  fitShift({ x: -30, y: -12, w: 50, h: 50 }, ...A4), { dx: 30, dy: 12 });
+check("fit: both axes at once", fitShift({ x: -5, y: 830, w: 20, h: 40 }, ...A4), { dx: 5, dy: -28 });
+check("fit: flush against the far edge counts as inside",
+  fitShift({ x: 545, y: 792, w: 50, h: 50 }, ...A4), { dx: 0, dy: 0 });
+// Bigger than the page: pin the top-left. Pushing it up/left to "fit" the far edge
+// would shove the origin AND its grips off the other side — worse than not fitting.
+check("fit: an object wider than the page pins its left edge instead of overshooting",
+  fitShift({ x: 40, y: 100, w: 900, h: 50 }, ...A4), { dx: -40, dy: 0 });
+check("fit: an object taller than the page pins its top edge",
+  fitShift({ x: 100, y: 60, w: 50, h: 2000 }, ...A4), { dx: 0, dy: -60 });
+// Unknown page size = the caller could not read the page box. Guessing a shift then
+// would move an object for no reason, so it must be a no-op on that axis.
+check("fit: an unknown page width moves nothing horizontally",
+  fitShift({ x: -50, y: 900, w: 10, h: 10 }, 0, 842), { dx: 0, dy: -68 });
+check("fit: an unknown page size moves nothing at all",
+  fitShift({ x: -50, y: -50, w: 10, h: 10 }, 0, 0), { dx: 0, dy: 0 });
+
+// The property paste actually depends on: bounds → fitShift → translate leaves the
+// object inside the page, for every coordinate shape and from any starting offence.
+check("fit: bounds→fitShift→translate lands every shape inside the page",
+  [
+    { kind: "box", x: -80, y: 900, w: 120, h: 60 },
+    { kind: "arrow", x1: 580, y1: -20, x2: 700, y2: 40 },
+    { kind: "draw", pts: [{ x: -40, y: 830 }, { x: 20, y: 900 }] },
+    { kind: "cloud", x: 4, y: 4, w: 200, h: 100, bump: 16 },
+    { kind: "cloudpen", bump: 12, pts: [{ x: 590, y: 5 }, { x: 640, y: 60 }] },
+    { kind: "check", x: 588, y: 838, w: 18, h: 18 },
+  ].map((a) => {
+    const s = fitShift(annotBounds(a), ...A4);
+    const b = annotBounds(translateAnnot(a, s.dx, s.dy));
+    const eps = 1e-9;
+    return b.x >= -eps && b.y >= -eps && b.x + b.w <= A4[0] + eps && b.y + b.h <= A4[1] + eps;
+  }),
+  [true, true, true, true, true, true]);
+// --- unionBounds: a Ctrl+click GROUP is clamped as one shape ---
+//
+// The failure this prevents is shearing: clamp each member on its own and the one near
+// the page edge slides while its neighbours stay put, so a diagram pasted onto a
+// smaller page silently comes apart.
+check("union: one member is just its own bounds",
+  unionBounds([{ kind: "box", x: 10, y: 20, w: 30, h: 40 }]), { x: 10, y: 20, w: 30, h: 40 });
+check("union: two boxes span both",
+  unionBounds([
+    { kind: "box", x: 10, y: 20, w: 30, h: 40 },
+    { kind: "box", x: 100, y: 5, w: 20, h: 20 },
+  ]), { x: 10, y: 5, w: 110, h: 55 });
+check("union: a nested member does not grow the box",
+  unionBounds([
+    { kind: "box", x: 0, y: 0, w: 100, h: 100 },
+    { kind: "box", x: 20, y: 20, w: 10, h: 10 },
+  ]), { x: 0, y: 0, w: 100, h: 100 });
+check("union: mixes coordinate shapes",
+  unionBounds([
+    { kind: "arrow", x1: 200, y1: 10, x2: 120, y2: 60 },
+    { kind: "draw", pts: [{ x: 5, y: 300 }] },
+  ]), { x: 5, y: 10, w: 195, h: 290 });
+check("union: a cloud contributes its scallops",
+  unionBounds([{ kind: "cloud", x: 50, y: 50, w: 10, h: 10, bump: 12 }]), { x: 38, y: 38, w: 34, h: 34 });
+check("union: an empty group is a zero box", unionBounds([]), { x: 0, y: 0, w: 0, h: 0 });
+check("union: a missing list is a zero box", unionBounds(null), { x: 0, y: 0, w: 0, h: 0 });
+
+// The property paste depends on for a GROUP: one shift for everyone keeps the layout
+// rigid AND lands the whole group on the page.
+{
+  const group = [
+    { kind: "box", x: 520, y: 780, w: 120, h: 90 },
+    { kind: "arrow", x1: 540, y1: 800, x2: 620, y2: 850 },
+    { kind: "cloud", x: 560, y: 810, w: 60, h: 40, bump: 10 },
+  ];
+  const before = group.map(annotBounds);
+  const s = fitShift(unionBounds(group), ...A4);
+  for (const a of group) translateAnnot(a, s.dx, s.dy);
+  const after = group.map(annotBounds);
+  check("group paste: the whole group ends up on the page",
+    (() => {
+      const u = unionBounds(group);
+      return u.x >= -1e-9 && u.y >= -1e-9 && u.x + u.w <= A4[0] + 1e-9 && u.y + u.h <= A4[1] + 1e-9;
+    })(), true);
+  check("group paste: every member moved by the SAME delta (no shearing)",
+    after.map((b, i) => [b.x - before[i].x, b.y - before[i].y]),
+    after.map(() => [s.dx, s.dy]));
+  check("group paste: the group really did start off the page", s.dx !== 0 || s.dy !== 0, true);
+}
+
+// ==========================================================================
+// the edit-bar controls these helpers back (BI-9 / BI-10)
+// ==========================================================================
+//
+// Not geometry — but it is the grid for the features above, and this is the cheap half
+// of a check that is otherwise only ever done by eye. Same precedent as test:print,
+// which validates its dialog's i18n keys from a logic grid. A button whose Vietnamese
+// label is missing from the EN dictionary does not fail anywhere: it just stays
+// Vietnamese for English users, forever, and nobody who reads Vietnamese will notice.
+
+{
+  const html = fs.readFileSync(path.join(__dirname, "..", "renderer", "index.html"), "utf8");
+  const i18n = fs.readFileSync(path.join(__dirname, "..", "renderer", "i18n.js"), "utf8");
+  const editor = fs.readFileSync(path.join(__dirname, "..", "renderer", "editor.js"), "utf8");
+
+  // The three controls added with arrow-reverse and object copy/paste.
+  for (const id of ["ed-arrow-reverse", "ed-copy", "ed-paste"]) {
+    check(`index.html declares #${id}`, html.includes(`id="${id}"`), true);
+    check(`editor.js wires #${id}`, editor.includes(`$("${id}")`), true);
+  }
+  // Reverse is a KIND-only control: it needs an arrow already selected, so offering it
+  // under the arrow TOOL (where nothing is selected yet) would be a dead button.
+  //
+  // Anchored on the DECLARATION and brace-matched, then stripped of comments. Both
+  // halves are lessons from getting this check wrong twice: matching on the bare name
+  // found the source's own prose ("It is a KIND_CTLS-only control") first and measured
+  // a comment, and a lazy `[\s\S]*?\n  };` then landed on the wrong block's closing
+  // brace entirely. Anchor on syntax, not on a word that also appears in English.
+  const ctlBlock = (name) => {
+    const at = editor.indexOf("const " + name + " = {");
+    if (at < 0) throw new Error(`const ${name} not found in editor.js — renamed?`);
+    const open = editor.indexOf("{", at);
+    let depth = 0;
+    for (let i = open; i < editor.length; i++) {
+      if (editor[i] === "{") depth++;
+      else if (editor[i] === "}" && --depth === 0) {
+        return editor.slice(open, i + 1).replace(/^\s*\/\/.*$/gm, "");
+      }
+    }
+    throw new Error(`unbalanced braces in ${name}`);
+  };
+  check("arrowrev is offered for a selected arrow", ctlBlock("KIND_CTLS").includes('"arrowrev"'), true);
+  check("arrowrev is NOT offered under the bare arrow tool", ctlBlock("TOOL_CTLS").includes("arrowrev"), false);
+  // …and the button's data-ctl has to be that exact string, or it is simply never shown.
+  check("#ed-arrow-reverse carries data-ctl=\"arrowrev\"",
+    /id="ed-arrow-reverse"[^>]*data-ctl="arrowrev"|data-ctl="arrowrev"[^>]*id="ed-arrow-reverse"/.test(html), true);
+  // Every new label/tooltip must be translatable (BI-10's other half). Two groups,
+  // because they are declared in different files: the buttons are static markup, the
+  // object context menu is built in JS and goes through window.t() at call time.
+  for (const key of [
+    "Đảo chiều",
+    "Đảo chiều mũi tên đang chọn — mũi nhọn sang đầu kia (nhãn đi theo mũi nhọn)",
+    "Sao chép mục đang chọn (Ctrl+C) — giữ Ctrl bấm để chọn nhiều mục; dán được sang trang khác, kể cả sau khi Áp dụng",
+    "Dán mục đã sao chép vào trang đang xem (Ctrl+V)",
+  ]) {
+    check(`index.html uses "${key.slice(0, 28)}…"`, html.includes(key), true);
+    check(`i18n has "${key.slice(0, 28)}…"`, i18n.includes('"' + key + '"'), true);
+  }
+  for (const key of ["Sao chép", "Dán vào trang này", "Xoá mục"]) {
+    check(`the object menu asks for "${key}"`, editor.includes('tr("' + key + '")'), true);
+    check(`i18n has the menu key "${key}"`, i18n.includes('"' + key + '"'), true);
+  }
+  // The paste icon has to exist as a <symbol>, or the button renders blank — a
+  // <use href> at a missing id fails silently, with no console error.
+  check("the ic-paste symbol exists for #ed-paste", html.includes('id="ic-paste"'), true);
+  // The clipboard MUST NOT live on `ed`: reset() and bakePending() both wipe `ed`, and
+  // that would delete the clip on "Áp dụng" — the exact thing this feature promises to
+  // survive. Pinned as a string check because it is a one-word edit to get wrong.
+  check("the clip is a module-level binding, not a field of ed",
+    /\n  let clip = null;/.test(editor) && !/ed\.clip/.test(editor), true);
+}
+
+// GUARD: the case above is only meaningful if those inputs really were outside to
+// begin with — otherwise it would pass with fitShift stubbed out to return zeros.
+check("fit: the cases above genuinely started off the page",
+  [
+    { kind: "box", x: -80, y: 900, w: 120, h: 60 },
+    { kind: "arrow", x1: 580, y1: -20, x2: 700, y2: 40 },
+    { kind: "draw", pts: [{ x: -40, y: 830 }, { x: 20, y: 900 }] },
+    { kind: "cloud", x: 4, y: 4, w: 200, h: 100, bump: 16 },
+    { kind: "cloudpen", bump: 12, pts: [{ x: 590, y: 5 }, { x: 640, y: 60 }] },
+    { kind: "check", x: 588, y: 838, w: 18, h: 18 },
+  ].map((a) => {
+    const s = fitShift(annotBounds(a), ...A4);
+    return s.dx !== 0 || s.dy !== 0;
+  }),
+  [true, true, true, true, true, true]);
 
 console.log(`\nannot-geom: ${pass} pass, ${fail} fail`);
 process.exit(fail ? 1 : 0);
