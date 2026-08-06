@@ -225,6 +225,7 @@ const MENU_STR = {
     zoomReset: "Cỡ gốc (100%)",
     fullscreen: "Toàn màn hình (trọn trang)",
     help: "Trợ giúp",
+    guide: "Hướng dẫn sử dụng",
     settings: "Cài đặt…",
   },
   en: {
@@ -267,6 +268,7 @@ const MENU_STR = {
     zoomReset: "Actual Size (100%)",
     fullscreen: "Full Screen (fit page)",
     help: "Help",
+    guide: "User Guide",
     settings: "Settings…",
   },
 };
@@ -376,7 +378,16 @@ function buildMenu(lang) {
     },
     {
       label: L.help,
-      submenu: [{ label: L.settings, click: send("settings") }],
+      submenu: [
+        // F1 keeps `registerAccelerator` at its default (true), unlike Ctrl+P / Ctrl+Z /
+        // Delete / F11 above. Those are handed to the renderer because it has to check
+        // what is focused first (a Delete while typing must not delete pages). Nothing
+        // in the app types F1, so letting Electron own it is both correct and one less
+        // key path in the renderer's keydown ladder.
+        { label: L.guide, accelerator: "F1", click: send("guide") },
+        { type: "separator" },
+        { label: L.settings, click: send("settings") },
+      ],
     },
   ];
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));

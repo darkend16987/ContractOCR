@@ -859,43 +859,26 @@
     afterSelectionChange();
   }
   // Everything the UI has to re-read once the selection changes, in one place so
-  // `select` and `toggleSelect` cannot fall out of step (they did, on the hint: the
-  // group message was unreachable from `select`, which clears the group one line
-  // earlier, and `toggleSelect` reset the hint to the generic one).
+  // `select` and `toggleSelect` cannot fall out of step.
+  //
+  // This used to also write a gesture hint into #ed-hint (a generic one, a separate
+  // arrow one, and a group one). All of that moved to Trợ giúp → Hướng dẫn sử dụng
+  // (renderer/help.js): a paragraph of instructions parked permanently in the edit bar
+  // is what inflated the bar to 381px tall on a narrow window (BI-41), and it was
+  // Vietnamese-only in English mode because #ed-hint is in i18n's SKIP_IDS. #ed-hint
+  // survives as a TRANSIENT STATUS slot only — see setEdStatus below.
   function afterSelectionChange() {
     syncControls();
     if (ed.tool === "select") syncCtlVisibility("select");
     updateFmtPanel(); // reflect a newly-selected text box (or hide otherwise)
-    if (ed.selMore.size) {
-      setSelHint(`Đang chọn ${ed.selMore.size + 1} mục — kéo để di chuyển cả nhóm; Ctrl+C để sao chép; Delete để xoá cả nhóm.`);
-      return;
-    }
-    // Discoverability: the editable kinds reopen their editor on double-click, and an
-    // arrow additionally has grips + Đảo chiều that nothing else on the bar hints at.
-    const hit = ed.sel != null ? findAnnot(ed.sel) : null;
-    const k = hit && hit.a.kind;
-    setSelHint(k === "arrow" ? ARROW_HINT : k === "text" || k === "note" ? "Bấm đúp để sửa nội dung." : null);
   }
   function deselect() {
     if (ed.sel == null) return;
     ed.sel = null;
     ed.selMore.clear();
     syncOverlays();
-    setSelHint(null);
     if (ed.tool === "select") syncCtlVisibility("select");
     updateFmtPanel();
-  }
-  const SELECT_HINT = "Kéo để di chuyển; 4 góc để đổi cỡ (giữ Shift = giữ đúng tỷ lệ); giữ Ctrl bấm để chọn nhiều mục; Ctrl+C / Ctrl+V (hoặc bấm phải) để sao chép sang trang khác; Delete để xoá.";
-  // Arrows get their own line: their gesture set is genuinely different (two end grips
-  // instead of four corner grips, plus Đảo chiều), and the generic hint would send the
-  // user hunting for corners an arrow does not have.
-  const ARROW_HINT = "Kéo thân để di chuyển; kéo 2 đầu tròn để xoay / đổi độ dài (giữ Shift = khoá góc 15°); \"Đảo chiều\" để lật mũi nhọn; bấm đúp để sửa nhãn.";
-  // Update the edit-bar readout for the select tool. `null` restores the generic
-  // select hint; the per-tool hints in setTool own the same slot when other tools
-  // are active, so this only writes while the select tool is current.
-  function setSelHint(text) {
-    const el = $("ed-hint");
-    if (el && ed.tool === "select") el.textContent = text || SELECT_HINT;
   }
   function deleteSelected() {
     if (ed.sel == null) return;
@@ -910,7 +893,6 @@
     ed.sel = null;
     ed.selMore.clear();
     syncOverlays();
-    setSelHint(null);
     if (ed.tool === "select") syncCtlVisibility("select");
     if (hadNote && window.updateComments) window.updateComments();
   }
@@ -1500,7 +1482,9 @@
           }
         } else {
           ed._poly = { page: drag.page, id: drag.id, layer: drag.layer, cx: null, cy: null };
-          $("ed-hint").textContent = "Bấm thêm điểm; bấm vào điểm đầu (hoặc nhấn Enter / bấm đúp) để đóng mây. Esc để huỷ.";
+          // Kept when the per-tool instruction hints were removed: this is not advice,
+          // it is the ONLY signal that a polygon is currently open and how to close it.
+          setEdStatus("Bấm thêm điểm; bấm vào điểm đầu (hoặc nhấn Enter / bấm đúp) để đóng mây. Esc để huỷ.");
         }
       }
       const layer = drag.layer, page = drag.page;
@@ -1589,7 +1573,7 @@
         dropLastEdUndo();
       }
     }
-    setTool("cloudpen"); // reset the hint text; stays on the tool for the next cloud
+    setTool("cloudpen"); // clears the "polygon open" status; stays on the tool for the next cloud
     renderLayer(info.layer, info.page);
   }
 
@@ -2917,7 +2901,7 @@
     ed._dimPending = null;
     $("dim-modal").hidden = true;
     renderLayer(p.layer, p.page);
-    if (ed.tool === "measure") setTool("measure"); // refresh the hint to "calibrated"
+    if (ed.tool === "measure") setTool("measure"); // refresh the scale status to "đã hiệu chuẩn"
     toast("Đã hiệu chuẩn tỷ lệ — kéo các đoạn khác để tự ghi kích thước.", "good");
   }
 
@@ -3137,26 +3121,29 @@
     const cpick = $("ed-color");
     if (cpick) cpick.value = ed[colorSlotFor(tool)];
     syncCtlVisibility(tool);
-    const hints = {
-      select: SELECT_HINT,
-      text: "Bấm lên trang để thêm hộp văn bản (Ctrl+Enter để xong).",
-      highlight: "Kéo để tô sáng vùng.",
-      draw: "Giữ chuột và kéo để vẽ. Giữ thêm Shift để nét thành đoạn thẳng; thả Shift là vẽ tay tiếp.",
-      box: "Kéo để khoanh một vùng (khung chữ nhật).",
-      ellipse: "Kéo để khoanh vùng bằng elip / hình tròn.",
-      cloud: "Kéo để khoanh mây (revision cloud) quanh vùng cần lưu ý.",
-      cloudpen: "Giữ chuột kéo để vẽ mây tự do, hoặc bấm từng điểm rồi bấm điểm đầu / Enter / bấm đúp để đóng.",
-      arrow: "Kéo từ gốc tới đích để vẽ mũi tên.",
-      note: "Bấm lên trang để đặt ghi chú; gõ nội dung rồi Ctrl+Enter.",
-      image: "Bấm lên trang để đặt ảnh đã chọn.",
-      redact: "Kéo để che — nội dung gốc sẽ bị xoá khi áp dụng.",
-      check: "Bấm để đóng dấu ✓ cỡ mặc định, hoặc kéo để tự chọn cỡ.",
-      cross: "Bấm để đóng dấu ✗ cỡ mặc định, hoặc kéo để tự chọn cỡ.",
-      measure: ed.measureCal
-        ? `Kéo một đoạn để tự ghi kích thước (tỷ lệ đã hiệu chuẩn, đơn vị ${ed.measureUnit}). Bấm "Hiệu chuẩn lại" để đổi.`
-        : "Kéo đoạn có kích thước ĐÃ BIẾT rồi nhập số thật để hiệu chuẩn; sau đó các đoạn khác tự ra số.",
-    };
-    $("ed-hint").textContent = hints[tool] || "";
+    // #ed-hint used to hold a per-tool instruction sentence for all 15 tools. Those
+    // moved to Trợ giúp → Hướng dẫn sử dụng; the slot is now cleared on every tool
+    // change and only ever holds TRANSIENT STATUS (see setEdStatus). Clearing here is
+    // load-bearing: the cloud-pen's in-progress line and the measure scale below would
+    // otherwise stay behind after switching tools.
+    setEdStatus(tool === "measure" ? measureStatus() : "");
+  }
+
+  // The one writer for #ed-hint. Deliberately NOT a place for instructions — those
+  // belong in help.js, where they are translated and cannot inflate the edit bar
+  // (BI-41). Only state the user cannot get anywhere else goes here.
+  function setEdStatus(text) {
+    const el = $("ed-hint");
+    if (el) el.textContent = text || "";
+  }
+
+  // Whether the measure tool has a scale yet. This is NOT a hint: the first drag
+  // behaves completely differently in the two states (it opens the calibration dialog
+  // asking for a real length, versus auto-labelling from the stored ratio), and
+  // "Hiệu chuẩn lại" is shown for the tool either way — so with this line gone there
+  // is no way at all to tell which mode you are in.
+  function measureStatus() {
+    return ed.measureCal ? `Tỷ lệ: đã hiệu chuẩn · ${ed.measureUnit || ""}`.trim() : "Tỷ lệ: chưa hiệu chuẩn";
   }
 
   // Fill the text-box "Font máy" optgroup from the sidecar's /fonts list. Runs
@@ -3716,6 +3703,16 @@
 
   window.addEventListener("keydown", (e) => {
     if (!ed.active) return;
+    // A modal on top owns the keyboard. Without this, focus sitting on a modal BUTTON
+    // (not an input, so `typing` below is false) leaks keys down here: Delete would
+    // silently destroy the selected annotation behind the dialog, a bare letter would
+    // switch tools, and Esc would abandon a half-drawn polygon instead of closing the
+    // dialog. Trợ giúp → Hướng dẫn sử dụng made this reachable — it opens over a live
+    // annotate session — but the same hole was already there for Watermark / Điền form /
+    // Áp nhiều trang / Hiệu chuẩn. Safe to bail on all of them: every one of those four
+    // modals has its own Hủy button (index.html) and its inputs carry their own keydown
+    // listeners, so nothing in them depends on this handler.
+    if (document.querySelector(".modal:not([hidden])")) return;
     const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement && document.activeElement.tagName);
     // A polygon cloud in progress: Enter closes it; Esc / Delete abandon it.
     // Handle here before the generic ladders so they don't corrupt _poly state.

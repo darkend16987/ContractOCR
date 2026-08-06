@@ -4395,6 +4395,13 @@ function isTyping() {
   return false;
 }
 
+// True when any dialog is up. Keyboard shortcuts must yield to it: isTyping() alone is
+// not enough, because focus can sit on a modal's BUTTON or on a scrollable pane inside
+// it, and then a bare Delete / ArrowDown leaks through to the document behind.
+function modalOpen() {
+  return !!document.querySelector(".modal:not([hidden])");
+}
+
 window.addEventListener("keydown", (e) => {
   if (e.ctrlKey || e.metaKey) {
     const k = e.key.toLowerCase();
@@ -4466,7 +4473,7 @@ window.addEventListener("keydown", (e) => {
     !isTyping() &&
     !(window.Capture && window.Capture.active) &&
     $("overlay").hidden &&
-    !document.querySelector(".modal:not([hidden])") &&
+    !modalOpen() &&
     ($("compare-view") ? $("compare-view").hidden : true) &&
     ($("overlay-view") ? $("overlay-view").hidden : true)
   ) {
@@ -4485,6 +4492,11 @@ window.addEventListener("keydown", (e) => {
     (isPrev || isNext) &&
     state.numPages &&
     !isTyping() &&
+    // A modal owns these keys. isTyping() only covers its INPUTs — with focus on a modal
+    // BUTTON or a scrollable pane it is false, and this branch then preventDefaults the
+    // dialog's own scroll and jumps the document underneath instead. Trợ giúp → Hướng dẫn
+    // sử dụng is a whole page of scrollable text, so ↓/PageDown there has to scroll it.
+    !modalOpen() &&
     $("overlay").hidden &&
     (!cmpView || cmpView.hidden) &&
     (!ovView || ovView.hidden) &&
@@ -4502,11 +4514,14 @@ window.addEventListener("keydown", (e) => {
     if (next !== cur) scrollToPage(next);
     return;
   }
-  // Delete removes the selected pages — but never while typing or in an editor
-  // (the overlay/text editors own Delete for their own selection).
+  // Delete removes the selected pages — but never while typing, in an editor (the
+  // overlay/text editors own Delete for their own selection), or under a modal. That
+  // last guard is not cosmetic: with a dialog open and focus on one of ITS buttons
+  // (isTyping() false), a stray Delete used to silently drop the ticked pages behind it.
   if (
     e.key === "Delete" &&
     !isTyping() &&
+    !modalOpen() &&
     !(window.Editor && window.Editor.active) && // property, not a method — see above
     state.selected &&
     state.selected.size
@@ -4536,6 +4551,10 @@ window.desktop.onMenuCommand((cmd) => {
     zoomOut: () => zoom(-0.2),
     zoomReset,
     presentation: () => togglePresentation(),
+    // Trợ giúp → Hướng dẫn sử dụng (F1). Resolved at call time, so help.js loading
+    // after this file is fine — and a missing module degrades to a no-op rather than
+    // throwing inside the menu handler.
+    guide: () => window.Help && window.Help.open(),
     settings: openSettings,
     encrypt: openEncrypt,
     extractImages: extractImages,

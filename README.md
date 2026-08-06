@@ -21,6 +21,7 @@ tạo PDF tìm-kiếm-được · **dịch PDF (AI) giữ layout** (PDF có text
 **danh sách trang tự trượt theo trang đang đọc** (cuộn tài liệu → thumbnail trang đó sáng lên và trượt vào khung nhìn, như Acrobat/Foxit) ·
 **tự lưu & khôi phục khi sự cố** (máy tắt đột ngột / quên lưu → mở lại mời khôi phục) ·
 **ký số bằng USB token** (VNPT-CA / Viettel-CA / FPT-CA / BKAV… qua kho chứng thư Windows — chữ ký nhìn thấy + dấu thời gian TSA) ·
+**trang Hướng dẫn sử dụng ngay trong app** (Trợ giúp → Hướng dẫn sử dụng · **F1** · nút **?** — 13 mục theo từng chức năng, mục lục bên trái, ô tìm **gõ không dấu vẫn ra**, song ngữ Việt / Anh; thay cho các dòng hướng dẫn trước đây chiếm chỗ thường trực trên thanh công cụ) ·
 kèm **OCR + bóc tách hợp đồng** bằng AI. Giao diện **song ngữ Việt / Anh**, kèm
 **hai badge trạng thái tách bạch** (engine trên máy · API key cho tính năng AI —
 chấm đặc là sẵn sàng, chấm rỗng là chưa; bấm vào badge API để nhập key).

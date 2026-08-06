@@ -4,7 +4,97 @@
 > [DESIGN.md](DESIGN.md) (kiến trúc), [ROADMAP.md](ROADMAP.md) (tiến độ chi tiết),
 > [SETUP.md](SETUP.md) (dựng môi trường).
 
-_Cập nhật: 2026-08-04 · v0.2.52 đã phát hành (dưới đây)_
+_Cập nhật: 2026-08-06 · v0.2.53 đã phát hành (dưới đây)_
+
+> **v0.2.53 — bỏ dòng hướng dẫn thường trực trên thanh công cụ · thêm trang Hướng dẫn sử
+> dụng vào menu Trợ giúp · chốt lỗ phím tắt rơi xuyên hộp thoại** (chỉ renderer + main menu
+> + test + tài liệu — **sidecar KHÔNG đổi, không cần rebuild**; `check-sidecar-fresh` xanh:
+> sidecar dựng từ `e336fcc7` vẫn khớp source Python).
+>
+> Phản hồi người dùng: thanh **Chú thích** có một đoạn hướng dẫn dài nằm thường trực
+> ("Kéo để di chuyển; 4 góc để đổi cỡ…"), xin bỏ đi và chuyển thành trang hướng dẫn trong
+> menu Trợ giúp.
+>
+> **1. Bỏ hint tĩnh — và đó cũng là bỏ một đường vỡ đã ghi sổ.** Toàn bộ chữ hướng dẫn
+> thường trực chỉ đến từ **hai** ô: `#ed-hint` (thanh Chú thích) và `#te-hint` (thanh Sửa
+> nội dung). Đã bỏ: `SELECT_HINT`, `ARROW_HINT`, hint nhóm, "Bấm đúp…", **15 câu hint theo
+> công cụ**, và cả hàm `setSelHint()`. Ở `#te-hint` chỉ cắt phần **ra lệnh**, giữ **số đếm**
+> ("N đoạn chữ trên trang X" / "N đoạn đã sửa") vì đó là trạng thái thật.
+>
+> Hai lý do khiến việc bỏ là **lợi**, không phải rủi ro: (a) `#ed-hint` chính là thứ
+> **BI-41** ghi lại — bị bóp `min-width: 0` nó xuống dòng dựng đứng ~12 dòng và đẩy
+> `.edit-bar` cao **381px**, ăn mất vùng xem trang; (b) `ed-hint`/`te-hint` nằm trong
+> `SKIP_IDS` của `i18n.js` và `editor.js` **chưa bao giờ** gọi `I18N`, nên mọi câu đó
+> **chỉ có tiếng Việt kể cả khi app đang ở English**.
+>
+> **Đo lại bằng probe Electron sau khi bỏ** (công cụ *Khoanh mây*, công cụ tốn bề rộng
+> nhất): thanh cao **86px** ở 1366px và 1024px, **127px** ở 900px, nút **Xong** bấm được ở
+> cả ba. 14/15 công cụ ô hint **rỗng hoàn toàn**.
+>
+> **Giữ lại đúng hai thứ, cả hai là trạng thái động** — ghi qua **một** hàm duy nhất
+> `setEdStatus()`: dòng "đang vẽ mây từng điểm, Enter để đóng" (tín hiệu **duy nhất** cho
+> biết có polygon đang mở), và **tỷ lệ của công cụ Đo** (`Tỷ lệ: chưa/đã hiệu chuẩn`). Cái
+> thứ hai là **bắt buộc giữ**: hint cũ là chỗ duy nhất cho biết đã hiệu chuẩn hay chưa, mà
+> lần kéo đầu **hành xử khác hẳn** giữa hai trạng thái (mở hộp thoại hỏi chiều dài thật ↔
+> tự ghi số theo tỷ lệ), và nút "Hiệu chuẩn lại" luôn hiện bất kể trạng thái nên không thay
+> thế được. `setTool()` **xoá trắng** ô mỗi lần đổi công cụ — không có bước đó thì hai dòng
+> trên đọng lại.
+>
+> **2. Trang Hướng dẫn sử dụng** — `renderer/help.js` (mới) + `#help-modal` + khối
+> `.help-*` trong `app.css`. Vào từ **ba** đường: menu **Trợ giúp → Hướng dẫn sử dụng**,
+> **F1** (accelerator do Electron giữ, đã kiểm không đụng 15 accelerator còn lại), và nút
+> **?** trên hàng 1 cạnh ⚙. Nút `?` là **có chủ ý**: đang lấy hướng dẫn ra khỏi giao diện
+> thì bản thay thế phải chạm được **từ** giao diện, không chỉ từ menu native.
+>
+> **13 mục, 233 chuỗi, song ngữ VI + EN**: Bắt đầu · Xem & điều hướng · Quản lý trang ·
+> **Chú thích & đánh dấu** (chi tiết nhất — toàn bộ cử chỉ vừa bỏ, từng công cụ một, kèm
+> mục "cái gì dán chết / cái gì sửa lại được") · Sửa nội dung · Ghi chú & bình luận · OCR,
+> Bóc tách & Dịch · So sánh & Chồng lớp · Xuất & chuyển đổi · Ký số · In · Phím tắt ·
+> Offline, bảo mật & sự cố. Mục lục bên trái, ô tìm **fold dấu** nên gõ "mui ten" ra "mũi
+> tên" và "dao chieu" ra "Đảo chiều". Đóng bằng **Đóng / Esc / bấm nền**.
+>
+> **Kiến trúc — đừng viết nội dung hướng dẫn vào `index.html`.** Nội dung là **cấu trúc dữ
+> liệu** `SECTIONS` trong `help.js`, mỗi chuỗi một cặp `{ vi, en }`; `#help-modal` chỉ là
+> khung rỗng mang `data-no-i18n`. Lý do: `i18n.js` `buildRegistry()` chỉ chạy **một lần**
+> lúc DOMContentLoaded và chỉ nhận text node có chuỗi **khớp đúng** một khoá trong bảng EN
+> — viết inline thì vừa là hàng trăm node phải duyệt, vừa **đứng nguyên tiếng Việt ở chế độ
+> English**, đúng cái khuyết mà `#ed-hint` vừa bị. Render **lười** ở lần mở đầu (khởi động
+> app không tốn thêm gì) và render lại khi có `i18n:changed`. Markup inline chỉ có `**đậm**`
+> và `` `mã` ``, **escape HTML trước** rồi mới format.
+>
+> **3. Chốt phím tắt khi có modal — lỗ mất dữ liệu có sẵn từ trước, xem BI-47 (mới).**
+> `isTyping()` chỉ đúng khi focus nằm trên INPUT/TEXTAREA/SELECT. Focus nằm trên **nút** của
+> hộp thoại, hoặc trên khung cuộn `#help-doc` (`tabindex="0"`), thì `isTyping()` = false và
+> phím **rơi xuống tài liệu phía sau**: `Delete` **xoá thật** các trang đang tick (`app.js`)
+> hoặc annotation đang chọn (`editor.js`) — không hỏi, không dấu vết; chữ cái đơn đổi công
+> cụ sau lưng hộp thoại; `↑`/`↓`/`PageUp`/`PageDown` `preventDefault()` chặn cuộn của **chính
+> hộp thoại** rồi nhảy trang tài liệu; `Esc` huỷ polygon đang vẽ dở. Lỗ này **đã có** cho
+> Watermark / Điền form / Áp nhiều trang / Hiệu chuẩn; trang Hướng dẫn chỉ làm nó lộ ra vì
+> nó mở được **ngay trong lúc đang Chú thích** và mang theo một vùng văn bản dài phải cuộn.
+> Sửa: thêm `modalOpen()` vào `app.js` (dùng lại cho cả chốt Esc-thoát-toàn-màn-hình) và một
+> chốt `return` ở đầu `window keydown` của `editor.js`. **Đã kiểm an toàn:** cả 4 modal của
+> editor đều có nút **Hủy** riêng và các ô nhập gắn `keydown` **thẳng lên input**.
+>
+> **4. Lưới test mới: `npm run test:help`** (`desktop/test/help-content.test.js`).
+> `help.js` xuất `SECTIONS`/`UI`/`fold`/`fmt` qua CommonJS khi chạy dưới Node (đúng khuôn
+> `page-range.js`), nên kiểm được **không cần probe**: mọi cặp `{vi, en}` phải đủ hai bên
+> (thiếu EN thì im lặng tụt về VI — đúng lớp lỗi cần chặn), `**`/`` ` `` phải cân, mọi
+> block phải đúng một kind, số ô mỗi hàng bảng phải khớp head, `fmt()` phải escape **trước**
+> khi format, `fold()` phải bỏ dấu và `đ→d`, **15 phím công cụ phải khớp `TOOL_KEYS`**, và
+> **mọi cử chỉ từng chỉ sống trong hint cũ phải còn được ghi ở đâu đó**. Lưới này đã bắt
+> được 2 lỗi thật lúc viết: một chuỗi dùng `*nghiêng*` mà `fmt()` không hỗ trợ (sẽ hiện dấu
+> `*` thô trên giao diện).
+>
+> **Kiểm chứng:** probe Electron **49/49** xanh (offscreen + đếm paint — `capturePage()` với
+> cửa sổ ẩn trả **frame cũ**, rất dễ tin nhầm) · probe main process xanh toàn bộ (menu VI/EN,
+> F1 độc quyền, click relay đúng lệnh `guide`) · **11/11** lưới desktop + `test:help` ·
+> **11/11** test Python.
+>
+> **Vỡ khi:** thấy lại chữ hướng dẫn dài trên thanh Chú thích · công cụ Đo không cho biết đã
+> hiệu chuẩn chưa · vẽ mây từng điểm không có dòng nhắc cách đóng, hoặc đổi công cụ mà chữ
+> còn đọng · `Delete` khi đang mở một hộp thoại làm mất trang/annotation phía sau ·
+> `↓` trong trang Hướng dẫn nhảy trang tài liệu thay vì cuộn hướng dẫn · trang Hướng dẫn
+> đứng nguyên tiếng Việt ở chế độ English.
 
 > **v0.2.52 — mây bake đúng chiều trên trang xoay · copy–paste vật thể · sửa mũi tên · khe
 > chèn khi kéo sắp xếp trang** (chỉ renderer + test + tài liệu — **sidecar KHÔNG đổi, không

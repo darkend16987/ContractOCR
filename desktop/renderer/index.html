@@ -56,6 +56,9 @@
         <symbol id="ic-highlight" viewBox="0 0 24 24"><path d="M3 21h6"/><path d="M9 16l-2 4 6-1 8.5-8.5a2 2 0 0 0-3-3L9 16z"/></symbol>
         <symbol id="ic-square" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="2"/></symbol>
         <symbol id="ic-circle" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/></symbol>
+        <!-- Hướng dẫn sử dụng (#btn-help). The dot is filled + stroke:none so it stays a
+             dot at 16px instead of collapsing into the stroke of the question mark. -->
+        <symbol id="ic-help" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M9.2 9.3a2.9 2.9 0 0 1 5.6 1c0 1.9-2.8 2.3-2.8 4"/><circle cx="12" cy="17.6" r="1" fill="currentColor" stroke="none"/></symbol>
         <symbol id="ic-cloud" viewBox="0 0 24 24"><path d="M6.5 19a3.5 3.5 0 0 1-.5-6.96 4.5 4.5 0 0 1 8.9-1.2A3.5 3.5 0 1 1 16.5 19z"/></symbol>
         <symbol id="ic-arrow" viewBox="0 0 24 24"><path d="M6 18L18 6M9 6h9v9"/></symbol>
         <symbol id="ic-tick" viewBox="0 0 24 24"><path d="M4 12.5l5.5 5.5L20 6"/></symbol>
@@ -132,6 +135,12 @@
              vào chế độ Chú thích/Sửa nội dung, mà panel ghi chú lại cố ý dùng được
              ngay trong lúc chú thích — xem updateToolbar() trong app.js. -->
         <button id="btn-comments" class="ghost icon-only" disabled title="Danh sách ghi chú — xem mọi comment trong tài liệu, bấm để nhảy tới"><svg class="ic"><use href="#ic-message"/></svg><span id="btn-comments-count" class="btn-badge" hidden></span></button>
+        <!-- Hướng dẫn sử dụng. Also on the native menu (Trợ giúp) and F1, but it needs
+             a door ON the interface: the per-tool instruction lines that used to sit in
+             the Chú thích bar were removed in favour of this page, and a native menu
+             most users never open is not a replacement for them. Row 1 (not .edit-bar),
+             so this costs nothing against the BI-41 width budget. -->
+        <button id="btn-help" class="ghost icon-only" title="Hướng dẫn sử dụng (F1)"><svg class="ic"><use href="#ic-help"/></svg></button>
         <button id="btn-settings" class="ghost icon-only" title="Cài đặt — API key cho Bóc tách"><svg class="ic"><use href="#ic-settings"/></svg></button>
         <!-- Two separate readiness signals, deliberately side by side. "OCR: sẵn sàng"
              on its own used to read as "everything works", but the AI features
@@ -291,6 +300,11 @@
       <button id="ed-copy" class="icon-only" title="Sao chép mục đang chọn (Ctrl+C) — giữ Ctrl bấm để chọn nhiều mục; dán được sang trang khác, kể cả sau khi Áp dụng"><svg class="ic"><use href="#ic-copy"/></svg></button>
       <button id="ed-paste" class="icon-only" title="Dán mục đã sao chép vào trang đang xem (Ctrl+V)"><svg class="ic"><use href="#ic-paste"/></svg></button>
       <button id="ed-delete" title="Xoá mục đang chọn (Delete)">Xoá mục</button>
+      <!-- Transient STATUS only (editor.js setEdStatus): "polygon open, Enter closes it"
+           and the measure tool's calibrated/not-calibrated scale. The per-tool instruction
+           sentences that used to live here moved to Trợ giúp → Hướng dẫn sử dụng — parked
+           permanently in a flex bar they rewrapped vertically and pushed the bar to 381px
+           tall (BI-41), and they were untranslated because this id is in i18n SKIP_IDS. -->
       <span id="ed-hint" class="readout"></span>
       <div class="spacer"></div>
       <button id="ed-exit" class="ed-discard" title="Bỏ mọi thay đổi chưa ghi và thoát (Ctrl+Z để hoàn tác từng bước)">Hủy bỏ</button>
@@ -1205,6 +1219,33 @@
       </div>
     </div>
 
+    <!-- Hướng dẫn sử dụng (Trợ giúp → Hướng dẫn sử dụng · F1 · the ? button on row 1).
+         Deliberately an EMPTY SHELL: every word of the guide lives in renderer/help.js as
+         a {vi, en} data structure and is rendered into #help-toc / #help-doc on first
+         open. Two reasons it is not static markup here:
+           1. i18n.js registers static text nodes ONCE at DOMContentLoaded and only when
+              the exact string is a key in its EN table — a guide written inline would be
+              hundreds of nodes to walk and would sit in Vietnamese in English mode, which
+              is precisely the flaw the removed #ed-hint lines had.
+           2. Rendering on first open keeps app startup untouched.
+         Do NOT move guide copy into this file. -->
+    <div class="modal" id="help-modal" hidden data-no-i18n>
+      <div class="modal-card help-card" role="dialog" aria-modal="true" aria-labelledby="help-title">
+        <!-- data-no-i18n on the modal (see i18n.js inSkip): help.js owns EVERY string in
+             here, chrome included, so the registry must not also try to translate the
+             heading/placeholder/button and fight it on a language switch. -->
+        <div class="help-head">
+          <h3 id="help-title">Hướng dẫn sử dụng</h3>
+          <input type="search" id="help-search" placeholder="Tìm trong hướng dẫn…" autocomplete="off" spellcheck="false" />
+          <button id="help-close" class="ghost">Đóng</button>
+        </div>
+        <div class="help-body">
+          <nav class="help-toc" id="help-toc" aria-label="Mục lục hướng dẫn"></nav>
+          <div class="help-doc" id="help-doc" tabindex="0"></div>
+        </div>
+      </div>
+    </div>
+
     <!-- pdf-lib: UMD global `PDFLib`. pdf.js: UMD global `pdfjsLib`. Both vendored offline. -->
     <script src="vendor/pdf-lib.min.js"></script>
     <script src="vendor/pdf.min.js"></script>
@@ -1234,5 +1275,9 @@
     <script src="compare.js"></script>
     <script src="capture.js"></script>
     <script src="sign.js"></script>
+    <!-- help.js last: it only needs $ from app.js and window.I18N from i18n.js, both of
+         which are already up, and nothing else in the renderer depends on window.Help at
+         load time (app.js resolves it lazily inside the menu handler). -->
+    <script src="help.js"></script>
   </body>
 </html>

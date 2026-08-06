@@ -974,6 +974,103 @@ body.editing .text-layer, body.text-editing .text-layer {
 .empty-actions { margin: 14px 0 4px; }
 .empty-actions button { margin: 0 auto; }
 
+/* ---- Hướng dẫn sử dụng (help.js) ----
+   A reading surface, not a form, so it breaks the .modal-card defaults deliberately:
+   fixed 380px width → wide, and `overflow: auto` on the CARD → `hidden`, because the
+   scroll has to belong to .help-doc alone. If the card scrolled too, the sticky heading
+   and the table of contents would slide away with the text.
+   Every colour comes from the theme variables, so light mode needs no separate rules. */
+.help-card {
+  width: min(1040px, 94vw);
+  max-height: min(86vh, 900px);
+  height: 86vh;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.help-head {
+  display: flex; align-items: center; gap: 10px;
+  padding: 14px 18px; border-bottom: 1px solid var(--line);
+  flex: 0 0 auto;
+}
+.help-head h3 { margin: 0; flex: 0 0 auto; font-size: 15px; }
+/* The search box takes the slack so the Đóng button stays pinned right. */
+.help-head input[type="search"] {
+  flex: 1 1 auto; min-width: 0;
+  font: inherit; font-size: 13px; padding: 6px 9px;
+  background: var(--bg-3); color: var(--fg);
+  border: 1px solid var(--bg-3); border-radius: 8px;
+}
+.help-head input[type="search"]:focus { outline: none; border-color: var(--accent); }
+.help-head button { flex: 0 0 auto; }
+.help-body { display: flex; min-height: 0; flex: 1 1 auto; }
+/* Table of contents: its own scroller, so a long list never pushes the guide off-screen. */
+.help-toc {
+  flex: 0 0 232px;
+  border-right: 1px solid var(--line);
+  padding: 10px 8px; overflow: auto;
+  display: flex; flex-direction: column; gap: 2px;
+}
+.help-toc-item {
+  text-align: left; font: inherit; font-size: 12.5px; line-height: 1.35;
+  padding: 7px 9px; border: 0; border-radius: 8px; cursor: pointer;
+  background: transparent; color: var(--muted);
+}
+.help-toc-item:hover { background: var(--bg-3); color: var(--fg); }
+.help-toc-item.active { background: var(--accent); color: var(--accent-fg); }
+.help-doc { flex: 1 1 auto; overflow: auto; padding: 4px 22px 26px; min-width: 0; }
+.help-doc:focus { outline: none; }
+.help-sec { padding-top: 18px; }
+.help-sec + .help-sec { border-top: 1px solid var(--line); margin-top: 4px; }
+.help-sec > h3 { margin: 0 0 10px; font-size: 16px; color: var(--fg); }
+.help-h { margin: 18px 0 6px; font-size: 13px; color: var(--accent); font-weight: 700; }
+.help-doc p { margin: 0 0 10px; font-size: 13px; line-height: 1.65; color: var(--fg); }
+.help-ul { margin: 0 0 12px; padding-left: 20px; }
+.help-ul li { font-size: 13px; line-height: 1.65; color: var(--fg); margin-bottom: 7px; }
+.help-doc code {
+  font-family: ui-monospace, "Cascadia Code", Consolas, monospace; font-size: 12px;
+  background: var(--bg-3); border-radius: 4px; padding: 1px 5px; white-space: nowrap;
+}
+/* Callout: the "do not lose your work" rules. Accent bar rather than a filled box so a
+   long one does not turn into a wall of colour. */
+.help-note {
+  border-left: 3px solid var(--accent);
+  background: var(--bg-3);
+  border-radius: 0 8px 8px 0;
+  padding: 10px 12px !important;
+  margin: 0 0 12px !important;
+}
+/* Tables scroll inside their own box: the offline matrix is wider than a narrow window,
+   and the card itself must never scroll sideways. */
+.help-table {
+  display: block; overflow-x: auto;
+  width: 100%; border-collapse: collapse; margin: 0 0 14px; font-size: 12.5px;
+}
+.help-table th, .help-table td {
+  border: 1px solid var(--line); padding: 7px 9px; text-align: left;
+  vertical-align: top; line-height: 1.55; color: var(--fg);
+}
+.help-table th { background: var(--bg-3); font-weight: 700; }
+.help-keys td:first-child { width: 1%; white-space: nowrap; }
+.help-doc kbd {
+  font-family: ui-monospace, "Cascadia Code", Consolas, monospace; font-size: 11.5px;
+  background: var(--bg-3); border: 1px solid var(--line); border-bottom-width: 2px;
+  border-radius: 5px; padding: 2px 6px; color: var(--fg); white-space: nowrap;
+}
+.help-empty { color: var(--muted) !important; padding-top: 18px; }
+/* Narrow window: the contents list moves above the text instead of squeezing it to a
+   column too thin to read. Same threshold family as the rest of the app's layout. */
+@media (max-width: 900px) {
+  .help-body { flex-direction: column; }
+  .help-toc {
+    flex: 0 0 auto; max-height: 132px;
+    border-right: 0; border-bottom: 1px solid var(--line);
+    flex-direction: row; flex-wrap: wrap;
+  }
+  .help-doc { padding: 4px 14px 22px; }
+}
+
 /* Combine-PDFs modal: reorderable file list. */
 .combine-card { width: 460px; }
 .combine-list { list-style: none; margin: 0 0 10px; padding: 0; display: flex; flex-direction: column; gap: 6px; max-height: 44vh; overflow: auto; }

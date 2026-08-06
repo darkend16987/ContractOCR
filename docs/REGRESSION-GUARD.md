@@ -698,6 +698,20 @@ chỉ tên hàm.
   "cho gọn một hàng" — nó là thứ duy nhất đang giữ nút commit trên màn hình.
 - **Vỡ khi:** thu nhỏ cửa sổ khi đang Chú thích → không thấy "Xong"/"Hủy bỏ" · hoặc chọn
   công cụ Khoanh mây thì thanh công cụ phình cao che mất trang.
+- **Cập nhật v0.2.53 — `#ed-hint` không còn là chỗ để chữ hướng dẫn.** Câu hướng dẫn theo
+  từng công cụ (15 câu) + `SELECT_HINT` / `ARROW_HINT` / hint nhóm đã bị **bỏ**, chuyển sang
+  **Trợ giúp → Hướng dẫn sử dụng** (`renderer/help.js`). Ô `#ed-hint` giữ lại nhưng **chỉ**
+  cho **trạng thái tạm**: dòng "đang vẽ mây từng điểm" và tỷ lệ của công cụ Đo — cả hai đều
+  ngắn và phụ thuộc trạng thái. Ghi qua **một** hàm duy nhất `setEdStatus()` trong
+  `editor.js`.
+  - **Luật:** **đừng để chữ có thể dài trở lại ô này.** Đó chính là cái đẩy thanh lên
+    381px. Muốn thêm hướng dẫn thì thêm vào `SECTIONS` của `help.js`, ở đó nó được dịch
+    (VI/EN) và không ảnh hưởng bố cục thanh công cụ. `#ed-hint` nằm trong `SKIP_IDS` của
+    `i18n.js`, nên mọi chữ đặt vào đây vĩnh viễn **không có bản tiếng Anh**.
+  - Đã đo lại bằng probe Electron sau khi bỏ: công cụ *Khoanh mây*, thanh cao **86px** ở
+    1366px và 1024px, **127px** ở 900px, nút **Xong** bấm được ở cả ba.
+  - Lưới: `npm run test:help` (chặn lệch bản dịch VI/EN, markup `**`/`` ` `` không cân,
+    và thiếu bất kỳ cử chỉ nào từng chỉ sống trong hint cũ).
 
 ### BI-42 · ✓ / ✗ và đoạn thẳng Shift dùng **một** bộ số học ở `annot-geom.js`
 - `annot-geom.js` `symbolStrokes()` + `strokeExtend()`; chỗ gọi ở `editor.js`
@@ -859,6 +873,34 @@ chỉ tên hàm.
   thì các mục rời rạc ra · Ctrl+V dán ảnh hệ điều hành không còn chạy · chọn 3 mục rồi
   đổi màu chỉ 1 mục đổi · Esc giữa lúc kéo nhóm chỉ 1 mục về chỗ cũ.
 
+### BI-47 · Phím tắt phải nhường cho modal — `isTyping()` **không** đủ
+- `app.js` `modalOpen()` + hai chỗ gọi trong `window keydown`; `editor.js` chốt ngay đầu
+  `window keydown`.
+- `isTyping()` chỉ đúng khi focus nằm trên **INPUT / TEXTAREA / SELECT**. Focus nằm trên
+  **nút** của hộp thoại, hay trên một khung cuộn được (`#help-doc` có `tabindex="0"`), thì
+  `isTyping()` = **false** và phím rơi xuống tài liệu phía sau:
+  - `Delete` → `deleteSelected()` của `app.js` **xoá thật các trang đang tick**, hoặc
+    `deleteSelected()` của editor **xoá annotation đang chọn** — không dấu vết, không hỏi.
+  - chữ cái đơn → đổi công cụ chú thích sau lưng hộp thoại (`TOOL_KEYS`).
+  - `↑`/`↓`/`PageUp`/`PageDown` → `preventDefault()` chặn cuộn của **chính hộp thoại** rồi
+    **nhảy trang tài liệu** thay vì cuộn nội dung đang đọc.
+  - `Esc` → huỷ polygon đang vẽ dở thay vì đóng hộp thoại.
+- Lỗ này **có sẵn từ trước** cho Watermark / Điền form / Áp nhiều trang / Hiệu chuẩn; nó chỉ
+  lộ ra khi trang **Hướng dẫn sử dụng** (v0.2.53) mở được **ngay trong lúc đang Chú thích**
+  và mang theo cả một vùng văn bản dài phải cuộn được.
+- **Bỏ hết phím ở cấp window khi có modal là an toàn — đã kiểm:** cả 4 modal của editor
+  (`wm-modal`, `dim-modal`, `imgpages-modal`, `form-modal`) đều có nút **Hủy** riêng, và các
+  ô nhập của chúng gắn `keydown` **thẳng lên input**, nên không cái nào phụ thuộc handler
+  cấp window.
+- **Luật:** thêm phím tắt toàn cục nào thì kiểm **cả** `isTyping()` **và** `modalOpen()`.
+  Thêm hộp thoại mới thì nó **phải** dùng đúng class `.modal` — `modalOpen()`, chốt
+  Esc-thoát-toàn-màn-hình và mọi chốt trên đều nhận diện qua class đó, không qua id.
+- **Vỡ khi:** mở một hộp thoại, bấm một **nút** trong đó (không phải ô nhập), rồi bấm
+  `Delete` → trang/annotation phía sau biến mất · hoặc `↓` trong trang Hướng dẫn làm nhảy
+  trang tài liệu thay vì cuộn hướng dẫn.
+
+---
+
 ## 4. Hàm nút thắt (đổi chữ ký = ảnh hưởng diện rộng)
 
 | Hàm | Định nghĩa | Ai gọi |
@@ -896,7 +938,9 @@ chỉ tên hàm.
 | Khôi phục phiên (`src/session.js`, `snapshotSession`, `_closing`, `tab:reserved`) | `docs/SESSION-RESTORE.md` §5.3 (14 mục) · BI-18/19/20 · **mục #12 là hồi quy của khôi phục sự cố** |
 | Guard đóng | BI-6: nút X vs menu Thoát vs Ctrl+Q — cả 3 đường |
 | Recovery/autosave | BI-7: mở 2 tab, chỉ tab đầu được hỏi khôi phục |
-| Thêm nút tính năng mới | BI-9: khoá bản quyền có ăn không · BI-10: đổi VI/EN không mất chữ |
+| Thêm nút tính năng mới | BI-9: khoá bản quyền có ăn không · BI-10: đổi VI/EN không mất chữ · **và ghi cử chỉ / phím tắt của nó vào `SECTIONS` của `help.js`** — thanh công cụ không còn chỗ để chữ hướng dẫn (BI-41) |
+| Trang Hướng dẫn (`renderer/help.js`, `#help-modal`, khối `.help-*` trong `app.css`) | `cd desktop ; npm run test:help` · mở bằng **cả 3** đường: menu **Trợ giúp**, **F1**, nút **?** · bấm từng mục lục · ô tìm gõ **không dấu** ("mui ten") vẫn ra đúng phần · đóng bằng **Đóng / Esc / bấm nền** · đổi **VI↔EN** (cả nhãn menu native) · đổi theme **Sáng** · mở **trong lúc đang Chú thích** có 1 mục đang chọn rồi bấm `Delete` → mục **không** bị xoá (BI-47) |
+| `#ed-hint` / `setEdStatus` / `#te-hint` | BI-41: **không** đặt câu hướng dẫn vào đây · thu cửa sổ về 1024px ở công cụ *Khoanh mây* → thanh **không** phình, nút **Xong** còn bấm được · vẽ mây từng điểm → có dòng nhắc cách đóng; đổi công cụ → ô **trắng** · công cụ Đo → thấy `Tỷ lệ: chưa/đã hiệu chuẩn` đúng trạng thái |
 | Menu chuột phải trên thumbnail (`openThumbMenu`) | BI-26 · chuột phải **ngoài** vùng đang chọn → chỉ chọn trang đó · chuột phải **trong** vùng đang chọn → giữ nguyên nhiều trang · đang Chú thích/Sửa nội dung → **không** ra menu · chọn hết trang → mục Xoá phải mờ |
 | `page-range.js` hay hộp thoại xoá theo khoảng | `cd desktop ; npm run test:pages` · gõ “từ 5 đến 12, trừ 7” trên tài liệu thật → trang 7 **còn nguyên** · Ctrl+Z quay lại đủ trang (BI-27, BI-3) |
 | Hộp thoại “Áp ảnh / chữ ký cho nhiều trang” (`imgPagesSpec`, `syncImgPages`) | `npm run test:pages` · chèn 1 ảnh rồi Áp nhiều trang: gõ `1-3` → dòng gợi ý ghi đúng “Sẽ áp sang N trang: …” và nút Áp dụng **mở** · dán `1–3` (gạch en, copy từ Word) → **vẫn nhận** · gõ `abc` → “Chưa nhận ra trang nào”, nút Áp dụng **khoá** · gõ đúng số trang ảnh đang nằm → “Chỉ có đúng trang ảnh đang nằm”, nút **khoá** · gõ số lớn hơn số trang → gợi ý cho thấy nó **kẹp về trang cuối** trước khi bấm · Ctrl+Z hoàn tác được (BI-27, BI-10) |

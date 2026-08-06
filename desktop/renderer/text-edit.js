@@ -313,13 +313,19 @@
     });
   }
 
+  // #te-hint is a COUNTER, not advice. The instruction tails it used to carry
+  // ("— bấm Áp dụng để ghi vào PDF." / "Bấm vào đoạn để sửa.") moved to
+  // Trợ giúp → Hướng dẫn sử dụng, same as the annotate bar's hints. The numbers stay:
+  // how many spans this page offers, and how many are staged, is state nothing else
+  // reports — and #te-apply's enabled/disabled below is the "there is something to
+  // write" cue the removed sentence was duplicating.
   function updateHint() {
     const n = Object.keys(te.edits).length;
     const hint = $("te-hint");
     if (hint) {
       hint.textContent = n
-        ? `${n} đoạn đã sửa — bấm Áp dụng để ghi vào PDF.`
-        : `${te.spans.length} đoạn chữ trên trang ${te.page + 1}. Bấm vào đoạn để sửa.`;
+        ? `${n} đoạn đã sửa`
+        : `${te.spans.length} đoạn chữ trên trang ${te.page + 1}`;
     }
     const apply = $("te-apply");
     if (apply) apply.disabled = n === 0;
