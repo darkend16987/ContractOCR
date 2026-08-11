@@ -84,13 +84,26 @@
 
     <header class="toolbar">
       <div class="tb-row">
-        <div class="brand"><svg class="ic logo-icon"><use href="#ic-nabu-logo"/></svg>Nabu PDF<span class="by">developed by Nam Ta</span></div>
+        <!-- The byline sits UNDER the product name, not beside it: stacked it costs
+             zero horizontal space on a row that is already the tightest in the app
+             (see the .find-box media queries), and the two lines together are still
+             shorter than a toolbar button, so row 1 does not grow. It used to be
+             display:none under 1400px purely to buy that width back — now it can stay
+             visible at every size. Also repeated in the status bar (#sb-credit). -->
+        <div class="brand">
+          <svg class="ic logo-icon"><use href="#ic-nabu-logo"/></svg>
+          <span class="brand-text">Nabu PDF<span class="by">developed by Nam Ta</span></span>
+        </div>
 
         <div class="group">
           <button id="btn-open" title="Mở PDF"><svg class="ic"><use href="#ic-folder"/></svg>Mở</button>
           <button id="btn-combine" title="Gộp nhiều file PDF thành một — chọn & sắp xếp thứ tự (không cần mở file trước)"><svg class="ic"><use href="#ic-layers"/></svg>Gộp file</button>
-          <button id="btn-save" class="primary" disabled title="Lưu PDF (Ctrl+S)"><svg class="ic"><use href="#ic-save"/></svg>Lưu</button>
-          <button id="btn-print" disabled title="In tài liệu (Ctrl+P)"><svg class="ic"><use href="#ic-print"/></svg>In</button>
+          <!-- Lưu / In are icon-only: both are on the native menu and on Ctrl+S / Ctrl+P,
+               their icons are unambiguous, and dropping the two labels is the cheapest
+               width the top row can buy. The `title` stays — it is the tooltip AND the
+               string i18n translates, so nothing is lost in English mode (BI-10). -->
+          <button id="btn-save" class="primary icon-only" disabled title="Lưu PDF (Ctrl+S)"><svg class="ic"><use href="#ic-save"/></svg></button>
+          <button id="btn-print" class="icon-only" disabled title="In tài liệu (Ctrl+P)"><svg class="ic"><use href="#ic-print"/></svg></button>
         </div>
 
         <div class="spacer"></div>
@@ -127,6 +140,11 @@
           <span id="find-count" class="find-count">0/0</span>
           <button id="find-prev" class="icon-only" disabled title="Kết quả trước (Shift+Enter)"><svg class="ic find-up"><use href="#ic-chevron"/></svg></button>
           <button id="find-next" class="icon-only" disabled title="Kết quả tiếp (Enter)"><svg class="ic"><use href="#ic-chevron"/></svg></button>
+          <!-- Door to Tìm & Thay thế. It sits in the find box because that is where the
+               user already is when they realise they want to change what they searched
+               for — but the two are separate engines on purpose (see find-replace.js).
+               In GATED_BTNS: it writes to the document, so it is a paid feature (BI-9). -->
+          <button id="btn-find-replace" class="icon-only" disabled title="Tìm &amp; Thay thế chữ trong PDF (Ctrl+H)"><svg class="ic"><use href="#ic-convert"/></svg></button>
         </div>
 
         <div class="spacer"></div>
@@ -492,6 +510,11 @@
       <span id="sb-size"></span>
       <span class="sb-spacer"></span>
       <span id="sb-zoom"></span>
+      <span class="sb-sep"></span>
+      <!-- Static credit. Not in SKIP_IDS on purpose: unlike its neighbours this text is
+           never rewritten by JS, and it is English in both languages, so the i18n
+           registry can capture it harmlessly. -->
+      <span id="sb-credit" class="sb-credit">developed by Nam Ta</span>
     </footer>
 
     <!-- Full-screen reading mode. The whole toolbar is hidden in that mode, so this
@@ -502,9 +525,41 @@
       <button id="present-exit" class="icon-only" title="Thoát toàn màn hình (Esc)"><svg class="ic"><use href="#ic-fullscreen-exit"/></svg></button>
     </div>
 
+    <!-- Tìm & Thay thế. Deliberately NOT a .modal: stepping through matches means
+         reading the page behind it, and a modal dims and blocks exactly that. It is a
+         floating, non-blocking panel — so it is also outside everything modalOpen()
+         governs, and its inputs carry their own Esc handlers (find-replace.js). -->
+    <div class="fr-panel" id="fr-panel" hidden>
+      <div class="fr-head">
+        <b>Tìm &amp; Thay thế</b>
+        <button id="fr-close" class="icon-only" title="Đóng" aria-label="Đóng">✕</button>
+      </div>
+      <label>Tìm
+        <input type="text" id="fr-find" placeholder="Chữ cần tìm…" autocomplete="off" spellcheck="false" />
+      </label>
+      <label>Thay bằng
+        <input type="text" id="fr-replace" placeholder="Chữ thay thế…" autocomplete="off" spellcheck="false" />
+      </label>
+      <div class="fr-opts">
+        <label class="chk"><input type="checkbox" id="fr-case" /> Phân biệt hoa/thường</label>
+        <label class="chk"><input type="checkbox" id="fr-word" /> Đúng nguyên từ</label>
+      </div>
+      <!-- Live count, rewritten on every keystroke → must be in i18n SKIP_IDS (BI-10). -->
+      <p class="fr-status" id="fr-status"></p>
+      <div class="fr-actions">
+        <button id="fr-prev" class="icon-only" disabled title="Kết quả trước (Shift+Enter)"><svg class="ic find-up"><use href="#ic-chevron"/></svg></button>
+        <button id="fr-next" class="icon-only" disabled title="Kết quả tiếp (Enter)"><svg class="ic"><use href="#ic-chevron"/></svg></button>
+        <span class="fr-gap"></span>
+        <button id="fr-replace-one" disabled title="Thay vị trí đang chọn rồi sang vị trí kế">Thay</button>
+        <button id="fr-replace-all" class="primary" disabled title="Thay mọi vị trí trong toàn bộ tài liệu">Thay tất cả</button>
+      </div>
+      <p class="fr-note">Chỉ dùng được với PDF có chữ thật (không phải bản scan). Từ khoá bị chia làm nhiều đoạn định dạng sẽ được tô nhưng không thay tự động.</p>
+    </div>
+
     <!-- Watermark dialog -->
     <div class="modal" id="wm-modal" hidden>
       <div class="modal-card">
+        <button type="button" class="modal-x" title="Đóng" aria-label="Đóng">✕</button>
         <h3>Watermark (đóng dấu mờ)</h3>
         <label>Nội dung <input id="wm-text" type="text" value="BẢN SAO" /></label>
         <div class="modal-row">
@@ -516,7 +571,7 @@
           <label>Màu <input id="wm-color" type="color" value="#888888" /></label>
         </div>
         <div class="modal-actions">
-          <button id="wm-cancel">Hủy</button>
+          <button id="wm-cancel" data-modal-close>Hủy</button>
           <button id="wm-ok" class="primary">Thêm vào mọi trang</button>
         </div>
       </div>
@@ -524,6 +579,7 @@
 
     <div class="modal" id="dim-modal" hidden>
       <div class="modal-card">
+        <button type="button" class="modal-x" title="Đóng" aria-label="Đóng">✕</button>
         <h3>Hiệu chuẩn tỷ lệ đo</h3>
         <p class="modal-note">Nhập chiều dài thật của đoạn bạn vừa vẽ. Sau đó các đoạn khác sẽ tự ghi kích thước theo tỷ lệ này.</p>
         <div class="modal-row">
@@ -532,7 +588,7 @@
           <label>Số lẻ <input id="dim-decimals" type="number" min="0" max="6" value="2" /></label>
         </div>
         <div class="modal-actions">
-          <button id="dim-cancel">Hủy</button>
+          <button id="dim-cancel" data-modal-close>Hủy</button>
           <button id="dim-ok" class="primary">Hiệu chuẩn</button>
         </div>
       </div>
@@ -541,12 +597,13 @@
     <!-- Apply image/signature to a range of pages -->
     <div class="modal" id="imgpages-modal" hidden>
       <div class="modal-card">
+        <button type="button" class="modal-x" title="Đóng" aria-label="Đóng">✕</button>
         <h3>Áp ảnh / chữ ký cho nhiều trang</h3>
         <p class="cmp-note">Sao chép ảnh đang chọn (giữ nguyên vị trí và kích thước) sang các trang bạn nhập.</p>
         <label>Khoảng trang <input id="imgpages-input" type="text" placeholder="vd: 1-3, 5, 8-10" /></label>
         <p class="cmp-note" id="imgpages-hint"></p>
         <div class="modal-actions">
-          <button id="imgpages-cancel">Hủy</button>
+          <button id="imgpages-cancel" data-modal-close>Hủy</button>
           <button id="imgpages-ok" class="primary">Áp dụng</button>
         </div>
       </div>
@@ -555,6 +612,7 @@
     <!-- Insert / Merge position picker -->
     <div class="modal" id="pos-modal" hidden>
       <div class="modal-card">
+        <button type="button" class="modal-x" title="Đóng" aria-label="Đóng">✕</button>
         <h3 id="pos-title">Chọn vị trí</h3>
         <label>Vị trí
           <select id="pos-mode">
@@ -568,7 +626,7 @@
         </label>
         <p class="cmp-note" id="pos-hint"></p>
         <div class="modal-actions">
-          <button id="pos-cancel">Hủy</button>
+          <button id="pos-cancel" data-modal-close>Hủy</button>
           <button id="pos-ok" class="primary">Tiếp tục</button>
         </div>
       </div>
@@ -577,11 +635,12 @@
     <!-- Form-fill dialog -->
     <div class="modal" id="form-modal" hidden>
       <div class="modal-card">
+        <button type="button" class="modal-x" title="Đóng" aria-label="Đóng">✕</button>
         <h3>Điền biểu mẫu PDF</h3>
         <div id="form-fields" class="form-fields"></div>
         <label class="chk"><input type="checkbox" id="form-flatten" /> Khóa giá trị sau khi điền (flatten)</label>
         <div class="modal-actions">
-          <button id="form-cancel">Hủy</button>
+          <button id="form-cancel" data-modal-close>Hủy</button>
           <button id="form-ok" class="primary">Áp dụng</button>
         </div>
       </div>
@@ -590,6 +649,7 @@
     <!-- Password prompt (encrypted PDF) -->
     <div class="modal" id="pw-modal" hidden>
       <div class="modal-card">
+        <button type="button" class="modal-x" title="Đóng" aria-label="Đóng">✕</button>
         <h3>PDF có mật khẩu</h3>
         <p class="cmp-note">File này được bảo vệ bằng mật khẩu. Nhập mật khẩu để mở.</p>
         <label>Mật khẩu
@@ -599,7 +659,7 @@
           </span>
         </label>
         <div class="modal-actions">
-          <button id="pw-cancel">Hủy</button>
+          <button id="pw-cancel" data-modal-close>Hủy</button>
           <button id="pw-ok" class="primary">Mở khoá</button>
         </div>
       </div>
@@ -608,6 +668,7 @@
     <!-- Compress dialog -->
     <div class="modal" id="cmp-modal" hidden>
       <div class="modal-card">
+        <button type="button" class="modal-x" title="Đóng" aria-label="Đóng">✕</button>
         <h3>Nén PDF</h3>
         <label>Mức nén
           <select id="cmp-preset">
@@ -619,7 +680,7 @@
         </label>
         <p class="cmp-note">Chỉ ảnh độ phân giải cao bị hạ xuống mức đã chọn; văn bản và vector giữ nguyên.</p>
         <div class="modal-actions">
-          <button id="cmp-cancel">Hủy</button>
+          <button id="cmp-cancel" data-modal-close>Hủy</button>
           <button id="cmp-ok" class="primary">Nén &amp; lưu</button>
         </div>
       </div>
@@ -628,6 +689,7 @@
     <!-- Translate PDF (Gemini) dialog -->
     <div class="modal" id="tr-modal" hidden>
       <div class="modal-card">
+        <button type="button" class="modal-x" title="Đóng" aria-label="Đóng">✕</button>
         <h3 id="tr-title">Dịch PDF (AI)</h3>
         <p class="cmp-note" id="tr-note">Dịch giữ nguyên bố cục — xuất ra file PDF mới. Chỉ hỗ trợ PDF có text thật (không phải scan). Cần Gemini API key.</p>
         <label id="tr-src-label">Ngôn ngữ nguồn
@@ -661,7 +723,7 @@
         </label>
         <label class="chk"><input type="checkbox" id="tr-keep-numbers" checked /> <span id="tr-keep-label">Giữ nguyên số / ngày / email / mã (không dịch)</span></label>
         <div class="modal-actions">
-          <button id="tr-cancel">Hủy</button>
+          <button id="tr-cancel" data-modal-close>Hủy</button>
           <button id="tr-ok" class="primary">Dịch (AI)</button>
         </div>
       </div>
@@ -671,6 +733,7 @@
          chỉnh sửa được: Excel/CSV giữ bảng theo hàng/cột, Word giữ toàn văn + bảng. -->
     <div class="modal" id="office-modal" hidden>
       <div class="modal-card">
+        <button type="button" class="modal-x" title="Đóng" aria-label="Đóng">✕</button>
         <h3>Xuất PDF ra Office</h3>
         <p class="cmp-note">Chuyển nội dung PDF (chữ + bảng) sang file có thể chỉnh sửa. Excel/CSV giữ bảng theo đúng hàng/cột; Word giữ toàn văn kèm bảng. Chỉ hỗ trợ PDF có text thật (không phải bản scan — nếu là scan hãy chạy "OCR văn bản" trước).</p>
         <label>Định dạng
@@ -687,7 +750,7 @@
           </select>
         </label>
         <div class="modal-actions">
-          <button id="office-cancel">Hủy</button>
+          <button id="office-cancel" data-modal-close>Hủy</button>
           <button id="office-ok" class="primary">Xuất</button>
         </div>
       </div>
@@ -696,6 +759,7 @@
     <!-- Lock PDF (set password) dialog -->
     <div class="modal" id="enc-modal" hidden>
       <div class="modal-card">
+        <button type="button" class="modal-x" title="Đóng" aria-label="Đóng">✕</button>
         <h3>Khoá file PDF</h3>
         <p class="cmp-note">Đặt mật khẩu để mở file. Người không có mật khẩu sẽ không xem được nội dung.</p>
         <label>Mật khẩu mở file
@@ -715,7 +779,7 @@
           <label class="chk"><input type="checkbox" id="enc-annotate" checked /> Cho phép chú thích</label>
         </details>
         <div class="modal-actions">
-          <button id="enc-cancel">Hủy</button>
+          <button id="enc-cancel" data-modal-close>Hủy</button>
           <button id="enc-ok" class="primary">Khoá &amp; lưu</button>
         </div>
       </div>
@@ -724,6 +788,7 @@
     <!-- Digital signing (PKI — USB token via Windows Certificate Store) -->
     <div class="modal" id="sign-modal" hidden>
       <div class="modal-card">
+        <button type="button" class="modal-x" title="Đóng" aria-label="Đóng">✕</button>
         <h3>Ký số (USB token)</h3>
         <p class="cmp-note">Ký bằng chứng thư số trên token (VNPT-CA, Viettel-CA, FPT-CA, BKAV…). Cắm token trước khi ký — khoá bí mật không rời token, hệ thống sẽ hỏi mã PIN của token khi ký.</p>
         <label>Chứng thư số
@@ -747,7 +812,7 @@
         </label>
         <p class="cmp-note">Dấu thời gian tăng giá trị pháp lý (chứng minh thời điểm ký). Lấy URL TSA từ nhà cung cấp chữ ký số của bạn; để trống nếu chưa có. Chữ ký là bước cuối — sau khi ký, đừng sửa rồi lưu đè.</p>
         <div class="modal-actions">
-          <button id="sign-cancel">Hủy</button>
+          <button id="sign-cancel" data-modal-close>Hủy</button>
           <button id="sign-ok" class="primary">Tiếp: kéo khung trên trang</button>
         </div>
       </div>
@@ -756,6 +821,7 @@
     <!-- PDF → images dialog -->
     <div class="modal" id="p2i-modal" hidden>
       <div class="modal-card">
+        <button type="button" class="modal-x" title="Đóng" aria-label="Đóng">✕</button>
         <h3>Trang PDF → ảnh</h3>
         <p class="cmp-note">Mỗi trang được xuất thành một ảnh; tất cả gói trong một file .zip.</p>
         <label>Định dạng
@@ -772,7 +838,7 @@
           </select>
         </label>
         <div class="modal-actions">
-          <button id="p2i-cancel">Hủy</button>
+          <button id="p2i-cancel" data-modal-close>Hủy</button>
           <button id="p2i-ok" class="primary">Xuất &amp; lưu</button>
         </div>
       </div>
@@ -781,6 +847,7 @@
     <!-- split PDF dialog -->
     <div class="modal" id="split-modal" hidden>
       <div class="modal-card">
+        <button type="button" class="modal-x" title="Đóng" aria-label="Đóng">✕</button>
         <h3>Tách PDF thành nhiều file</h3>
         <p class="cmp-note">Chia tài liệu thành nhiều PDF nhỏ; tất cả gói trong một file .zip.</p>
         <label>Cách tách
@@ -796,7 +863,7 @@
           <input type="text" id="split-ranges" placeholder="1-3,5,8-10" />
         </label>
         <div class="modal-actions">
-          <button id="split-cancel">Hủy</button>
+          <button id="split-cancel" data-modal-close>Hủy</button>
           <button id="split-ok" class="primary">Tách &amp; lưu</button>
         </div>
       </div>
@@ -805,6 +872,7 @@
     <!-- delete a page range, minus exceptions (no ticking required) -->
     <div class="modal" id="delrange-modal" hidden>
       <div class="modal-card">
+        <button type="button" class="modal-x" title="Đóng" aria-label="Đóng">✕</button>
         <h3>Xoá nhiều trang theo khoảng</h3>
         <p class="cmp-note">Nhập khoảng trang cần xoá, rồi liệt kê những trang muốn GIỮ LẠI trong khoảng đó.</p>
         <div class="modal-row">
@@ -820,7 +888,7 @@
         </label>
         <p class="cmp-note delrange-preview" id="delrange-preview"></p>
         <div class="modal-actions">
-          <button id="delrange-cancel">Hủy</button>
+          <button id="delrange-cancel" data-modal-close>Hủy</button>
           <button id="delrange-ok" class="primary">Xoá trang</button>
         </div>
       </div>
@@ -829,13 +897,14 @@
     <!-- Combine multiple PDFs into one (order picker) -->
     <div class="modal" id="combine-modal" hidden>
       <div class="modal-card combine-card">
+        <button type="button" class="modal-x" title="Đóng" aria-label="Đóng">✕</button>
         <h3>Gộp nhiều PDF thành một file</h3>
         <p class="cmp-note">Chọn nhiều file rồi kéo–thả (hoặc nút ↑/↓) để sắp xếp thứ tự. Không cần mở file nào trước.</p>
         <button id="combine-add" class="ghost" style="margin-bottom:8px"><svg class="ic"><use href="#ic-file-plus"/></svg>Thêm file PDF…</button>
         <ol class="combine-list" id="combine-list"></ol>
         <p class="cmp-note" id="combine-summary">Chưa chọn file nào.</p>
         <div class="modal-actions">
-          <button id="combine-cancel">Hủy</button>
+          <button id="combine-cancel" data-modal-close>Hủy</button>
           <button id="combine-ok" class="primary" disabled>Gộp &amp; lưu</button>
         </div>
       </div>
@@ -844,6 +913,7 @@
     <!-- add page numbers dialog -->
     <div class="modal" id="pgnum-modal" hidden>
       <div class="modal-card">
+        <button type="button" class="modal-x" title="Đóng" aria-label="Đóng">✕</button>
         <h3>Đánh số trang</h3>
         <p class="cmp-note">Thêm số trang vào tài liệu đang mở. Xem trước ngay trên trang — có thể Hoàn tác (Ctrl+Z) trước khi Lưu.</p>
         <label>Kiểu số
@@ -874,7 +944,7 @@
           <label>Màu <input type="color" id="pgnum-color" value="#000000" /></label>
         </div>
         <div class="modal-actions">
-          <button id="pgnum-cancel">Hủy</button>
+          <button id="pgnum-cancel" data-modal-close>Hủy</button>
           <button id="pgnum-ok" class="primary">Đánh số &amp; áp dụng</button>
         </div>
       </div>
@@ -883,6 +953,7 @@
     <!-- images → PDF dialog -->
     <div class="modal" id="i2p-modal" hidden>
       <div class="modal-card">
+        <button type="button" class="modal-x" title="Đóng" aria-label="Đóng">✕</button>
         <h3>Ảnh → PDF</h3>
         <p class="cmp-note" id="i2p-count">Chọn các ảnh để gộp thành một PDF (theo đúng thứ tự chọn).</p>
         <button id="i2p-pick" class="ghost" style="margin-bottom:8px"><svg class="ic"><use href="#ic-photo"/></svg>Chọn ảnh…</button>
@@ -893,7 +964,7 @@
           </select>
         </label>
         <div class="modal-actions">
-          <button id="i2p-cancel">Hủy</button>
+          <button id="i2p-cancel" data-modal-close>Hủy</button>
           <button id="i2p-ok" class="primary" disabled>Tạo PDF &amp; lưu</button>
         </div>
       </div>
@@ -902,6 +973,7 @@
     <!-- Print options dialog -->
     <div class="modal" id="print-modal" hidden>
       <div class="modal-card">
+        <button type="button" class="modal-x" title="Đóng" aria-label="Đóng">✕</button>
         <h3>In tài liệu</h3>
         <label>Máy in
           <select id="print-printer"></select>
@@ -943,7 +1015,7 @@
         <label class="chk"><input type="checkbox" id="print-system-dialog" /> Mở hộp thoại máy in của hệ thống</label>
         <p class="cmp-note">Máy in không hỗ trợ 2 mặt sẽ tự in 1 mặt. Khoảng trang gõ ở đây đếm theo trang tài liệu; hộp thoại của hệ thống đếm theo TỜ in ra.</p>
         <div class="modal-actions">
-          <button id="print-cancel">Hủy</button>
+          <button id="print-cancel" data-modal-close>Hủy</button>
           <button id="print-ok" class="primary">In</button>
         </div>
       </div>
@@ -951,8 +1023,15 @@
 
     <!-- Settings dialog (API key for AI extraction) -->
     <div class="modal" id="set-modal" hidden>
-      <div class="modal-card">
-        <h3>Cài đặt</h3>
+      <!-- set-card: this is the one dialog long enough to SCROLL on a laptop, and the
+           only way out used to be the Đóng button parked at the bottom of that scroll.
+           Wider card + a sticky head that keeps the title and the ✕ pinned while the
+           body scrolls, so the exit is always on screen. -->
+      <div class="modal-card set-card">
+        <div class="modal-head">
+          <h3>Cài đặt</h3>
+          <button type="button" class="modal-x" title="Đóng" aria-label="Đóng">✕</button>
+        </div>
 
         <!-- License/activation block. Hidden when enforcement is off (free/open
              build) by renderLicense(). -->
@@ -1091,7 +1170,7 @@
         </div>
 
         <div class="modal-actions">
-          <button id="set-cancel">Đóng</button>
+          <button id="set-cancel" data-modal-close>Đóng</button>
           <button id="set-ok" class="primary">Lưu</button>
         </div>
       </div>
@@ -1100,6 +1179,7 @@
     <!-- Compare: pick two PDFs + mode -->
     <div class="modal" id="cmp2-modal" hidden>
       <div class="modal-card">
+        <button type="button" class="modal-x" title="Đóng" aria-label="Đóng">✕</button>
         <h3>So sánh hai file PDF</h3>
         <p class="cmp-note">Chọn 2 file. Ứng dụng chỉ ra các trang và dòng khác nhau. PDF scan sẽ được OCR để so sánh (chậm hơn). Với bản vẽ CAD/Revit, chọn chế độ "Bản vẽ" để so sánh hình ảnh.</p>
         <div class="cmp2-pick">
@@ -1127,7 +1207,7 @@
           </select>
         </label>
         <div class="modal-actions">
-          <button id="cmp2-cancel">Hủy</button>
+          <button id="cmp2-cancel" data-modal-close>Hủy</button>
           <button id="cmp2-run" class="primary" disabled>So sánh</button>
         </div>
       </div>
@@ -1210,10 +1290,11 @@
          touches OS focus. Driven by uiConfirm() in app.js. -->
     <div class="modal" id="confirm-modal" hidden>
       <div class="modal-card">
+        <button type="button" class="modal-x" title="Đóng" aria-label="Đóng">✕</button>
         <h3 id="confirm-title">Xác nhận</h3>
         <p class="modal-note" id="confirm-msg" style="white-space: pre-line;"></p>
         <div class="modal-actions">
-          <button id="confirm-cancel">Hủy</button>
+          <button id="confirm-cancel" data-modal-close>Hủy</button>
           <button id="confirm-ok" class="primary">OK</button>
         </div>
       </div>
@@ -1229,7 +1310,13 @@
               is precisely the flaw the removed #ed-hint lines had.
            2. Rendering on first open keeps app startup untouched.
          Do NOT move guide copy into this file. -->
-    <div class="modal" id="help-modal" hidden data-no-i18n>
+    <!-- data-modal-manual: this dialog is the ONE exception to the shared Esc /
+         backdrop / ✕ dismissal in app.js. help.js binds its own Esc (where a first
+         press clears the search filter and only a second one closes) and its own
+         backdrop click, and it has no .modal-actions row for the shared code to find.
+         Removing this attribute makes Esc close the guide while the user is midway
+         through clearing a typo in the search box. -->
+    <div class="modal" id="help-modal" hidden data-no-i18n data-modal-manual>
       <div class="modal-card help-card" role="dialog" aria-modal="true" aria-labelledby="help-title">
         <!-- data-no-i18n on the modal (see i18n.js inSkip): help.js owns EVERY string in
              here, chrome included, so the registry must not also try to translate the
@@ -1272,6 +1359,10 @@
     <script src="pan.js"></script>
     <script src="editor.js"></script>
     <script src="text-edit.js"></script>
+    <!-- AFTER app.js + wire.js: uses the bare globals state / sidecarFetch / pdfJsonBody /
+         toast / uiConfirm / gateProFeature / rerenderChanged / renderPageCanvas, and wires
+         its buttons at load time (§2, BI-14). -->
+    <script src="find-replace.js"></script>
     <script src="compare.js"></script>
     <script src="capture.js"></script>
     <script src="sign.js"></script>

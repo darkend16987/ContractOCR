@@ -161,6 +161,12 @@ app.add_middleware(
     allow_origins=["*"],
     allow_methods=["*"],
     allow_headers=["*"],
+    # The renderer's origin is file://, so every sidecar call is cross-origin and JS
+    # can read ONLY the CORS-safelisted response headers unless they are listed here.
+    # Routes whose body is the PDF itself (/edit-text?raw=1, /compress-bin) carry
+    # their metadata in X-* headers, and without this line those headers come back
+    # as null in the renderer with no error anywhere — a silent, hard-to-place bug.
+    expose_headers=["X-Original-Size", "X-Compressed-Size", "X-Filename", "X-Pages-Changed"],
 )
 
 
@@ -758,39 +764,41 @@ _COMPRESS_PRESETS = {
     "printer": dict(dpi_threshold=320, dpi_target=300, quality=85),
 }
 
+# Page ceiling for compression. Purpose is to bound RUNTIME (rewrite_images walks
+# every image on every page), not memory — so it is deliberately generous: a 200 MB
+# scan is routinely 600–1500 pages, and the old 500 turned "nén file lớn" into a
+# refusal for exactly the documents worth compressing.
+_COMPRESS_MAX_PAGES = 3000
 
-@app.post("/compress", response_model=CompressResponse)
-async def compress(req: CompressRequest):
-    """Shrink a PDF: downsample/recompress high-DPI images + strip redundant objects.
+# Size ceiling for the BINARY compress route only. The base64/JSON routes stay at
+# _MAX_PDF_B64 (~200 MB) because their peak cost is ~5x the file: base64 text in,
+# str→bytes decode, fitz copy, base64 text out. /compress-bin carries raw bytes both
+# ways, so the same machine survives a much larger file — hence its own, higher cap.
+_MAX_PDF_BIN = 1_000_000_000  # 1 GB of actual PDF bytes
 
-    Native (no Ghostscript binary) — uses PyMuPDF. Text and vector content are
-    preserved; only over-sized embedded images are reduced (per preset). "lossless"
-    leaves images untouched and just garbage-collects/deflates the file.
+
+def _compress_pdf_bytes(pdf_bytes: bytes, preset: str) -> bytes:
+    """Shrink `pdf_bytes` per `preset`; returns the ORIGINAL bytes if that is smaller.
+
+    Shared by /compress (base64 JSON) and /compress-bin (raw binary) so the two
+    routes can never drift on what "nén" actually does — they differ only in how the
+    document travels. Raises HTTPException for caller errors (bad preset, unopenable
+    PDF, too many pages); other failures propagate for the route to report.
     """
-    try:
-        import fitz  # PyMuPDF
-    except ImportError:
-        raise HTTPException(status_code=503, detail="PyMuPDF (fitz) chưa cài — không nén được.")
-
-    if req.preset != "lossless" and req.preset not in _COMPRESS_PRESETS:
+    if preset != "lossless" and preset not in _COMPRESS_PRESETS:
         raise HTTPException(status_code=400, detail="preset phải là screen|ebook|printer|lossless")
-
-    if len(req.pdf_b64) > _MAX_PDF_B64:
-        raise HTTPException(status_code=400, detail="PDF quá lớn (tối đa ~200MB).")
-    try:
-        pdf_bytes = base64.b64decode(req.pdf_b64)
-    except Exception:
-        raise HTTPException(status_code=400, detail="pdf_b64 không hợp lệ")
 
     doc = _open_pdf_stream(pdf_bytes)
 
-    if doc.page_count > 500:
+    if doc.page_count > _COMPRESS_MAX_PAGES:
         doc.close()
-        raise HTTPException(status_code=400, detail="PDF quá nhiều trang (tối đa 500).")
+        raise HTTPException(
+            status_code=400, detail=f"PDF quá nhiều trang (tối đa {_COMPRESS_MAX_PAGES})."
+        )
 
     try:
-        if req.preset != "lossless":
-            p = _COMPRESS_PRESETS[req.preset]
+        if preset != "lossless":
+            p = _COMPRESS_PRESETS[preset]
             doc.rewrite_images(
                 dpi_threshold=p["dpi_threshold"],
                 dpi_target=p["dpi_target"],
@@ -805,15 +813,43 @@ async def compress(req: CompressRequest):
         out_bytes = doc.tobytes(
             deflate=True, garbage=4, clean=True, deflate_images=True, deflate_fonts=True
         )
-    except Exception as e:
-        logger.exception("Compress error")
-        return CompressResponse(success=False, error=str(e))
     finally:
         doc.close()
 
     # If compression somehow grew the file, hand back the original instead.
-    if len(out_bytes) >= len(pdf_bytes):
-        out_bytes = pdf_bytes
+    return pdf_bytes if len(out_bytes) >= len(pdf_bytes) else out_bytes
+
+
+@app.post("/compress", response_model=CompressResponse)
+async def compress(req: CompressRequest):
+    """Shrink a PDF: downsample/recompress high-DPI images + strip redundant objects.
+
+    Native (no Ghostscript binary) — uses PyMuPDF. Text and vector content are
+    preserved; only over-sized embedded images are reduced (per preset). "lossless"
+    leaves images untouched and just garbage-collects/deflates the file.
+
+    This is the base64/JSON route, kept for the test grid and any non-desktop caller.
+    The desktop app uses /compress-bin — see the note on _MAX_PDF_BIN.
+    """
+    try:
+        import fitz  # noqa: F401  (PyMuPDF; presence check before we promise anything)
+    except ImportError:
+        raise HTTPException(status_code=503, detail="PyMuPDF (fitz) chưa cài — không nén được.")
+
+    if len(req.pdf_b64) > _MAX_PDF_B64:
+        raise HTTPException(status_code=400, detail="PDF quá lớn (tối đa ~200MB).")
+    try:
+        pdf_bytes = base64.b64decode(req.pdf_b64)
+    except Exception:
+        raise HTTPException(status_code=400, detail="pdf_b64 không hợp lệ")
+
+    try:
+        out_bytes = _compress_pdf_bytes(pdf_bytes, req.preset)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Compress error")
+        return CompressResponse(success=False, error=str(e))
 
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     return CompressResponse(
@@ -822,6 +858,56 @@ async def compress(req: CompressRequest):
         data_b64=base64.b64encode(out_bytes).decode("ascii"),
         original_size=len(pdf_bytes),
         compressed_size=len(out_bytes),
+    )
+
+
+@app.post("/compress-bin")
+async def compress_bin(request: Request, preset: str = "ebook"):
+    """Same compression, carried as RAW BYTES in both directions.
+
+    WHY THIS EXISTS. /compress is base64-in-JSON, so a 200 MB document costs
+    ~280 MB of base64 text on the wire, a same-size Python str while json parses it,
+    and the decoded bytes on top — before PyMuPDF has seen a single page. That is
+    what _MAX_PDF_B64 was protecting against, and why "nén" refused anything over
+    ~200 MB, which is precisely the size a user wants to compress.
+
+    Here the request body IS the PDF (Content-Type: application/pdf) and the success
+    response body IS the compressed PDF, so neither side ever builds a base64 string.
+    Sizes travel in headers because the body is not JSON. Errors still return JSON,
+    so the client tells success from failure by response Content-Type — the same
+    contract /edit-text?raw=1 already established.
+    """
+    try:
+        import fitz  # noqa: F401  (PyMuPDF)
+    except ImportError:
+        raise HTTPException(status_code=503, detail="PyMuPDF (fitz) chưa cài — không nén được.")
+
+    pdf_bytes = await request.body()
+    if not pdf_bytes:
+        raise HTTPException(status_code=400, detail="Không nhận được nội dung PDF.")
+    if len(pdf_bytes) > _MAX_PDF_BIN:
+        raise HTTPException(
+            status_code=400, detail=f"PDF quá lớn (tối đa ~{_MAX_PDF_BIN // 1_000_000}MB)."
+        )
+
+    original_size = len(pdf_bytes)
+    try:
+        out_bytes = _compress_pdf_bytes(pdf_bytes, preset)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Compress error")
+        return JSONResponse(status_code=200, content={"success": False, "error": str(e)})
+
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    return Response(
+        content=out_bytes,
+        media_type="application/pdf",
+        headers={
+            "X-Original-Size": str(original_size),
+            "X-Compressed-Size": str(len(out_bytes)),
+            "X-Filename": f"compressed_{ts}.pdf",
+        },
     )
 
 
@@ -1497,6 +1583,274 @@ async def text_spans(req: TextSpansRequest):
     except Exception as e:
         logger.exception("text-spans error")
         return TextSpansResponse(success=False, error=str(e))
+    finally:
+        doc.close()
+
+
+# ---------------------------------------------------------------------------
+# Find across the WHOLE document (the read half of Find & Replace)
+# ---------------------------------------------------------------------------
+#
+# WHY A SEPARATE ENDPOINT AND NOT A LOOP OVER /text-spans. /text-spans reads ONE
+# page and every call carries the whole PDF, so scanning a 200-page document would
+# upload the file 200 times. This walks the document once per query instead.
+#
+# It is deliberately READ-ONLY. Applying a replacement reuses /edit-text unchanged:
+# the renderer already has everything (span text + match offsets + the span's box,
+# font, size and colour) to build exactly the edit the text editor sends by hand. So
+# the whole battle-tested redraw path — redaction that takes only glyphs (BI-23),
+# "keep the original font" with its glyph-coverage ladder (BI-21), the hscale/vscale
+# geometry recovery (BI-25), rotated pages — is inherited rather than reimplemented.
+
+
+class TextFindRequest(BaseModel):
+    """Request body for a whole-document text search."""
+    pdf_b64: str
+    query: str
+    match_case: bool = False
+    whole_word: bool = False
+    max_hits: int = 5000  # safety valve; a runaway query shouldn't build a 500 MB JSON
+
+
+class TextFindHit(BaseModel):
+    id: int  # position in this response's list; the renderer's cursor rides on it
+    page: int
+    span: int  # index of the span within its page (grouping only, NOT an identity)
+    start: int  # match offset into span_text …
+    end: int  # … half-open
+    span_text: str  # the span's FULL text — the renderer splices into this
+    bbox: list[float]  # UNROTATED span box; this is what /edit-text redraws into
+    bbox_view: list[float]  # rotation-applied box; what the highlight is drawn from
+    origin: list[float]
+    size: float
+    font: str
+    color: int
+    flags: int
+    replaceable: bool  # False = the match straddles two spans (see below)
+
+
+class TextFindResponse(BaseModel):
+    success: bool
+    has_text: bool = False  # False on a scan → the UI must send the user to OCR
+    hits: list[TextFindHit] = []
+    crossing: int = 0  # how many hits are replaceable=False
+    truncated: bool = False  # hit max_hits and stopped
+    pages_scanned: int = 0
+    error: str | None = None
+
+
+def _is_word_char(ch: str) -> bool:
+    """Word character for whole-word matching. `isalnum` is Unicode-aware in Python,
+    so Vietnamese letters with diacritics count as word characters — which is the
+    whole point; a byte/ASCII rule would make "Bên" match inside "Bên_A" wrongly."""
+    return ch.isalnum() or ch == "_"
+
+
+def _find_occurrences(
+    hay: str, needle: str, match_case: bool, whole_word: bool
+) -> list[tuple[int, int]]:
+    """Non-overlapping occurrences of `needle` in `hay` as (start, end) half-open.
+
+    Case-insensitive search folds BOTH sides and then indexes into the ORIGINAL
+    string, so the fold must not change any character's width. It usually doesn't
+    for Latin/Vietnamese, but a few code points (U+0130 'İ' → 'i̇') lowercase to two
+    characters, and one of those anywhere in the span would slide every offset after
+    it — silently splicing the replacement into the wrong place in the user's
+    document. So: verify the length is unchanged, else fall back to exact matching.
+    """
+    if not needle:
+        return []
+    h, n = hay, needle
+    if not match_case:
+        hl, nl = hay.lower(), needle.lower()
+        if len(hl) == len(hay) and len(nl) == len(needle):
+            h, n = hl, nl
+        # else: keep the original, case-sensitive strings — wrong-case misses beat
+        # corrupting the file.
+
+    out: list[tuple[int, int]] = []
+    i = 0
+    while True:
+        j = h.find(n, i)
+        if j < 0:
+            break
+        k = j + len(n)
+        if whole_word:
+            before_ok = j == 0 or not _is_word_char(h[j - 1])
+            after_ok = k >= len(h) or not _is_word_char(h[k])
+            if not (before_ok and after_ok):
+                i = j + 1
+                continue
+        out.append((j, k))
+        i = k  # non-overlapping
+    return out
+
+
+@app.post("/text-find", response_model=TextFindResponse)
+async def text_find(req: TextFindRequest):
+    """Every occurrence of `query` in the document, with the span data needed to edit it.
+
+    Matches are reported per SPAN (a run of same-font/size/colour text on one line),
+    because that is the unit /edit-text rewrites. A match that starts in one span and
+    ends in the next — which happens when a word changes style mid-way, e.g. "Bên **A**"
+    — is still reported (so the count the user sees is the truth) but flagged
+    `replaceable: False` rather than replaced wrongly.
+    """
+    try:
+        import fitz  # PyMuPDF
+    except ImportError:
+        raise HTTPException(status_code=503, detail="PyMuPDF (fitz) chưa cài — không tìm được text.")
+
+    if not req.query:
+        raise HTTPException(status_code=400, detail="Chưa nhập từ khoá cần tìm.")
+    if len(req.pdf_b64) > _MAX_PDF_B64:
+        raise HTTPException(status_code=400, detail="PDF quá lớn (tối đa ~200MB).")
+    try:
+        pdf_bytes = base64.b64decode(req.pdf_b64)
+    except Exception:
+        raise HTTPException(status_code=400, detail="pdf_b64 không hợp lệ")
+
+    doc = _open_pdf_stream(pdf_bytes)
+    hits: list[TextFindHit] = []
+    crossing = 0
+    truncated = False
+    any_text = False
+    hid = 0
+
+    try:
+        for pno in range(doc.page_count):
+            if truncated:
+                break
+            page = doc[pno]
+            rot_mat = page.rotation_matrix
+            data = page.get_text("dict")
+            span_idx = 0
+            for block in data.get("blocks", []):
+                for line in block.get("lines", []):
+                    # Collect this LINE's spans first. Matching runs twice over the
+                    # same line: once inside each span (replaceable), and once over
+                    # the concatenation (to notice the ones that straddle a boundary).
+                    raw = []
+                    for sp in line.get("spans", []):
+                        txt = sp.get("text", "")
+                        if not txt.strip():
+                            continue
+                        x0, y0, x1, y1 = sp["bbox"]
+                        if (x1 - x0) < 0.5 or (y1 - y0) < 0.5:
+                            continue  # degenerate box; same filter /text-spans uses
+                        raw.append((sp, txt, (x0, y0, x1, y1)))
+                    if not raw:
+                        continue
+                    any_text = True
+
+                    joined = "".join(t for _, t, _ in raw)
+                    # offset of each span's text inside `joined`
+                    offsets = []
+                    acc = 0
+                    for _, t, _b in raw:
+                        offsets.append(acc)
+                        acc += len(t)
+
+                    # 1. in-span matches → replaceable
+                    taken: set[tuple[int, int]] = set()
+                    for si, (sp, txt, bb) in enumerate(raw):
+                        base = offsets[si]
+                        for s, e in _find_occurrences(
+                            txt, req.query, req.match_case, req.whole_word
+                        ):
+                            if len(hits) >= req.max_hits:
+                                truncated = True
+                                break
+                            x0, y0, x1, y1 = bb
+                            ox, oy = sp.get("origin", (x0, y1))
+                            vr = fitz.Rect(x0, y0, x1, y1) * rot_mat
+                            vr.normalize()
+                            hits.append(
+                                TextFindHit(
+                                    id=hid,
+                                    page=pno,
+                                    span=span_idx + si,
+                                    start=s,
+                                    end=e,
+                                    span_text=txt,
+                                    bbox=[x0, y0, x1, y1],
+                                    bbox_view=[vr.x0, vr.y0, vr.x1, vr.y1],
+                                    origin=[ox, oy],
+                                    size=float(sp.get("size", 11.0)),
+                                    font=str(sp.get("font", "")),
+                                    color=int(sp.get("color", 0)),
+                                    flags=int(sp.get("flags", 0)),
+                                    replaceable=True,
+                                )
+                            )
+                            hid += 1
+                            taken.add((base + s, base + e))
+                        if truncated:
+                            break
+
+                    # 2. matches over the whole line that no single span contained
+                    if not truncated:
+                        for s, e in _find_occurrences(
+                            joined, req.query, req.match_case, req.whole_word
+                        ):
+                            if (s, e) in taken:
+                                continue
+                            if len(hits) >= req.max_hits:
+                                truncated = True
+                                break
+                            # union box of every span the match touches
+                            union = None
+                            for si, (_sp, txt, bb) in enumerate(raw):
+                                a, b = offsets[si], offsets[si] + len(txt)
+                                if b <= s or a >= e:
+                                    continue
+                                r = fitz.Rect(*bb) * rot_mat
+                                r.normalize()
+                                union = r if union is None else (union | r)
+                            if union is None:
+                                continue
+                            crossing += 1
+                            hits.append(
+                                TextFindHit(
+                                    id=hid,
+                                    page=pno,
+                                    span=span_idx,
+                                    start=0,
+                                    end=len(joined),
+                                    span_text=joined,
+                                    bbox=[union.x0, union.y0, union.x1, union.y1],
+                                    bbox_view=[union.x0, union.y0, union.x1, union.y1],
+                                    origin=[union.x0, union.y1],
+                                    size=float(raw[0][0].get("size", 11.0)),
+                                    font=str(raw[0][0].get("font", "")),
+                                    color=int(raw[0][0].get("color", 0)),
+                                    flags=int(raw[0][0].get("flags", 0)),
+                                    replaceable=False,
+                                )
+                            )
+                            hid += 1
+                    span_idx += len(raw)
+
+        # Reading order: PyMuPDF yields blocks in the order they were drawn, which is
+        # not always top-to-bottom. "Tìm tiếp" must walk the page the way a human
+        # reads it, so sort by page, then by the TOP of the box, then its left edge.
+        hits.sort(key=lambda h: (h.page, round(h.bbox_view[1], 1), round(h.bbox_view[0], 1), h.start))
+        for i, h in enumerate(hits):
+            h.id = i
+
+        return TextFindResponse(
+            success=True,
+            has_text=any_text,
+            hits=hits,
+            crossing=crossing,
+            truncated=truncated,
+            pages_scanned=doc.page_count,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("text-find error")
+        return TextFindResponse(success=False, error=str(e))
     finally:
         doc.close()
 

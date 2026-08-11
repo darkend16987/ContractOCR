@@ -21,6 +21,7 @@ tài liệu này chỉ có giá trị nếu được cập nhật.
 | `desktop/src/main.js` + `src/tabs.js` | — | Tầng cửa sổ/tab — **hệ con mới nhất, ít va đập thực tế nhất** (ra mắt v0.2.41). Có lưới tự động `npm run test:tabs` cho phần logic thuần. |
 | `desktop/renderer/page-range.js` | ~170 | Số học khoảng trang. Rủi ro **thấp** vì có lưới `npm run test:pages`, nhưng hậu quả sai là **mất trang tài liệu** → xem BI-27. |
 | `desktop/renderer/pan.js` | ~380 | Bàn tay/pan. Rủi ro **trung bình**: nó giành sự kiện chuột **trên cùng phần tử** với `editor.js`/`capture.js`. Nửa logic có lưới `npm run test:pan`; nửa DOM thì không → xem BI-30/31. |
+| `desktop/renderer/find-replace.js` | ~590 | Tìm & Thay thế. Rủi ro **trung bình** nhưng hậu quả **cao và im lặng**: nó **ghi vào chữ gốc** của tài liệu hàng loạt. Nửa số học có lưới `npm run test:find`; nửa DOM thì không → xem BI-50. |
 | `desktop/renderer/wire.js` | ~130 | Bộ mã hoá payload nhị phân. Rủi ro **thấp** nhờ lưới `npm run test:wire`, nhưng sai ở đây **im lặng**: request vẫn đúng cú pháp, chỉ là base64 hỏng → xem BI-24. |
 | `desktop/renderer/app.js` — khối zoom | ~130 dòng | `applyScaleToDom`/`commitScale` đụng CSS box của **mọi** trang + 4 lớp overlay. Sai là zoom mờ mãi hoặc chú thích lệch. Nửa số học có lưới `npm run test:geom` → xem BI-36. |
 | ~~`editor.js` — ảnh round-trip~~ → `managed-codec.js` (v0.2.49) | ~180 dòng | Ghi/đọc/giải phóng object PDF riêng. Sai ở đây **mất ảnh của người dùng** hoặc phình file âm thầm. Có lưới `npm run test:managed` → xem BI-37, BI-38. |
@@ -899,6 +900,81 @@ chỉ tên hàm.
   `Delete` → trang/annotation phía sau biến mất · hoặc `↓` trong trang Hướng dẫn làm nhảy
   trang tài liệu thay vì cuộn hướng dẫn.
 
+### BI-48 · Đóng hộp thoại phải **BẤM HỘ nút Hủy**, không được set `hidden` thẳng
+- `app.js` `dismissModal()` / `topOpenModal()` (ngay dưới `modalOpen()`), ba chỗ gọi:
+  `Esc` (window, bubble), bấm nền (`document mousedown`), nút `.modal-x` (uỷ quyền click).
+- Nhiều hộp thoại **hình dạng Promise**: `promptPassword()` và `askInsertPos()` chỉ
+  `resolve()` **trong hàm `done()` của nút Hủy**; `closePrintModal()` và `closeDialog()`
+  của `sign.js` còn dọn state riêng. Ẩn phần tử sau lưng chúng thì hộp thoại **biến mất
+  khỏi màn hình nhưng `await` treo vĩnh viễn** — không lỗi, không dấu vết, và người dùng
+  chỉ thấy "app đơ" ở lần thao tác tiếp theo. Vì thế `dismissModal` gọi `btn.click()`.
+- **Hợp đồng markup:** mỗi `.modal` (trừ `data-modal-manual`) phải có **đúng một**
+  `[data-modal-close]` **và một** `.modal-x`. Thêm hộp thoại mới mà quên → `Esc` im lặng
+  không làm gì. Probe boot đếm cả hai (`dialogs_without_close` / `dialogs_without_x` phải
+  rỗng), đó là lưới duy nhất bắt được thiếu sót này.
+- **`stopImmediatePropagation`, không phải `stopPropagation`:** handler `Esc` này và
+  handler phím tắt lớn **nằm cùng trên `window`**, mà `stopPropagation` không chặn listener
+  anh em trên **cùng một node**. Thiếu nó thì `Esc` đóng hộp thoại **rồi thoát luôn toàn
+  màn hình**, vì chốt `!modalOpen()` của handler kia lúc đó đã thành true. Kéo theo: khối
+  này **phải khai TRƯỚC** `window keydown` lớn trong `app.js` — đổi chỗ là hỏng.
+- `#help-modal` là **ngoại lệ duy nhất**, đánh dấu `data-modal-manual`: `help.js` tự giữ
+  `Esc` (bấm lần đầu xoá từ khoá tìm, lần hai mới đóng) và tự giữ bấm-nền.
+- **Vỡ khi:** mở PDF có mật khẩu → bấm nền để đóng ô nhập mật khẩu → mở file khác:
+  không có gì xảy ra (promise cũ còn treo) · hoặc `Esc` trong lúc F11 làm mất cả hộp
+  thoại lẫn chế độ toàn màn hình.
+
+### BI-49 · Payload PDF **lớn** phải đi đường nhị phân, không phải base64-trong-JSON
+- `api.py` `/compress-bin` + `_compress_pdf_bytes()`; `app.js` `runCompress()`.
+- Đường JSON tốn ~5 lần cỡ file ở đỉnh (base64 trên dây → `str` lúc parse JSON → bytes
+  giải mã → bản sao của fitz → base64 trả về). Đó là lý do có `_MAX_PDF_B64` (~200MB), và
+  cũng là lý do **"nén" từ chối đúng những file đáng nén nhất**. Đường nhị phân chở
+  **chính bytes** cả hai chiều nên có trần riêng `_MAX_PDF_BIN` (1GB).
+- **Hợp đồng nhận biết:** thành công = `Content-Type: application/pdf` (body là PDF);
+  thất bại = JSON. Client phân biệt bằng content-type, **không** bằng mã HTTP. Giống hệt
+  `/edit-text?raw=1`. Đổi bên nào cũng phải đổi bên kia.
+- **Header X-\* phải nằm trong `expose_headers` của CORS.** Origin của renderer là
+  `file://` ⇒ mọi lệnh gọi là cross-origin ⇒ JS chỉ đọc được header nào được liệt kê. Thiếu
+  thì `res.headers.get("X-Original-Size")` trả `null` **không kèm lỗi ở đâu cả**.
+  `runCompress` cố ý **không** đọc chúng (tự tính từ `state.bytes.length` và
+  `buf.byteLength`) — nhưng danh sách vẫn phải đúng cho người viết code sau.
+- **Hai route dùng CHUNG `_compress_pdf_bytes`** để không bao giờ lệch nhau về "nén là
+  làm gì"; `test_compress_bin_matches_json_route` là lưới canh đúng chỗ đó.
+- **Vỡ khi:** nén file 300MB báo "PDF quá lớn" · hoặc nén xong hiện "Đã nén: 0 B → 0 B".
+
+### BI-50 · Tìm & Thay thế: mọi hit là offset của MỘT phiên bản bytes — bytes đổi thì list là hư cấu
+- `renderer/find-replace.js` (`invalidate`, `applyEdits`, `indexAtOrAfter`, `groupEdits`);
+  hai chỗ móc trong `app.js`: cuối `renderAll()` và cuối `rerenderChanged()`.
+- Mỗi hit mang `page` + `start/end` **đo trên đúng một bản** tài liệu. Bất cứ thứ gì đổi
+  bytes — chính thao tác Thay, `Ctrl+Z`, xoay trang, **xoá trang**, bake watermark — làm
+  cả list sai: offset dịch, và sau khi xoá trang thì `page` trỏ sang **trang khác hẳn**,
+  nên vệt tô nằm trên chữ vô can và bấm **Thay** sẽ **ghi đè đúng chữ vô can đó**.
+- **Vì thế `invalidate()` móc vào hai HÀM PHỄU** (`renderAll` / `rerenderChanged`) chứ
+  không vào từng chỗ gọi — thêm một thao tác sửa tài liệu mới thì nó tự được che.
+  `applyEdits` bật cờ `fr.suppress` để phễu không quét chồng lên lần quét có neo của nó.
+- **Sau mỗi lần ghi là QUÉT LẠI, không sửa list tại chỗ.** Một lần ghi làm hỏng ba thứ
+  cùng lúc: các hit khác **trong cùng span** dịch offset, hit cross-span **đè lên span
+  đó** thành rác, và **chính chữ vừa thay có thể chứa từ khoá**. Quét lại giết cả ba;
+  neo (`indexAtOrAfter`) đặt **ngay sau** chữ vừa chèn nên "hợp đồng → phụ lục hợp đồng"
+  không mời lại vô hạn.
+- **Nhiều hit trong CÙNG một span phải gộp thành MỘT edit** (`groupEdits`). `/edit-text`
+  redact hộp span rồi vẽ lại từ `new_text`; hai edit rời trên cùng span thì cái sau dựng
+  lại từ **text gốc** và **xoá kết quả của cái trước** — mà toast vẫn báo "đã thay 2".
+- **Không có endpoint ghi riêng.** Thay thế đi qua `/edit-text` với **đúng payload
+  text-edit.js gửi** (kể cả `orig_text`/`orig_size` — BI-25, và `font` là tên font gốc —
+  BI-21). Sidecar chỉ thêm endpoint **đọc** `/text-find`.
+- **Cố ý KHÔNG fold dấu**, khác `Ctrl+F`: gõ "hop dong" **không** ra "hợp đồng". Fold
+  đúng cho việc đọc, sai cho việc ghi — thay một kết quả fold là **xoá dấu** trong hợp
+  đồng của người dùng. Hệ quả chấp nhận: hai ô tìm cho số khác nhau.
+- **Khớp cắt qua 2 span thì ĐẾM và TÔ, không thay** (`replaceable: false`, vàng nét đứt).
+  Bỏ im lặng sẽ bị đọc là "app tìm sót".
+- **Panel không phải `.modal`** — cố ý, vì phải đọc trang phía sau khi duyệt. Nên nó
+  **nằm ngoài** mọi thứ `modalOpen()` quản, và ô nhập tự giữ `Esc` của mình.
+  `placePanel()` đặt `top` theo mép trên của `main`: hàng 1 thanh công cụ **rewrap**
+  (đo được 57px ở 1920 → 98px ở 1366) nên mọi hằng số CSS đều sai ở một bề rộng nào đó.
+- **Vỡ khi:** tìm xong → xoá một trang → vệt tô vẫn còn và bấm Thay ghi nhầm chỗ · hoặc
+  "Thay tất cả" báo N nhưng mở lại file thấy vài chỗ chưa đổi (lỗi gộp span) · hoặc bấm
+  Thay mãi không hết vì chữ thay chứa từ khoá.
+
 ---
 
 ## 4. Hàm nút thắt (đổi chữ ký = ảnh hưởng diện rộng)
@@ -953,7 +1029,7 @@ chỉ tên hàm.
 | Cỡ/hình học chữ vẽ lại (`hscale`, `vscale`, `orig_text`, `orig_size`) | `test_edit_text_metrics.py` · sửa 1 dòng trên hoá đơn thật → **không** dài ra đè chữ bên cạnh, **không** cao hơn dòng chưa sửa (BI-25) |
 | Redaction / `add_redact_annot` / `apply_redactions` | `test_edit_text_layout.py` **và** `test_translate_layout.py` · sửa 1 chữ trong ô bảng **có nền** → không vệt trắng, không mất đường kẻ (BI-23) |
 | `wire.js` (`pdfJsonBody` / `binArrayJsonBody` / `pushB64Chunks` / `b64ToU8` / `B64_CHUNK`) hay bất kỳ chỗ gọi sidecar nào có PDF | `cd desktop ; npm run test:wire` (51 ca) · mở file **lớn** (≥100MB) rồi: Sửa nội dung · Nén · So sánh 2 file · Tách — không tab nào chết vì hết bộ nhớ · **Ảnh → PDF với ~50 ảnh máy ảnh**: tạo được file, PDF mở lại đúng số trang và đúng thứ tự (BI-24) |
-| Thứ tự `<script>` trong `index.html` | `wire.js` **trước** `app.js`/`text-edit.js`/`compare.js`/`editor.js`/`sign.js`; `annot-text.js` + `annot-geom.js` + `managed-codec.js` **trước** `editor.js` (và `managed-codec.js` sau `vendor/pdf-lib.min.js` + `wire.js` + `annot-text.js`); `pan.js` sau `app.js` và trước `editor.js`/`capture.js`. Mở app → console **không** có `ReferenceError` · thử một lệnh gọi sidecar bất kỳ (Nén) (§2, BI-14, BI-40) |
+| Thứ tự `<script>` trong `index.html` | `find-replace.js` **sau** `app.js` (dùng tên trần `state`/`sidecarFetch`/`pdfJsonBody`/`rerenderChanged` và gắn nút lúc nạp); `wire.js` **trước** `app.js`/`text-edit.js`/`compare.js`/`editor.js`/`sign.js`; `annot-text.js` + `annot-geom.js` + `managed-codec.js` **trước** `editor.js` (và `managed-codec.js` sau `vendor/pdf-lib.min.js` + `wire.js` + `annot-text.js`); `pan.js` sau `app.js` và trước `editor.js`/`capture.js`. Mở app → console **không** có `ReferenceError` · thử một lệnh gọi sidecar bất kỳ (Nén) (§2, BI-14, BI-40) |
 | `annot-text.js` / `annot-geom.js` | `npm run test:text` + `test:cloud` + `test:geom` · rồi **test tay**: gõ chữ Việt vào hộp → Xong → mở lại file, chữ **không** tràn khung · khoanh mây (hộp + freehand) → Lưu → mây đúng chỗ · mũi tên có nhãn ở cả hai đầu (BI-40) |
 | Bất kỳ lệnh vẽ nào trong `drawOneAnnot` / `drawWatermark` (thêm kind, đổi anchor, đổi primitive) | `cd desktop ; npm run test:rotate` **và thêm kind mới vào `KINDS` của lưới đó** · rồi test tay trên **trang đã xoay**: mở PDF scan nằm ngang (hoặc Xoay phải 90° một trang bất kỳ) → khoanh mây · khoanh vùng · mũi tên · dấu ✓ · hộp chữ → **Áp dụng** → mở lại file: mọi thứ **đúng chỗ, đúng chiều** như lúc vẽ · lặp lại trên trang **không** xoay để chắc không có gì dịch đi (BI-45, BI-40) |
 | Sắp xếp trang bằng kéo–thả trong cột trang (`thumbGapAt`, `showThumbGapCue`, `gapToReorderIndex`, `gapIsNoOp`, `.thumb.insert-*`) | `npm run test:geom` · kéo trang 1 xuống **giữa trang 3 và 4** → thấy **hai vạch** ở đúng khe đó, thả ra thì trang nằm đúng giữa 3 và 4 · kéo rồi thả **đúng chỗ cũ** → con trỏ báo “không cho phép”, tài liệu **không** bẩn (không có ●) · kéo–thả **1 PDF từ ngoài** vào giữa dải → vẫn chèn đúng khe (BI-33) · Ctrl+Z sau khi sắp xếp · đang kéo thì cột **không** tự cuộn (BI-39) |
@@ -969,6 +1045,10 @@ chỉ tên hàm.
 | Toàn màn hình / dải thumbnail (`applyPresentation`, `body.presenting .sidebar`, `#present-rail`) | F11 → trang vẫn vừa trọn màn hình · rê chuột mép trái → dải trượt ra mà trang **không nhúc nhích** · F4 ghim/bỏ ghim · thu sidebar rồi mới F11 → F4 vẫn gọi lại được dải · thoát F11 → sidebar về đúng trạng thái cũ (BI-32, BI-22) |
 | Bề rộng sidebar (`--sidebar-w`, `applySidebarWidth`, `#sidebar-resizer`) | Kéo rộng/hẹp → dừng đúng ở 130/300 · **kéo–thả 1 PDF từ ngoài vào giữa dải thumbnail → chèn đúng vị trí** (BI-33) · bấm đúp tay nắm → về 180 · đóng mở app → nhớ bề rộng · thu sidebar (F4) → tay nắm biến mất · F11 → lớp phủ đúng bề rộng đã kéo (BI-34) |
 | Tuỳ chọn hiện đường dẫn (`set-breadcrumb`, `breadcrumbEnabled`) | Tắt → dải đường dẫn biến mất **ngay**, mở lại app vẫn tắt · bật lại → hiện · mặc định máy mới = **bật** · đổi VI↔EN → dòng cài đặt đổi theo |
+| Đóng hộp thoại (`dismissModal`, `topOpenModal`, `[data-modal-close]`, `.modal-x`, `data-modal-manual`) | BI-48 · probe boot phải báo `dialogs_without_close` **và** `dialogs_without_x` rỗng · thử **cả ba** đường (Esc / bấm nền / ✕) trên: **Cài đặt** (hộp cuộn được — ✕ phải **dính** ở đầu khi cuộn xuống), **Nén**, **Gộp file** · bấm **bên trong** thẻ rồi thả chuột ra nền → hộp thoại **không** đóng · mở PDF có mật khẩu rồi `Esc` → app không treo, mở lại file được · `Esc` khi đang **F11** với 1 hộp thoại mở → chỉ đóng hộp thoại, **vẫn** ở toàn màn hình · `Esc` trong trang **Hướng dẫn** khi ô tìm còn chữ → xoá chữ trước, lần hai mới đóng (BI-47) |
+| `/compress` · `/compress-bin` · `_compress_pdf_bytes` · `runCompress` | BI-49 · `.venv\Scripts\python run_tests.py` · nén một PDF **>200MB thật** → ra file, **không** báo "PDF quá lớn" · nén PDF **>500 trang** → chạy, không báo "quá nhiều trang" · nén file hỏng/preset sai → hiện **đúng câu lỗi** chứ không lưu ra PDF rác · dòng toast ghi đúng cỡ trước → sau · **rebuild sidecar** trước khi đóng gói (đụng `api.py`) |
+| Thanh công cụ hàng 1 (`.brand`, `.brand-text`, `.by`, `icon-only` của `btn-save`/`btn-print`, `#sb-credit`) | Thu cửa sổ **1920 → 1600 → 1366 → 1280**: hàng 1 **không cao hơn** bản trước (đã đo bằng probe: 98 → 91px ở 1600) · nút **Lưu**/**In** rê chuột ra **đúng tooltip**, và `Ctrl+S`/`Ctrl+P` + menu **Tập tin** vẫn chạy · đổi **VI↔EN** → tooltip đổi theo, nút **không** mọc lại chữ (BI-10) · dòng `developed by Nam Ta` thấy được ở **thanh trạng thái** kể cả khi cửa sổ hẹp (dưới 1400px byline trên brand bị ẩn có chủ ý) |
+| `renderer/find-replace.js` · `/text-find` · Ctrl+H | BI-50 · `cd desktop ; npm run test:find` **và** `.venv\Scripts\python run_tests.py` · rồi **test tay trên hợp đồng thật**: tìm một từ có ≥2 lần **trên cùng một dòng** → **Thay tất cả** → mở lại file, **cả hai** đều đổi (bẫy gộp span) · **Thay** từng cái từ trên xuống, bấm ↓ bỏ qua vài chỗ → chỉ đúng chỗ đã bấm Thay bị đổi · thay bằng chuỗi **chứa chính từ khoá** ("hợp đồng" → "phụ lục hợp đồng") → **dừng lại**, không lặp vô hạn · `Ctrl+Z` sau "Thay tất cả" → về nguyên trạng **trong một bước** · tìm xong rồi **xoá một trang** → vệt tô **biến mất** (BI-50) · mở trên **PDF scan** → báo đi OCR, không im lặng · từ khoá **có dấu** ("hợp đồng") tìm ra, gõ **không dấu** thì **không** ra (cố ý) · trang có chữ **in đậm giữa từ** → vệt **vàng nét đứt**, nút **Thay** mờ · **zoom** khi đang mở → vệt bám đúng chữ (BI-36) · đang **Chú thích**/**Sửa nội dung** → bấm Ctrl+H bị từ chối (BI-2) |
 | `i18n.js` | Đổi VI↔EN khi đang mở tài liệu, đang chú thích, đang sửa nội dung |
 | `api.py` / `src/pdf/*` | `.venv\Scripts\python run_tests.py` **và** rebuild sidecar trước khi đóng gói |
 
@@ -1004,6 +1084,11 @@ chỉ tên hàm.
    (bù xoay trang cho **mọi** kind của `drawOneAnnot`, **cắt thẳng từ `editor.js`** và
    chạy trên chính pdf.js + pdf-lib đang ship — BI-45. Có ca canh gác dựng lại đúng lỗi
    mây bị xoay, nên lưới này **không thể** xanh một cách vô nghĩa).
+2k. `cd desktop ; npm run test:find` → phải `N pass, 0 fail`
+   (số học Tìm & Thay thế trong `renderer/find-replace.js` — BI-50. Lưới này cũng kiểm
+   **mọi khoá `tr()` có trong từ điển i18n**, `fr-status` nằm trong `SKIP_IDS`,
+   `btn-find-replace` nằm trong `GATED_BTNS`, và `pushUndo` đứng **trước** phép gán
+   `state.bytes` — BI-3, BI-9, BI-10).
 3. `node --check` mọi file JS đã sửa (renderer **không** có test tự động).
 3b. Nếu đụng `editor.js` / `app.js` / bất kỳ file nào được `<script>` nạp: **probe boot**
    — chạy `index.html` thật bằng Electron của dự án (`BrowserWindow({show:false})`),

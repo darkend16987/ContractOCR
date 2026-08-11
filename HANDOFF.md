@@ -4,7 +4,164 @@
 > [DESIGN.md](DESIGN.md) (kiến trúc), [ROADMAP.md](ROADMAP.md) (tiến độ chi tiết),
 > [SETUP.md](SETUP.md) (dựng môi trường).
 
-_Cập nhật: 2026-08-06 · v0.2.53 đã phát hành (dưới đây)_
+_Cập nhật: 2026-08-11 · v0.2.55 đã phát hành (dưới đây) · v0.2.53 là bản trước đó_
+
+> **v0.2.55 gộp HAI đợt việc.** Bốn sửa lỗi UI + bỏ trần nén (phần **B** bên dưới) ban
+> đầu định ra riêng thành v0.2.54, nhưng cả hai đợt nằm chung một cây làm việc chưa
+> commit nên tách thành hai bản phát hành không còn khả thi — và gắn nhãn "patch bump"
+> cho một bản có Tìm & Thay thế thì sai. **Không có v0.2.54 nào được phát hành.**
+
+> **v0.2.55 · PHẦN A — Tìm & Thay thế chữ trong PDF** (`Ctrl+H`; **có đụng `api.py` ⇒
+> rebuild sidecar**). Yêu cầu người dùng: đổi một từ khoá xuất hiện nhiều chỗ, theo hai
+> kiểu — thay tất cả, hoặc duyệt lần lượt từ trên xuống như Word.
+>
+> **1. Sidecar chỉ thêm MỘT endpoint, và nó CHỈ ĐỌC: `/text-find`.** Không có
+> `/text-replace`. Việc ghi đi qua `/edit-text` với **đúng payload `text-edit.js` gửi khi
+> người dùng sửa tay một đoạn** — kể cả `orig_text`/`orig_size` (BI-25) và `font` là tên
+> font gốc (BI-21). Đường đó đã giải xong phần khó: redaction chỉ lấy chữ chứ không lấy
+> nền/đường kẻ (BI-23), thang glyph "giữ nguyên font", co chữ cho vừa ô, trang xoay. Một
+> đường ghi thứ hai sẽ phải **kiếm lại từ đầu** toàn bộ số đó.
+>
+> **Vì sao phải có endpoint mới thay vì lặp `/text-spans`:** `/text-spans` đọc **một
+> trang mỗi lần gọi và mỗi lần gọi tải lên cả file** ⇒ quét tài liệu 200 trang là tải lên
+> 200 lần. `/text-find` đi hết tài liệu một lượt cho mỗi truy vấn.
+>
+> **2. Khớp cắt qua nhiều span — vấn đề thật, xử lý tường minh.** PDF lưu chữ theo *span*
+> (đoạn cùng font/cỡ/màu trên một dòng), mà `/edit-text` viết lại theo span. Từ khoá đổi
+> định dạng giữa chừng ("Bên **A**" khi chữ A in đậm) nằm vắt qua hai span. `/text-find`
+> quét **hai lượt mỗi dòng**: trong từng span (thay được), rồi trên chuỗi nối cả dòng để
+> **bắt những cái không span nào chứa trọn**. Loại sau vẫn được **đếm và tô vàng nét
+> đứt**, `replaceable: false`, nút Thay mờ. Bỏ im lặng sẽ bị đọc là "app tìm sót".
+>
+> **3. Cố ý KHÔNG fold dấu, khác `Ctrl+F`.** Gõ "hop dong" **không** ra "hợp đồng". Fold
+> đúng cho việc *đọc* và sai cho việc *ghi*: thay một kết quả đã fold là **xoá dấu** khỏi
+> hợp đồng của người dùng. Hệ quả chấp nhận và đã ghi vào Hướng dẫn: hai ô tìm có thể cho
+> hai con số khác nhau. Ctrl+F **không bị đụng vào** nên tính năng này không thể làm nó
+> hồi quy.
+>
+> **4. Ba cái bẫy im lặng, và cách chặn** (chi tiết ở **BI-50**):
+> - **Splice phải đi từ PHẢI SANG TRÁI.** Đi từ trái sang thì offset của lần khớp thứ hai
+>   — đo trên chuỗi **gốc** — trỏ sai chỗ. Request vẫn thành công, PDF vẫn mở được, chỉ là
+>   một chữ ở cuối dòng **mất vài ký tự**.
+> - **Nhiều khớp trong CÙNG một span phải gộp thành MỘT edit.** `/edit-text` redact hộp
+>   span rồi vẽ lại từ `new_text`; hai edit rời trên cùng span thì cái sau dựng lại từ
+>   **text gốc** và **xoá kết quả của cái trước**, trong khi toast vẫn báo "đã thay 2".
+> - **Bytes đổi ⇒ cả list hit là hư cấu.** Không chỉ do chính thao tác Thay: `Ctrl+Z`,
+>   xoay trang, **xoá trang**, bake watermark đều làm offset dịch và `page` trỏ sang trang
+>   khác — vệt tô nằm trên chữ vô can, bấm Thay là ghi đè đúng chữ đó. `invalidate()` móc
+>   vào **hai hàm phễu** `renderAll()` / `rerenderChanged()` nên thao tác sửa tài liệu
+>   **mới** sau này tự được che. Sau mỗi lần ghi là **quét lại**, không vá list tại chỗ —
+>   quét lại giết cả ba dạng lỗi cũ một lượt; neo đặt **ngay sau** chữ vừa chèn nên
+>   "hợp đồng → phụ lục hợp đồng" **không** mời lại vô hạn.
+>
+> **5. Panel nổi, không phải `.modal`** — duyệt kết quả thì phải đọc được trang phía sau,
+> mà modal thì làm mờ và chặn đúng cái đó. `placePanel()` đặt `top` theo mép trên của
+> `main` chứ không phải hằng số CSS: hàng 1 thanh công cụ **rewrap** (đo được 57px ở
+> 1920 → 98px ở 1366) nên mọi hằng số đều sai ở một bề rộng nào đó. Ảnh chụp probe bắt
+> được đúng lỗi này, và bắt luôn nút ↑ **quay xuống** vì rule `.find-up` bị bó hẹp trong
+> `.find-box`.
+>
+> **Kiểm chứng — ba tầng, vì không tầng nào đủ một mình:**
+> - `npm run test:find` — **98 ca** thuần số học (`test/find-replace.test.js`). Kiểm luôn
+>   **mọi khoá `tr()` có trong từ điển i18n**, `fr-status` ∈ `SKIP_IDS`,
+>   `btn-find-replace` ∈ `GATED_BTNS`, `pushUndo` đứng **trước** phép gán `state.bytes`.
+>   Lưới này **đã bắt được lỗi thật**: `"Mở PDF trước."` và `"Engine chưa sẵn sàng."`
+>   xuất hiện **11 lần** trong `app.js` mà **chưa hề có bản tiếng Anh** — thiếu từ trước,
+>   nay đã bổ sung.
+> - **Probe seam Python↔JS** — chạy **chính `find-replace.js` đang ship** (`node -e
+>   require`) trên **output thật** của `/text-find`, rồi nạp kết quả vào **`/edit-text`
+>   thật**, rồi đọc lại chữ trong PDF. Đây là chỗ hai lưới kia **không nhìn thấy**: hình
+>   dạng object bên này có đúng là thứ bên kia chờ không. 16/16, gồm ca hai khớp cùng một
+>   span ra **một** edit có **cả hai** đã đổi, và quét lại sau khi thay ra **0**.
+> - **Probe DOM Electron** — nạp `index.html` thật + preload thật + **một PDF thật**, chỉ
+>   giả lập mạng bằng payload lấy từ endpoint thật. Xanh: 4 vệt tô đúng cỡ, ↑↓ chạy và
+>   **vòng lại**, **zoom 1.4× thì vệt cũng 1.4×** (BI-36), ca cross-span ra **vàng nét
+>   đứt** + nút Thay **mờ**, đóng panel **xoá sạch** lớp tô, và `rerenderChanged` **thổi
+>   bay** list hit (BI-50).
+>
+> **Giới hạn còn lại, đã ghi vào Hướng dẫn:** `/text-find` và `/edit-text` vẫn là
+> base64/JSON nên Tìm & Thay thế trần ~200MB (khác `/compress-bin` ở phần B). Nâng
+> `/edit-text` lên nhị phân là việc riêng — đó là đường ghi nhiều lưới test nhất repo,
+> không gộp vào đợt tính năng này.
+
+
+> **v0.2.55 · PHẦN B — gỡ trần 200MB của "Nén" · đóng nhanh mọi hộp thoại · gọn thanh
+> công cụ trên · mở rộng hộp Gộp file** (bốn báo cáo từ người dùng thật; **có đụng
+> `api.py` ⇒ BẮT BUỘC rebuild sidecar** trước khi đóng gói, nếu không OTA giao bản cũ).
+>
+> **1. "Không nén được file trên 200 MB" — nguyên nhân là một cái chốt, không phải lỗi bộ
+> nhớ.** `_MAX_PDF_B64 = 280_000_000` (`src/pdf/util.py`) so với **độ dài chuỗi base64**:
+> file 200 MiB → 279.620.268 ký tự (lọt, dư 0,1%); 201 MiB → 281.018.368 → **400 "PDF quá
+> lớn"**. Khớp chính xác báo cáo. Ngay sau nó còn **chốt thứ hai**: `page_count > 500` —
+> file 200MB thường 600–1500 trang, nên gỡ mỗi chốt thứ nhất là người dùng đâm ngay vào
+> chốt thứ hai với một câu lỗi khác.
+>
+> **Cách sửa: thêm `/compress-bin` chở bytes thô cả hai chiều**, thay vì nâng
+> `_MAX_PDF_B64` toàn cục. Đường JSON tốn ~5× cỡ file ở đỉnh (base64 trên dây → `str` lúc
+> parse JSON → bytes giải mã → bản sao fitz → base64 trả về); nâng trần cho **cả 13
+> endpoint** là mời OOM ở `/searchable`, `/translate`… nơi người dùng chỉ thấy "Engine mất
+> kết nối". Đường nhị phân bỏ hẳn base64 nên có trần riêng `_MAX_PDF_BIN = 1GB`, và
+> `_COMPRESS_MAX_PAGES` lên **3000**. Hai route **dùng chung `_compress_pdf_bytes()`** để
+> không lệch nhau (`test_compress_bin_matches_json_route` canh đúng chỗ đó). Hợp đồng nhận
+> biết giống `/edit-text?raw=1`: **thành công = `application/pdf`, lỗi = JSON**.
+> `expose_headers` của CORS đã bổ sung — origin renderer là `file://` nên header `X-*` vô
+> hình với JS nếu không liệt kê (`runCompress` vẫn cố ý tự tính cỡ từ `state.bytes.length`
+> và `buf.byteLength`, không phụ thuộc header). Xem **BI-49**.
+>
+> **Đã kiểm bằng probe HTTP thật** (uvicorn + CORS, không phải gọi coroutine trực tiếp):
+> body nhị phân vào đúng, `content-type: application/pdf` ra đúng, `X-Original-Size` /
+> `X-Compressed-Size` khớp, `access-control-expose-headers` có mặt, preset sai → 400 JSON,
+> tài liệu 400 trang round-trip xong. Cộng **5 test mới** trong `test_pdf_ops.py`.
+>
+> **2. "Popup Cài đặt hơi bé và không tắt nhanh được".** Đúng như mô tả: `.modal-card` là
+> `width: 380px; max-height: 80vh; overflow: auto` **không có `max-width`**, và nút **Đóng**
+> nằm ở đáy vùng cuộn. Nay: `.set-card` rộng **560px**, có **`.modal-head` dính** (`position:
+> sticky`) giữ tiêu đề + ✕ luôn trên màn hình; `.modal-card` có `max-width: 92vw` để không
+> thẻ nào tràn ra ngoài cửa sổ nhỏ nữa.
+>
+> **Và đóng nhanh cho TẤT CẢ 21 hộp thoại**: `Esc`, **bấm nền mờ**, hoặc **✕** ở góc. Điểm
+> cốt tử (**BI-48**): cả ba đều **bấm hộ nút Hủy** (`[data-modal-close]`), **không** set
+> `hidden`. Vì `promptPassword()` / `askInsertPos()` chỉ `resolve()` bên trong `done()` của
+> nút Hủy — ẩn phần tử sau lưng chúng thì hộp thoại biến mất nhưng `await` **treo vĩnh
+> viễn**, không lỗi, không dấu vết. `#help-modal` là ngoại lệ duy nhất
+> (`data-modal-manual`): `help.js` tự giữ Esc hai-bậc của ô tìm.
+>
+> Handler `Esc` dùng **`stopImmediatePropagation`** và **phải khai trước** `window keydown`
+> lớn: hai handler nằm **cùng trên `window`**, mà `stopPropagation` không chặn listener anh
+> em cùng node — thiếu nó thì Esc đóng hộp thoại **rồi thoát luôn F11**. Probe đã dựng lại
+> đúng ca đó (`esc_no_leak = {closed:true, leaked:false}`).
+>
+> **3. Gọn thanh trên.** `Lưu` / `In` thành **icon-only** (giữ `title` — đó vừa là tooltip
+> vừa là chuỗi i18n dịch, nên English không mất gì). Dòng `developed by Nam Ta` **xuống
+> dòng dưới "Nabu PDF"** thay vì nằm ngang cạnh nó, và thêm vào **thanh trạng thái**
+> (`#sb-credit`).
+>
+> **Đo bằng probe, không tin mắt** (Electron, dpr 1, so với chính v0.2.53): khối brand
+> **213px → 119px**; hàng 1 ở 1600px **98px → 91px** (lấy lại trọn một dòng); ở 1366px
+> ngang bằng. Vì byline 9px vẫn đặt sàn ~119px cho khối brand, **giữ nguyên** luật
+> `@media (max-width: 1400px) { .brand .by { display: none } }` — dưới 1400px không mất gì
+> vì credit đã thường trực ở thanh trạng thái.
+>
+> **4. Hộp Gộp file quá hẹp.** `.combine-card` **460px → 720px** (`max-width: 92vw` kế thừa
+> từ `.modal-card`), và `.combine-name` bỏ `white-space: nowrap` → **xuống tối đa 2 dòng**
+> (`-webkit-line-clamp: 2` + `overflow-wrap: anywhere`). Chỉ nới rộng là **chưa đủ**: hàng
+> là grip + số + TÊN + số trang + 3 nút, tên dài 80–90 ký tự vẫn bị cắt trước khi đọc ra
+> file nào. Đã dựng lại bằng ảnh chụp probe với đúng loại tên file người dùng có.
+>
+> **Kiểm chứng đã chạy:** `run_tests.py` **11/11** · **11 lưới JS** (tabs 113 · pages 50 ·
+> pan 57 · wire 51 · geom 55 · managed 50 · text 105 · cloud 175 · rotate 96 · print 39 ·
+> help 237 chuỗi) **0 fail** · `node --check` mọi file đã sửa · **probe boot Electron** với
+> **đúng preload thật** (`contextIsolation:true, sandbox:true`) → **0** ReferenceError/
+> SyntaxError, và đòi thêm câu khẳng định: `dialogs_without_close`/`dialogs_without_x` rỗng,
+> 21 `.modal-x`, `set-card` 560px, `combine-card` 720px, cả ba cử chỉ đóng chạy thật, bấm
+> **trong** thẻ **không** đóng. (Bài học lặp lại: probe **không có preload** thì
+> `window.desktop` undefined → `app.js` ném giữa chừng và **không bao giờ chạy tới phần
+> gắn nút** — nhìn y hệt "code mới hỏng".)
+>
+> **Khảo sát Find & Replace đã làm ở đợt này** và kết luận của nó — `/text-spans` nhận
+> **một trang mỗi lần gọi và tải lên cả file mỗi lần** ⇒ **bắt buộc thêm endpoint quét
+> toàn tài liệu một lần** — chính là thứ **PHẦN A** ở trên đã dựng.
+
 
 > **v0.2.53 — bỏ dòng hướng dẫn thường trực trên thanh công cụ · thêm trang Hướng dẫn sử
 > dụng vào menu Trợ giúp · chốt lỗ phím tắt rơi xuyên hộp thoại** (chỉ renderer + main menu

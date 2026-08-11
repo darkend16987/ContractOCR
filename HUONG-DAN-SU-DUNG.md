@@ -126,6 +126,27 @@ sau dùng OCR sẽ tải lại.
 
 Giới hạn đã biết: sửa trong phạm vi từng đoạn (không tự dàn lại dòng); chữ dài hơn ô cũ sẽ tự co nhỏ.
 
+**Tìm & Thay thế (`Ctrl+H`)** — đổi một từ khoá xuất hiện nhiều chỗ trong cả tài liệu, giống `Ctrl+H`
+của Word. Mở bằng `Ctrl+H` hoặc nút **⇄** ở cuối ô *Tìm trong tài liệu* trên thanh công cụ.
+
+- Gõ chữ cần tìm → app quét **toàn bộ tài liệu**, tô sáng mọi vị trí và hiện số đếm. `Enter` /
+  `Shift+Enter` (hoặc nút ↑ ↓) đi tới vị trí kế / trước.
+- **Thay** đổi đúng vị trí đang chọn (viền cam) rồi nhảy sang vị trí kế — duyệt lần lượt từ trên
+  xuống, chỗ nào không muốn đổi thì bấm ↓ để bỏ qua.
+- **Thay tất cả** đổi hết trong một lần; app hỏi xác nhận kèm số lượng trước khi ghi. Một `Ctrl+Z`
+  hoàn tác cả lượt.
+- Có **Phân biệt hoa/thường** và **Đúng nguyên từ**. Để trống ô *Thay bằng* thì từ khoá bị **xoá**.
+
+> **Ba giới hạn cần biết.**
+> 1. Chỉ chạy trên **PDF có chữ thật** — bản scan phải chạy **OCR văn bản** trước.
+> 2. Vị trí tô **vàng nét đứt** là từ khoá bị **chia làm nhiều đoạn định dạng** (ví dụ "Bên **A**" khi
+>    chữ A in đậm). App **đếm và chỉ ra** cho bạn nhưng **không tự thay**, vì thay nửa vời sẽ hỏng
+>    định dạng — sửa tay bằng **Sửa nội dung**.
+> 3. Khác ô `Ctrl+F`, ô này **có phân biệt dấu**: gõ "hop dong" **không** ra "hợp đồng". Cố ý như vậy —
+>    thay một kết quả bỏ dấu sẽ làm **mất dấu** trong hợp đồng của bạn.
+>
+> Tài liệu **trên ~200MB** chưa dùng được Tìm & Thay thế — hãy **Nén** bớt trước.
+
 > **Chèn chữ ký:** dùng nút **Chèn ảnh / chữ ký** → chọn ảnh chữ ký rồi bấm lên trang để đặt.
 > Nên dùng **PNG nền trong** để chữ ký không có hộp trắng đè lên tài liệu (ảnh JPG có nền đặc — app sẽ
 > nhắc). Chỉ nhận **PNG / JPG**.

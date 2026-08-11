@@ -95,10 +95,21 @@
             ),
             T("`Ctrl+Shift+S` **Lưu thành…** một file mới, giữ nguyên file gốc.", "`Ctrl+Shift+S` **Save As…** a new file, leaving the original untouched."),
             T(
+              "Trên thanh công cụ, **Lưu** và **In** là hai nút **chỉ có biểu tượng** (đĩa mềm và máy in) — bỏ chữ đi để hàng trên gọn hơn. Rê chuột lên nút là hiện tên đầy đủ; hai lệnh này vẫn nằm trong menu **Tập tin** và trên `Ctrl+S` / `Ctrl+P`.",
+              "On the toolbar, **Lưu** (Save) and **In** (Print) are **icon-only** buttons — a floppy disk and a printer — to keep the top row compact. Hover either one for its full name; both commands are still in the **Tập tin** (File) menu and on `Ctrl+S` / `Ctrl+P`."
+            ),
+            T(
               "Đóng cửa sổ khi còn thay đổi chưa lưu thì app hỏi **Lưu / Không lưu / Hủy** — không bao giờ mất im lặng.",
               "Closing a window with unsaved changes prompts **Save / Don't save / Cancel** — nothing is ever lost silently."
             ),
           ],
+        },
+        { h: T("Đóng nhanh một hộp thoại", "Closing a dialog quickly") },
+        {
+          p: T(
+            "Mọi hộp thoại đều đóng được bằng **ba** cách, không phải kéo xuống cuối tìm nút: nhấn `Esc`, **bấm ra nền mờ** bên ngoài, hoặc bấm dấu **✕** ở góc trên bên phải. Cả ba đều tương đương nút **Hủy** — không có thay đổi nào bị ghi.",
+            "Every dialog closes **three** ways, so you never have to scroll to the bottom to find a button: press `Esc`, **click the dimmed background** outside it, or click the **✕** in the top-right corner. All three do exactly what **Hủy** (Cancel) does — nothing is written."
+          ),
         },
         { h: T("Hai badge trên thanh công cụ", "The two toolbar badges") },
         {
@@ -368,7 +379,7 @@
 
     {
       id: "textedit",
-      title: T("Sửa nội dung (chữ gốc)", "Editing the original text"),
+      title: T("Sửa nội dung & Tìm/Thay thế", "Editing the original text · Find & Replace"),
       blocks: [
         {
           p: T(
@@ -412,6 +423,48 @@
           note: T(
             "**Giới hạn đã biết:** sửa trong phạm vi **từng đoạn**, app không tự dàn lại dòng cả khối. Chữ mới dài hơn ô cũ sẽ **tự co nhỏ** cho vừa.",
             "**Known limits:** edits are **per text run**; the app does not reflow a whole paragraph. Text longer than the original run **shrinks to fit**."
+          ),
+        },
+
+        { h: T("Tìm & Thay thế", "Find & Replace") },
+        {
+          p: T(
+            "Đổi một từ khoá xuất hiện nhiều chỗ trong cả tài liệu — như `Ctrl+H` của Word. Mở bằng `Ctrl+H`, hoặc nút ⇄ ở cuối ô **Tìm trong tài liệu** trên thanh công cụ.",
+            "Change a keyword that appears in many places across the whole document — like Word's `Ctrl+H`. Open it with `Ctrl+H`, or the ⇄ button at the end of the toolbar's **Tìm trong tài liệu** box."
+          ),
+        },
+        {
+          ul: [
+            T(
+              "Gõ chữ cần tìm → app quét **toàn bộ tài liệu** và tô sáng mọi vị trí, kèm số đếm. `Enter` / `Shift+Enter` (hoặc nút ↑ ↓) đi tới vị trí kế / trước.",
+              "Type what to find → the app scans the **whole document**, highlights every match and shows a count. `Enter` / `Shift+Enter` (or the ↑ ↓ buttons) step to the next / previous one."
+            ),
+            T(
+              "**Thay** đổi đúng vị trí đang chọn (viền cam) rồi tự nhảy sang vị trí kế — duyệt lần lượt từ trên xuống, muốn bỏ qua chỗ nào thì bấm ↓ thay vì **Thay**.",
+              "**Thay** (Replace) changes just the current match — the one outlined in orange — then moves to the next, so you can walk down the document and skip any match by pressing ↓ instead."
+            ),
+            T(
+              "**Thay tất cả** đổi mọi vị trí trong một lần. App hỏi xác nhận kèm số lượng trước khi ghi.",
+              "**Thay tất cả** (Replace all) changes every match in one go. The app asks you to confirm, and tells you how many, before writing."
+            ),
+            T(
+              "**Phân biệt hoa/thường** và **Đúng nguyên từ** hoạt động như trong Word. Bỏ trống ô **Thay bằng** thì từ khoá bị **xoá**.",
+              "**Match case** and **Whole word only** behave as they do in Word. Leaving **Thay bằng** empty **deletes** the keyword."
+            ),
+            T(
+              "`Ctrl+Z` hoàn tác cả một lần **Thay tất cả** trong một bước.",
+              "`Ctrl+Z` undoes an entire **Replace all** in a single step."
+            ),
+            T(
+              "Tài liệu **rất lớn (trên ~200MB)** chưa dùng được Tìm & Thay thế — dùng **Nén** để giảm dung lượng trước.",
+              "**Very large documents (over ~200MB)** are not supported by Find & Replace yet — shrink the file with **Nén** (Compress) first."
+            ),
+          ],
+        },
+        {
+          note: T(
+            "**Ba giới hạn cần biết.** (1) Chỉ chạy trên PDF có **chữ thật** — bản scan phải chạy **OCR văn bản** trước. (2) Vị trí tô **vàng nét đứt** là từ khoá bị **chia làm nhiều đoạn định dạng** (ví dụ “Bên **A**” khi chữ A in đậm): app đếm và chỉ ra cho bạn nhưng **không tự thay**, vì thay nửa vời sẽ hỏng định dạng — sửa tay bằng **Sửa nội dung**. (3) Khác với `Ctrl+F`, ô này **có phân biệt dấu**: gõ “hop dong” sẽ **không** ra “hợp đồng”. Cố ý như vậy — thay một kết quả bỏ dấu sẽ làm mất dấu trong hợp đồng của bạn.",
+            "**Three limits worth knowing.** (1) It needs **real text** — run **OCR văn bản** on a scan first. (2) A match outlined in **dashed amber** is split across **two formatting runs** (\"Bên **A**\" where the A is bold): the app counts and shows it but will **not** replace it, because a half-replacement would wreck the formatting — fix those by hand with **Sửa nội dung**. (3) Unlike `Ctrl+F`, this box **is** diacritic-sensitive: typing \"hop dong\" will **not** find \"hợp đồng\". That is deliberate — replacing a diacritic-folded match would strip the accents out of your contract."
           ),
         },
       ],
@@ -635,12 +688,14 @@
             ["Ctrl+Z", T("Hoàn tác (trong Chú thích: hoàn tác từng bước chú thích)", "Undo (inside Chú thích: undo one annotation step)")],
             ["Ctrl+Y", T("Làm lại", "Redo")],
             ["Ctrl+F", T("Tìm trong tài liệu", "Find in document")],
+            ["Ctrl+H", T("Tìm & Thay thế chữ trong PDF", "Find & replace text in the PDF")],
             ["Enter / Shift+Enter", T("Kết quả tìm kế / trước", "Next / previous match")],
             ["Ctrl + / Ctrl −", T("Phóng to / thu nhỏ", "Zoom in / out")],
             ["Ctrl 0", T("Cỡ gốc 100%", "Actual size (100%)")],
             [T("Ctrl + lăn chuột", "Ctrl + wheel"), T("Phóng to bám theo con trỏ", "Zoom around the pointer")],
             ["F4", T("Ẩn / hiện cột trang", "Hide / show the page list")],
             ["F11", T("Toàn màn hình (Esc để thoát)", "Full screen (Esc exits)")],
+            ["Esc", T("Đóng hộp thoại đang mở (như bấm Hủy)", "Close the open dialog (same as Hủy)")],
             ["↑ / ↓ · PageUp / PageDown", T("Trang trước / trang kế", "Previous / next page")],
             ["Delete", T("Xoá trang đang chọn", "Delete the selected pages")],
             ["H / V", T("Bàn tay / chọn chữ (khi đang xem trang)", "Hand / select text (in the page view)")],

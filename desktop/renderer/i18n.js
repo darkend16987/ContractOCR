@@ -56,6 +56,48 @@
     "Kết quả trước (Shift+Enter)": "Previous match (Shift+Enter)",
     "Kết quả tiếp (Enter)": "Next match (Enter)",
     "Cài đặt — API key cho Bóc tách": "Settings — API key for extraction",
+    // --- Tìm & Thay thế (find-replace.js) ---
+    "Tìm & Thay thế chữ trong PDF (Ctrl+H)": "Find & replace text in the PDF (Ctrl+H)",
+    "Tìm & Thay thế": "Find & Replace",
+    "Tìm": "Find",
+    "Chữ cần tìm…": "Text to find…",
+    "Thay bằng": "Replace with",
+    "Chữ thay thế…": "Replacement text…",
+    "Phân biệt hoa/thường": "Match case",
+    "Đúng nguyên từ": "Whole word only",
+    "Thay": "Replace",
+    "Thay tất cả": "Replace all",
+    "Thay vị trí đang chọn rồi sang vị trí kế": "Replace the current match and move to the next",
+    "Thay mọi vị trí trong toàn bộ tài liệu": "Replace every match in the whole document",
+    "Chỉ dùng được với PDF có chữ thật (không phải bản scan). Từ khoá bị chia làm nhiều đoạn định dạng sẽ được tô nhưng không thay tự động.":
+      "Works only on PDFs with real text (not scans). A match split across two formatting runs is highlighted but not replaced automatically.",
+    "Từ khoá bị chia làm nhiều đoạn định dạng — không thay tự động được":
+      "This match is split across two formatting runs — it cannot be replaced automatically",
+    "Đang tìm…": "Searching…",
+    "Đang thay thế…": "Replacing…",
+    "Không tìm thấy kết quả nào.": "No matches found.",
+    "PDF này không có chữ thật (bản scan) — chạy \"OCR văn bản\" trong Công cụ trước.":
+      "This PDF has no real text (it is a scan) — run \"OCR văn bản\" under Công cụ first.",
+    "Thoát \"Chú thích\" trước khi dùng Tìm & Thay thế.": "Leave \"Chú thích\" before using Find & Replace.",
+    "Thoát \"Sửa nội dung\" trước khi dùng Tìm & Thay thế.": "Leave \"Sửa nội dung\" before using Find & Replace.",
+    "{i}/{n} kết quả": "{i}/{n} matches",
+    "{i}/{n} kết quả · {k} vị trí không thay tự động được":
+      "{i}/{n} matches · {k} cannot be replaced automatically",
+    "Quá nhiều kết quả — chỉ hiện {n} vị trí đầu tiên.":
+      "Too many matches — showing only the first {n}.",
+    "Thay {n} vị trí trong toàn bộ tài liệu?": "Replace {n} matches throughout the document?",
+    "{k} vị trí bị chia làm nhiều đoạn định dạng sẽ được GIỮ NGUYÊN.":
+      "{k} matches are split across formatting runs and will be LEFT UNCHANGED.",
+    "Đã thay 1 vị trí.": "Replaced 1 match.",
+    "Đã thay {n} vị trí.": "Replaced {n} matches.",
+    // Pre-existing gap, surfaced by the find-replace grid: app.js already toasts
+    // these 11 times (Nén, Dịch, Tách, Ký số…) and they had no English at all.
+    "Mở PDF trước.": "Open a PDF first.",
+    "Engine chưa sẵn sàng.": "The engine is not ready yet.",
+    "Lỗi tìm: {msg}": "Search failed: {msg}",
+    "Thay thế lỗi: {msg}": "Replace failed: {msg}",
+    "Lỗi thay thế: {msg}": "Replace failed: {msg}",
+    "không rõ": "unknown",
     "Trạng thái engine OCR": "OCR engine status",
     "Trạng thái cập nhật": "Update status",
     "Hoàn tác (Ctrl+Z)": "Undo (Ctrl+Z)",
@@ -582,6 +624,9 @@
     "print-pages-hint",
     // Live page counter shown in full-screen reading mode (BI-10).
     "present-page",
+    // Live "N/M kết quả · K vị trí không thay tự động được", rewritten on every
+    // keystroke and after every replacement (BI-10).
+    "fr-status",
   ]);
 
   let lang = "vi";
@@ -629,10 +674,14 @@
     while ((tn = walker.nextNode())) {
       registry.push({ node: tn, kind: "text", vi: splitWs(tn.nodeValue).core });
     }
-    // title / placeholder attributes.
-    document.body.querySelectorAll("[title],[placeholder]").forEach((el) => {
+    // title / placeholder / aria-label attributes.
+    // aria-label matters for the icon-only controls: a <button aria-label="Đóng">✕</button>
+    // announces "Đóng" to a screen reader, and without this it would keep announcing
+    // Vietnamese in English mode. Registration is still opt-in by exact dictionary
+    // match, so an aria-label with no EN entry is simply left alone.
+    document.body.querySelectorAll("[title],[placeholder],[aria-label]").forEach((el) => {
       if (inSkip(el)) return;
-      for (const attr of ["title", "placeholder"]) {
+      for (const attr of ["title", "placeholder", "aria-label"]) {
         const v = el.getAttribute(attr);
         if (v && Object.prototype.hasOwnProperty.call(EN, v.trim())) {
           registry.push({ node: el, kind: "attr", attr, vi: v.trim() });

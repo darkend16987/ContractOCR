@@ -225,6 +225,189 @@ def test_compress_bad_preset_400():
 
 
 # --------------------------------------------------------------------------- #
+# /compress-bin — the raw-bytes route the desktop app uses for large files.
+#
+# The point of this route is that no base64 exists anywhere in it, so the checks
+# below are about the WIRE SHAPE (binary body in, application/pdf body out, sizes in
+# headers) as much as the compression itself: get the shape wrong and the renderer
+# silently reads an error page as a PDF.
+# --------------------------------------------------------------------------- #
+def _bin_request(body: bytes) -> api.Request:
+    """Minimal ASGI Request carrying `body` — /compress-bin reads request.body()."""
+
+    async def receive():
+        return {"type": "http.request", "body": body, "more_body": False}
+
+    scope = {"type": "http", "method": "POST", "path": "/compress-bin", "headers": []}
+    return api.Request(scope, receive)
+
+
+def test_compress_bin_returns_raw_pdf_body():
+    src = base64.b64decode(_npage_pdf(2))
+    resp = _run(api.compress_bin(_bin_request(src), preset="lossless"))
+    assert resp.media_type == "application/pdf", resp.media_type
+    assert resp.headers["x-original-size"] == str(len(src))
+    assert resp.headers["x-compressed-size"] == str(len(resp.body))
+    doc = fitz.open(stream=resp.body, filetype="pdf")
+    try:
+        assert doc.page_count == 2
+        assert "Page 1 content" in doc[0].get_text()
+    finally:
+        doc.close()
+
+
+def test_compress_bin_matches_json_route():
+    """Both routes must produce the SAME page count/text — they share the compressor,
+    and this is the test that fails if someone ever forks the two code paths."""
+    b64 = _npage_pdf(3)
+    src = base64.b64decode(b64)
+    raw = _run(api.compress_bin(_bin_request(src), preset="ebook"))
+    js = _run(api.compress(api.CompressRequest(pdf_b64=b64, preset="ebook")))
+    assert js.success
+    a = fitz.open(stream=raw.body, filetype="pdf")
+    b = _open(js.data_b64)
+    try:
+        assert a.page_count == b.page_count == 3
+        assert [p.get_text() for p in a] == [p.get_text() for p in b]
+    finally:
+        a.close()
+        b.close()
+
+
+def test_compress_bin_empty_body_400():
+    try:
+        _run(api.compress_bin(_bin_request(b""), preset="ebook"))
+        assert False, "expected HTTPException"
+    except HTTPException as e:
+        assert e.status_code == 400
+
+
+def test_compress_bin_bad_preset_400():
+    src = base64.b64decode(_npage_pdf(1))
+    try:
+        _run(api.compress_bin(_bin_request(src), preset="ultra"))
+        assert False, "expected HTTPException"
+    except HTTPException as e:
+        assert e.status_code == 400
+
+
+# --------------------------------------------------------------------------- #
+# /text-find — the read half of Find & Replace.
+#
+# What matters here is not "does str.find work" but the two things the FEATURE can
+# get silently wrong: offsets that no longer point at the text the renderer will
+# splice, and a match count that quietly hides the occurrences the app cannot
+# safely replace.
+# --------------------------------------------------------------------------- #
+def _find(pdf_b64: str, query: str, **kw):
+    return _run(api.text_find(api.TextFindRequest(pdf_b64=pdf_b64, query=query, **kw)))
+
+
+def _contract_pdf() -> str:
+    doc = fitz.open()
+    page = doc.new_page(width=400, height=300)
+    page.insert_text((50, 80), "Ben A ky hop dong")
+    page.insert_text((50, 110), "Ben B ky hop dong")
+    page.insert_text((50, 140), "Phu luc hop dong so 2")
+    b = _b64(doc)
+    doc.close()
+    return b
+
+
+def test_text_find_reports_every_occurrence():
+    r = _find(_contract_pdf(), "hop dong")
+    assert r.success and r.has_text
+    assert len(r.hits) == 3, [h.span_text for h in r.hits]
+    assert all(h.replaceable for h in r.hits)
+    # offsets must index the span text the renderer is handed, or the splice lands
+    # in the wrong place
+    for h in r.hits:
+        assert h.span_text[h.start : h.end] == "hop dong"
+
+
+def test_text_find_hits_are_in_reading_order():
+    """"Tìm tiếp" walks this list. PyMuPDF yields blocks in draw order, which is not
+    always top-to-bottom, so the endpoint sorts — this guards that sort."""
+    r = _find(_contract_pdf(), "hop dong")
+    tops = [round(h.bbox_view[1], 1) for h in r.hits]
+    assert tops == sorted(tops), tops
+    assert [h.id for h in r.hits] == [0, 1, 2]
+
+
+def test_text_find_case_and_whole_word():
+    doc = fitz.open()
+    page = doc.new_page(width=400, height=200)
+    page.insert_text((40, 60), "Ben ben BENH ben.")
+    b = _b64(doc)
+    doc.close()
+    assert len(_find(b, "ben").hits) == 4  # case-insensitive, substring of BENH
+    assert len(_find(b, "ben", match_case=True).hits) == 2
+    assert len(_find(b, "ben", whole_word=True).hits) == 3  # BENH excluded
+    assert len(_find(b, "ben", match_case=True, whole_word=True).hits) == 2
+
+
+def test_text_find_no_match_is_success_not_error():
+    r = _find(_contract_pdf(), "khong co chuoi nay")
+    assert r.success and r.has_text and r.hits == []
+
+
+def test_text_find_scan_reports_has_text_false():
+    """A scanned page has no characters. The UI needs to tell "0 kết quả" apart from
+    "this document has no text at all" so it can point the user at OCR."""
+    doc = fitz.open()
+    doc.new_page(width=300, height=300)  # blank: no text layer
+    b = _b64(doc)
+    doc.close()
+    r = _find(b, "bat ky")
+    assert r.success and r.has_text is False and r.hits == []
+
+
+def test_text_find_flags_cross_span_matches_instead_of_replacing_them():
+    """"Ben A" where the A is drawn as its own run: reported so the count is honest,
+    but replaceable=False so the renderer never rewrites half of it."""
+    doc = fitz.open()
+    page = doc.new_page(width=400, height=200)
+    page.insert_text((40, 60), "Ben ", fontname="helv", fontsize=11)
+    page.insert_text((62, 60), "A ky", fontname="hebo", fontsize=11)
+    b = _b64(doc)
+    doc.close()
+    r = _find(b, "Ben A")
+    assert r.success
+    assert len(r.hits) == 1, [(h.span_text, h.replaceable) for h in r.hits]
+    assert r.hits[0].replaceable is False
+    assert r.crossing == 1
+
+
+def test_text_find_empty_query_400():
+    try:
+        _find(_contract_pdf(), "")
+        assert False, "expected HTTPException"
+    except HTTPException as e:
+        assert e.status_code == 400
+
+
+def test_text_find_max_hits_truncates_and_says_so():
+    r = _find(_contract_pdf(), "hop dong", max_hits=2)
+    assert r.truncated is True and len(r.hits) == 2
+
+
+def test_find_occurrences_case_fold_cannot_shift_offsets():
+    """U+0130 lowercases to TWO characters in Python. Folding then indexing into the
+    original would slide every later offset and splice into the wrong place, so the
+    matcher must fall back to exact matching instead."""
+    hay = "İstanbul hop"
+    got = api._find_occurrences(hay, "hop", match_case=False, whole_word=False)
+    assert got and all(hay[s:e] == "hop" for s, e in got), got
+
+
+def test_compress_page_cap_is_generous():
+    """The old cap was 500 pages, which refused most 200 MB documents outright —
+    exactly the files "nén" exists for. Guard the intent, not just the number."""
+    assert api._COMPRESS_MAX_PAGES >= 2000
+    assert api._MAX_PDF_BIN >= 500_000_000
+
+
+# --------------------------------------------------------------------------- #
 # /text-spans
 # --------------------------------------------------------------------------- #
 def test_text_spans_reads_page_text():
@@ -297,6 +480,20 @@ if __name__ == "__main__":
         test_encrypt_requires_a_password_400,
         test_compress_lossless_returns_valid_pdf,
         test_compress_bad_preset_400,
+        test_compress_bin_returns_raw_pdf_body,
+        test_compress_bin_matches_json_route,
+        test_compress_bin_empty_body_400,
+        test_compress_bin_bad_preset_400,
+        test_compress_page_cap_is_generous,
+        test_text_find_reports_every_occurrence,
+        test_text_find_hits_are_in_reading_order,
+        test_text_find_case_and_whole_word,
+        test_text_find_no_match_is_success_not_error,
+        test_text_find_scan_reports_has_text_false,
+        test_text_find_flags_cross_span_matches_instead_of_replacing_them,
+        test_text_find_empty_query_400,
+        test_text_find_max_hits_truncates_and_says_so,
+        test_find_occurrences_case_fold_cannot_shift_offsets,
         test_text_spans_reads_page_text,
         test_text_spans_bad_page_400,
         test_compare_identical_reports_no_changes,

@@ -69,7 +69,11 @@ body {
 }
 .brand { font-weight: 700; font-size: 15px; margin-right: 6px; white-space: nowrap; display: inline-flex; align-items: center; gap: 7px; }
 .brand .ic.logo-icon { width: 22px; height: 22px; color: var(--accent); }
-.brand .by { font-size: 10px; font-weight: 400; color: var(--muted); margin-left: 7px; align-self: center; letter-spacing: .2px; }
+/* Two lines, stacked. Tight line-heights keep the pair at ~28px — under the height of
+   the buttons beside it — so putting the byline on its own line costs the toolbar no
+   extra height, while returning its former width to the row. */
+.brand-text { display: inline-flex; flex-direction: column; justify-content: center; line-height: 1.1; }
+.brand .by { font-size: 9px; font-weight: 400; color: var(--muted); letter-spacing: .2px; line-height: 1.2; }
 /* HWID readout in Settings (machine-bound license keys). */
 .hwid { font-family: ui-monospace, "Cascadia Code", Consolas, monospace; font-size: 12px; color: var(--muted); background: var(--bg-hover); padding: 3px 7px; border-radius: 5px; user-select: all; }
 .about { font-size: 12px; }
@@ -269,6 +273,7 @@ body.presenting .sidebar-resizer { display: none; }
 }
 .statusbar .sb-sep { width: 1px; height: 12px; background: var(--line); }
 .statusbar .sb-spacer { flex: 1; }
+.statusbar .sb-credit { opacity: 0.75; letter-spacing: .2px; }
 
 .thumb {
   position: relative;
@@ -769,9 +774,16 @@ body.editing .note-marker, body.text-editing .note-marker { pointer-events: none
   font-size: 12px; color: var(--muted);
   min-width: 46px; text-align: center; font-variant-numeric: tabular-nums;
 }
-.find-box .find-up { transform: rotate(180deg); }
-/* Responsive toolbar: shrink the find field and drop the byline on narrow
-   windows so the top row stays on ONE line (laptops at 1366px and below). */
+/* Also .fr-actions: the Tìm & Thay thế panel reuses the same chevron pair, and with
+   the rule scoped to .find-box alone its "previous match" button pointed DOWN. */
+.find-box .find-up, .fr-actions .find-up { transform: rotate(180deg); }
+/* Responsive toolbar: shrink the find field and drop the byline on narrow windows so
+   the top row stays on ONE line (laptops at 1366px and below).
+   MEASURED, not guessed (Electron probe, dpr 1): stacking the byline took the brand
+   block from 213px to 119px and gave row 1 a whole line back at 1600px. But the 9px
+   byline still sets the block's floor at ~119px, versus ~100px with it hidden — so
+   below 1400px it is still worth hiding, and nothing is lost by doing so now that the
+   credit is also permanently in the status bar (#sb-credit). */
 @media (max-width: 1560px) {
   .find-box input { width: 150px; }
 }
@@ -791,6 +803,54 @@ body.editing .note-marker, body.text-editing .note-marker { pointer-events: none
   border-radius: 2px; mix-blend-mode: multiply;
 }
 .search-hl.current { background: rgba(255, 138, 0, 0.6); }
+
+/* ---- Tìm & Thay thế (find-replace.js) ---- */
+/* Floating, NOT a dialog: the user has to read the page while stepping through
+   matches, which is exactly what a modal's dim layer prevents. Sits under the modal
+   z-index (120) so a confirm from "Thay tất cả" lands on top of it. */
+.fr-panel {
+  /* `top` is a fallback only — find-replace.js placePanel() sets the real value from
+     main's top edge on every open and resize, because the chrome above it rewraps. */
+  position: fixed; top: 96px; right: 24px; z-index: 60;
+  width: 320px; max-width: calc(100vw - 32px);
+  display: flex; flex-direction: column; gap: 8px;
+  padding: 12px 14px 10px;
+  background: var(--bg-2); color: var(--fg);
+  border: 1px solid var(--line); border-radius: 12px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
+}
+.fr-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.fr-head b { font-size: 13px; }
+.fr-panel label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); }
+.fr-panel input[type="text"] {
+  font: inherit; font-size: 13px; padding: 6px 8px;
+  background: var(--bg-3); color: var(--fg);
+  border: 1px solid var(--bg-3); border-radius: 8px;
+}
+.fr-panel input[type="text"]:focus { outline: none; border-color: var(--accent); }
+.fr-opts { display: flex; flex-wrap: wrap; gap: 4px 14px; }
+.fr-opts .chk { flex-direction: row; align-items: center; gap: 6px; color: var(--fg); font-size: 12px; }
+.fr-status { margin: 0; font-size: 12px; min-height: 16px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.fr-status.warn { color: #f59e0b; }
+.fr-status.bad { color: #e5484d; }
+.fr-actions { display: flex; align-items: center; gap: 6px; }
+.fr-actions .fr-gap { flex: 1; }
+.fr-note { margin: 2px 0 0; font-size: 11px; line-height: 1.45; color: var(--muted); }
+
+.fr-layer { position: absolute; left: 0; top: 0; pointer-events: none; z-index: 4; }
+.fr-hl {
+  position: absolute; pointer-events: auto; cursor: pointer;
+  background: rgba(56, 189, 248, 0.38);
+  border-radius: 2px; mix-blend-mode: multiply;
+}
+.fr-hl.current { background: rgba(255, 138, 0, 0.62); outline: 1px solid #f97316; }
+/* Amber + dashed = found, counted, but the app will not rewrite it: the match is split
+   across two style runs. Looking different from the replaceable ones is the whole
+   point — a silent omission would read as "the app missed it". */
+.fr-hl.locked {
+  background: rgba(251, 191, 36, 0.34);
+  outline: 1px dashed #f59e0b; cursor: help;
+}
 
 /* ---- copy-image (capture) mode ---- */
 /* Crosshair over pages; neutralise child pointer-events so mouse events land on
@@ -901,15 +961,34 @@ body.editing .text-layer, body.text-editing .text-layer {
   z-index: 120;
 }
 .modal-card {
+  position: relative; /* anchor for .modal-x */
   background: var(--bg-2);
   border: 1px solid var(--line);
   border-radius: 12px;
   padding: 18px 20px;
   width: 380px;
+  /* Never wider than the window. Cards used to be a fixed px width with no ceiling,
+     so the wider ones (Gộp file, Cài đặt) hung off the edge on a small window and
+     took their buttons with them. */
+  max-width: 92vw;
   max-height: 80vh;
   overflow: auto;
   box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
 }
+/* Corner ✕ — the quick way out of every dialog, next to Esc and a backdrop click
+   (wired generically in app.js; see dismissModal). `sticky` rather than `absolute`
+   so it stays pinned to the top edge of a card that SCROLLS instead of scrolling
+   away with the content; `float` keeps it out of the heading's flow. */
+.modal-x {
+  position: sticky; top: -2px; float: right;
+  z-index: 1;
+  margin: -6px -8px 0 8px;
+  padding: 2px 7px;
+  font-size: 15px; line-height: 1.2;
+  color: var(--muted); background: transparent; border: none; border-radius: 7px;
+  cursor: pointer;
+}
+.modal-x:hover { background: var(--bg-hover); color: var(--fg); }
 .modal-card h3 { margin: 0 0 14px; font-size: 15px; }
 .modal-card .modal-note { margin: 0 0 12px; font-size: 12px; line-height: 1.5; color: var(--muted); }
 .modal-card label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); margin-bottom: 10px; }
@@ -923,6 +1002,18 @@ body.editing .text-layer, body.text-editing .text-layer {
 .modal-card .key-row { display: flex; gap: 6px; align-items: stretch; }
 .modal-card .key-row input { flex: 1; }
 .modal-card .key-row button { padding: 0 10px; }
+/* Settings: the one long dialog. Wider so the label/control rows stop crowding,
+   with a sticky head so the title and the ✕ never scroll out of reach. */
+.set-card { width: 560px; }
+.set-card .modal-head {
+  position: sticky; top: -18px; /* cancels the card's 18px top padding */
+  z-index: 2;
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  margin: -18px -20px 12px; padding: 14px 20px 10px;
+  background: var(--bg-2); border-bottom: 1px solid var(--line);
+}
+.set-card .modal-head h3 { margin: 0; }
+.set-card .modal-head .modal-x { position: static; float: none; margin: 0; }
 .set-status { font-size: 12px; color: var(--muted); margin: 2px 0 12px; min-height: 16px; }
 .set-div { border: 0; border-top: 1px solid var(--line); margin: 16px 0 12px; }
 .set-row-between { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
@@ -1071,8 +1162,12 @@ body.editing .text-layer, body.text-editing .text-layer {
   .help-doc { padding: 4px 14px 22px; }
 }
 
-/* Combine-PDFs modal: reorderable file list. */
-.combine-card { width: 460px; }
+/* Combine-PDFs modal: reorderable file list.
+   Widened from 460px: the row is grip + number + NAME + page count + 3 buttons, so at
+   460px the name got ~230px and real filenames ("Hop dong nguyen tac 2026 - Cong ty
+   ABC - ban ky.pdf") were cut long before anything identifying them. `max-width: 92vw`
+   comes from .modal-card, so this stays inside a small window. */
+.combine-card { width: 720px; }
 .combine-list { list-style: none; margin: 0 0 10px; padding: 0; display: flex; flex-direction: column; gap: 6px; max-height: 44vh; overflow: auto; }
 .combine-list:empty { display: none; }
 .combine-item {
@@ -1085,7 +1180,15 @@ body.editing .text-layer, body.text-editing .text-layer {
 .combine-grip { cursor: grab; color: var(--muted); display: flex; flex: 0 0 auto; }
 .combine-grip .ic { width: 16px; height: 16px; }
 .combine-idx { flex: 0 0 auto; width: 20px; text-align: right; color: var(--muted); font-variant-numeric: tabular-nums; }
-.combine-name { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Wrap to at most two lines instead of one hard-truncated line. Extra width alone
+   does not fix a 90-character filename; two lines does, and the clamp keeps a
+   pathological name from making one row taller than the list. `anywhere` because
+   these names have no spaces to break at often enough to rely on. */
+.combine-name {
+  flex: 1 1 auto; min-width: 0;
+  overflow: hidden; overflow-wrap: anywhere; line-height: 1.35;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+}
 .combine-pages { flex: 0 0 auto; font-size: 11px; color: var(--muted); }
 .combine-item .icon-only { flex: 0 0 auto; padding: 2px; }
 .combine-item .icon-only .ic { width: 15px; height: 15px; }

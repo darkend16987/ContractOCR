@@ -460,6 +460,7 @@ async function loadBytes(bytes, name, fullPath) {
   renderBreadcrumb();
   if (window.Editor) window.Editor.reset(); // drop annotations from any previous doc
   if (window.TextEdit) window.TextEdit.reset(); // drop any in-progress text edits
+  if (window.FindReplace) window.FindReplace.reset(); // a new document, so a new query
   try {
     await renderAll();
   } catch (err) {
@@ -750,6 +751,10 @@ async function renderViewer() {
   if (window.Editor) window.Editor.syncOverlays();
   // Let the native text editor (P6) re-place its span boxes, if active.
   if (window.TextEdit) window.TextEdit.syncOverlays();
+  // Find & Replace holds offsets into ONE version of the bytes. renderAll means those
+  // bytes may have changed, so its hits are dropped and (if the panel is open) the
+  // query is re-run against what is actually on the page now.
+  if (window.FindReplace) window.FindReplace.invalidate();
 }
 
 // Rasterise one page into its (already-placed) canvas. Idempotent: the
@@ -791,6 +796,9 @@ async function renderPageCanvas(i) {
     await addTextLayer(i, m);  // selectable/​highlightable text for text-based pages
     if (!editing) await addNoteMarkers(i, m); // surface baked sticky-note comments (readable in-app)
     if (search.matches.length) drawSearchLayer(i); // repaint find highlights on (re)render
+    // Same deal for Tìm & Thay thế: its matches span the WHOLE document, so a page
+    // scrolled into view long after the scan must paint its own highlights here.
+    if (window.FindReplace && window.FindReplace.hasHits()) window.FindReplace.drawLayer(i);
   } catch (err) {
     m.wrap.dataset.rendered = "0"; // let it retry on the next intersection
     // Don't fail silently: a swallowed render error looked exactly like "the page
@@ -1239,6 +1247,7 @@ async function rerenderChanged(changed) {
     }
     if (window.Editor) window.Editor.syncOverlays();
     if (window.TextEdit) window.TextEdit.syncOverlays();
+    if (window.FindReplace) window.FindReplace.invalidate(); // same reason as in renderAll
   } finally {
     hideOverlay();
   }
@@ -2357,7 +2366,7 @@ function applyScaleToDom() {
     // Scale them from that paint scale instead — deliberately WITHOUT touching
     // width/height, because the transform already resizes the box. commitScale
     // rebuilds them exactly and the transform dies with the replaced element.
-    for (const sel of [".note-layer", ".search-layer"]) {
+    for (const sel of [".note-layer", ".search-layer", ".fr-layer"]) {
       const l = m.wrap.querySelector(sel);
       if (!l) continue;
       // Each layer carries the scale IT was built at — not the page's, because
@@ -3041,24 +3050,40 @@ async function runCompress() {
   const preset = $("cmp-preset").value || "ebook";
   showOverlay("Đang nén PDF…");
   try {
-    const res = await sidecarFetch("/compress", {
+    // /compress-bin, NOT /compress: the JSON route carries the document as base64
+    // both ways, which is what capped "nén" at ~200 MB — the exact size range users
+    // reach for this tool. Here the request body IS the PDF and the success response
+    // body IS the compressed PDF, so no base64 string is built on either side (BI-24
+    // in spirit: never hold the payload as one JS string). A Blob keeps the bytes in
+    // Blink's blob store rather than the JS heap.
+    const res = await sidecarFetch("/compress-bin?preset=" + encodeURIComponent(preset), {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: pdfJsonBody(state.bytes, { preset }),
+      headers: { "Content-Type": "application/pdf" },
+      body: new Blob([state.bytes], { type: "application/pdf" }),
     });
-    const data = await res.json();
-    if (!data.success) {
-      toast("Nén lỗi: " + (data.error || data.detail || "không rõ"), "bad");
+    // Contract: application/pdf = success (body is the PDF); JSON = failure.
+    const ct = res.headers.get("content-type") || "";
+    if (!res.ok || ct.includes("json")) {
+      let msg = res.statusText || "không rõ";
+      try {
+        const data = await res.json();
+        msg = data.error || data.detail || msg;
+      } catch (_) {}
+      toast("Nén lỗi: " + msg, "bad");
       return;
     }
-    const pct = data.original_size
-      ? Math.round((100 * data.compressed_size) / data.original_size)
-      : 100;
-    const bytes = b64ToU8(data.data_b64);
+    const buf = await res.arrayBuffer();
+    // Sizes are derived locally rather than read from X-Original-Size /
+    // X-Compressed-Size on purpose: both numbers are already exact on this side, so
+    // the readout cannot break if the CORS expose_headers list ever drifts.
+    const originalSize = state.bytes.length;
+    const compressedSize = buf.byteLength;
+    const pct = originalSize ? Math.round((100 * compressedSize) / originalSize) : 100;
+    const bytes = new Uint8Array(buf);
     const name = `${baseName(state.name)}-nen.pdf`;
     const r = await window.desktop.savePdf(bytes, name);
     if (r.saved) {
-      const msg = `Đã nén: ${fmtBytes(data.original_size)} → ${fmtBytes(data.compressed_size)} (${pct}%)`;
+      const msg = `Đã nén: ${fmtBytes(originalSize)} → ${fmtBytes(compressedSize)} (${pct}%)`;
       toast(pct >= 100 ? "Không giảm thêm được — đã lưu bản gốc tối ưu." : msg, "good");
     }
   } catch (err) {
@@ -3664,6 +3689,10 @@ const GATED_BTNS = [
   // listing it here only adds the matching "locked" affordance so both entry
   // points to it look the same.
   "mi-split",
+  // Tìm & Thay thế writes to the document through /edit-text, so it belongs to the
+  // same paid tier as "Sửa nội dung". Ctrl+H is a SECOND entry point with no button
+  // to catch, so find-replace.js also calls gateProFeature() in canRun() — BI-26.
+  "btn-find-replace",
 ];
 
 function licBlocked() {
@@ -3921,6 +3950,11 @@ function updateToolbar() {
   if (bto) bto.disabled = !(ready && has) || editing;
   const bc = $("btn-compress");
   if (bc) bc.disabled = !(ready && has) || editing;
+  // Tìm & Thay thế needs the engine (it scans via /text-find and writes via
+  // /edit-text). The [data-needs-doc] sweep above already covers "no document" and
+  // "an editor is open"; this adds the engine condition the sweep doesn't know about.
+  const bfr = $("btn-find-replace");
+  if (bfr) bfr.disabled = !(ready && has) || editing;
   // "Tách thành nhiều file" runs on the sidecar (/split), so BOTH of its entry
   // points follow the same rule as the other engine-backed buttons: dim until the
   // engine is up instead of letting the click fail with a toast. The
@@ -4401,6 +4435,67 @@ function isTyping() {
 function modalOpen() {
   return !!document.querySelector(".modal:not([hidden])");
 }
+
+// ---- dismissing a dialog: Esc · backdrop click · corner ✕ ------------------
+//
+// Every dialog in index.html carries exactly one dismiss button marked
+// data-modal-close (the "Hủy"/"Đóng" one) and one .modal-x in its corner. All three
+// gestures CLICK THAT BUTTON — they never set `modal.hidden` themselves. That is the
+// whole point: several dialogs are promise-shaped or hold state in their cancel path
+// (promptPassword resolves null, askInsertPos resolves null and nulls its handlers,
+// closePrintModal, sign.js closeDialog), and hiding the element behind their backs
+// would leave those awaits hanging forever with no visible dialog to finish them.
+//
+// #help-modal opts out with data-modal-manual — help.js owns its own Esc (first press
+// clears the search filter, second closes) and backdrop click.
+
+// The dialog on top. Every .modal shares z-index 120, so paint order IS document
+// order and the last open one is the one the user sees on top.
+function topOpenModal() {
+  const open = document.querySelectorAll(".modal:not([hidden]):not([data-modal-manual])");
+  return open.length ? open[open.length - 1] : null;
+}
+
+function dismissModal(modal) {
+  if (!modal) return false;
+  const btn = modal.querySelector("[data-modal-close]");
+  if (btn) btn.click();
+  else modal.hidden = true; // shouldn't happen; better than trapping the user
+  return true;
+}
+
+// Esc. Registered HERE, above the app-wide shortcut handler below, and using
+// stopImmediatePropagation: both listeners sit on `window`, and stopPropagation alone
+// does not stop siblings on the same node. Without it, Esc pressed on a dialog opened
+// during full-screen reading would close the dialog AND drop out of full screen,
+// because that handler's `!modalOpen()` guard is already true by then.
+// `defaultPrevented` yields to anything nearer that already claimed the key
+// (uiConfirm's capture-phase handler, capture.js's copy-image mode).
+window.addEventListener("keydown", (e) => {
+  if (e.key !== "Escape" || e.defaultPrevented) return;
+  const m = topOpenModal();
+  if (!m) return;
+  e.preventDefault();
+  e.stopImmediatePropagation();
+  dismissModal(m);
+});
+
+// Backdrop click. `e.target === backdrop` only when the press landed on the dimmed
+// area itself, never on the card — the same test help.js uses. mousedown (not click)
+// so a text selection dragged from inside the card and released on the backdrop
+// doesn't read as "dismiss".
+document.addEventListener("mousedown", (e) => {
+  const el = e.target;
+  if (!el || !el.classList || !el.classList.contains("modal")) return;
+  if (el.hasAttribute("data-modal-manual") || el.hidden) return;
+  dismissModal(el);
+});
+
+// Corner ✕, delegated so no dialog needs its own wiring.
+document.addEventListener("click", (e) => {
+  const x = e.target.closest && e.target.closest(".modal-x");
+  if (x) dismissModal(x.closest(".modal"));
+});
 
 window.addEventListener("keydown", (e) => {
   if (e.ctrlKey || e.metaKey) {
