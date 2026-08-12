@@ -1,0 +1,188 @@
+<!doctype html>
+<html lang="vi" class="scroll-smooth">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Lịch sử phiên bản — Nabu PDF</title>
+    <meta name="description" content="Toàn bộ lịch sử phát triển Nabu PDF, từ pipeline OCR hợp đồng đầu tiên đến bộ công cụ PDF desktop hiện nay." />
+    <meta property="og:site_name" content="Nabu PDF" />
+    <meta property="og:title" content="Lịch sử phiên bản — Nabu PDF" />
+    <meta property="og:description" content="Toàn bộ lịch sử phát triển Nabu PDF, từ những phiên bản đầu tiên." />
+    <meta property="og:type" content="article" />
+    <meta property="og:url" content="https://www.nabupdf.vn/lich-su-phien-ban" />
+    <meta property="og:locale" content="vi_VN" />
+    <link rel="canonical" href="https://www.nabupdf.vn/lich-su-phien-ban" />
+    <link rel="icon" href="/assets/nabu-icon.png" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&display=swap" rel="stylesheet" />
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+      tailwind.config = {
+        theme: {
+          extend: {
+            fontFamily: { sans: ["Plus Jakarta Sans", "system-ui", "sans-serif"] },
+            colors: {
+              brand: { 50: "#f0fdfa", 100: "#ccfbf1", 200: "#99f6e4", 400: "#2dd4bf", 500: "#14b8a6", 600: "#0d9488", 700: "#0f766e", 800: "#115e59", 900: "#134e4a" },
+              cta: { 500: "#f97316", 600: "#ea580c" },
+              ink: { DEFAULT: "#0f172a", muted: "#475569" },
+            },
+            boxShadow: { soft: "0 10px 40px -12px rgba(13,148,136,.25)", card: "0 1px 3px rgba(15,23,42,.06), 0 10px 30px -18px rgba(15,23,42,.25)" },
+          },
+        },
+      };
+    </script>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body class="font-sans text-ink bg-white antialiased">
+    <!-- Floating navbar -->
+    <header class="fixed top-4 inset-x-4 z-40 mx-auto max-w-6xl">
+      <nav class="flex items-center gap-3 rounded-2xl border border-slate-200/70 bg-white/80 px-4 py-2.5 shadow-card backdrop-blur-md">
+        <a href="/" class="flex items-center gap-2.5 font-extrabold text-ink">
+          <img src="/assets/nabu-icon.png" alt="Nabu PDF" class="h-8 w-8 rounded-lg" />
+          <span>Nabu PDF</span>
+        </a>
+        <div class="ml-auto hidden items-center gap-1 md:flex">
+          <a href="/#features" class="rounded-lg px-3 py-2 text-sm font-medium text-ink-muted transition-colors hover:bg-slate-100 hover:text-ink">Tính năng</a>
+          <a href="/#download" class="rounded-lg px-3 py-2 text-sm font-medium text-ink-muted transition-colors hover:bg-slate-100 hover:text-ink">Tải về</a>
+          <a href="/lich-su-phien-ban.html" class="rounded-lg bg-slate-100 px-3 py-2 text-sm font-medium text-ink">Lịch sử phiên bản</a>
+          <a href="/chinh-sach.html" class="rounded-lg px-3 py-2 text-sm font-medium text-ink-muted transition-colors hover:bg-slate-100 hover:text-ink">Chính sách</a>
+        </div>
+        <a href="/#download" class="ml-auto inline-flex cursor-pointer items-center gap-2 rounded-xl bg-cta-500 px-4 py-2 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-cta-600 md:ml-0">
+          <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5"/><path d="M12 15V3"/></svg>
+          Tải miễn phí
+        </a>
+      </nav>
+    </header>
+
+    <main class="mx-auto max-w-3xl px-5 pt-32 pb-20 md:pt-40">
+      <h1 class="text-3xl font-extrabold tracking-tight md:text-4xl">Lịch sử phiên bản</h1>
+      <p class="mt-4 leading-relaxed text-ink-muted">
+        Nabu PDF bắt đầu từ một pipeline OCR + AI để bóc tách hợp đồng tiếng Việt, rồi lớn dần
+        thành bộ công cụ PDF desktop chạy hoàn toàn trên máy. Dưới đây là toàn bộ các mốc phát
+        hành, mới nhất ở trên.
+      </p>
+      <p class="mt-3 text-sm text-ink-muted">
+        Bản cài mới nhất luôn có ở <a href="/#download" class="font-medium text-brand-700 underline underline-offset-2 hover:text-brand-800">mục Tải về</a>.
+        App tự cập nhật, nên thường bạn không cần tải lại bằng tay.
+      </p>
+
+      <!-- Plain text on purpose: one line per release, no cards, no icons. It is a
+           changelog, and a changelog is read by scanning. -->
+      <div class="mt-12 space-y-10 text-[15px] leading-relaxed">
+
+        <section>
+          <h2 class="text-sm font-bold uppercase tracking-wider text-brand-700">Tháng 8 / 2026</h2>
+          <ul class="mt-4 space-y-2.5 text-ink-muted">
+            <li><span class="font-semibold text-ink">0.2.57</span> · 12/08 — Nén tài liệu lớn không còn làm treo các thẻ khác; hộp Nén báo trước ước tính thời gian; engine dừng đột ngột thì app báo ngay thay vì im lặng.</li>
+            <li><span class="font-semibold text-ink">0.2.56</span> · 12/08 — Tìm &amp; Thay thế: quét khi bạn yêu cầu thay vì theo từng ký tự gõ, báo đúng nguyên nhân khi không tìm được, và tìm được bộ bản vẽ vài trăm trang.</li>
+            <li><span class="font-semibold text-ink">0.2.55</span> · 11/08 — Tìm &amp; Thay thế chữ trong PDF (Ctrl+H); bỏ giới hạn 200MB của Nén; mọi hộp thoại đóng nhanh bằng Esc, bấm nền hoặc nút ✕.</li>
+            <li><span class="font-semibold text-ink">0.2.53</span> · 06/08 — Thêm trang Hướng dẫn sử dụng ngay trong app (F1); bỏ dòng hướng dẫn thường trực chiếm chỗ trên thanh công cụ.</li>
+            <li><span class="font-semibold text-ink">0.2.52</span> · 04/08 — Khoanh mây lưu đúng chiều trên trang đã xoay; copy/paste vật thể chú thích; sửa lại mũi tên.</li>
+          </ul>
+        </section>
+
+        <section>
+          <h2 class="text-sm font-bold uppercase tracking-wider text-brand-700">Tháng 7 / 2026</h2>
+          <ul class="mt-4 space-y-2.5 text-ink-muted">
+            <li><span class="font-semibold text-ink">0.2.51</span> · 31/07 — Mỗi trang tài liệu in gọn trong đúng một tờ giấy ở mọi khổ; chọn khoảng trang ngay trong hộp thoại In.</li>
+            <li><span class="font-semibold text-ink">0.2.50</span> · 30/07 — Vẽ tay giữ Shift ra đoạn thẳng; thêm dấu ✓ / ✗.</li>
+            <li><span class="font-semibold text-ink">0.2.49</span> · 29/07 — Sửa font nhãn mũi tên và watermark.</li>
+            <li><span class="font-semibold text-ink">0.2.48</span> · 29/07 — Zoom mượt bám theo con trỏ; cột trang sáng theo trang đang đọc; ảnh chèn vào sửa lại được.</li>
+            <li><span class="font-semibold text-ink">0.2.47</span> · 28/07 — Sửa lỗi khoảng trang khi áp ảnh/chữ ký cho nhiều trang.</li>
+            <li><span class="font-semibold text-ink">0.2.46</span> · 28/07 — Chọn file mở ra vào tab mới hay cửa sổ mới; vá lỗi hết bộ nhớ khi tạo PDF từ nhiều ảnh.</li>
+            <li><span class="font-semibold text-ink">0.2.45</span> · 27/07 — Bàn tay kéo trang; dải thumbnail khi xem toàn màn hình; kéo giãn danh sách trang.</li>
+            <li><span class="font-semibold text-ink">0.2.44</span> · 26/07 — Tác vụ trang đưa lên thanh công cụ; xoá nhiều trang theo khoảng; tách bạch trạng thái OCR và API.</li>
+            <li><span class="font-semibold text-ink">0.2.43</span> · 26/07 — Sửa chữ giữ đúng font, cỡ và nền; chế độ toàn màn hình đọc trọn trang.</li>
+            <li><span class="font-semibold text-ink">0.2.42</span> · 26/07 — Kéo tách tab thành cửa sổ riêng; khôi phục phiên làm việc lần trước.</li>
+            <li><span class="font-semibold text-ink">0.2.41</span> · 25/07 — Mở nhiều tài liệu bằng tab trong một cửa sổ; chuẩn hoá phím tắt.</li>
+            <li><span class="font-semibold text-ink">0.2.40</span> · 25/07 — Sửa lỗi trắng trang khi Sửa nội dung trên PDF lớn.</li>
+            <li><span class="font-semibold text-ink">0.2.39</span> · 23/07 — Định dạng hộp văn bản đầy đủ; in khổ A0–A2; xuất PDF sang Word/Excel/CSV.</li>
+            <li><span class="font-semibold text-ink">0.2.38</span> · 22/07 — Ký số PKI bằng USB token (VNPT-CA, Viettel-CA, FPT-CA…).</li>
+            <li><span class="font-semibold text-ink">0.2.37</span> · 22/07 — Mũi tên đặt nhãn ở đầu hoặc cuối; tự lưu và khôi phục khi sự cố.</li>
+            <li><span class="font-semibold text-ink">0.2.36</span> · 19/07 — Tổng rà giao diện thanh công cụ; chú thích sửa và di chuyển lại được.</li>
+            <li><span class="font-semibold text-ink">0.2.35</span> · 18/07 — Hộp văn bản và ghi chú sửa lại được sau khi đã áp dụng.</li>
+            <li><span class="font-semibold text-ink">0.2.34</span> · 17/07 — Sửa chữ từ vòng thứ hai trở đi không còn ra ô vuông.</li>
+            <li><span class="font-semibold text-ink">0.2.33</span> · 17/07 — Tick chọn từng vùng khoanh mây khi xuất bản đánh dấu; dịch PDF giữ đúng cột trong bảng.</li>
+            <li><span class="font-semibold text-ink">0.2.32</span> · 16/07 — OCR lấy lại chữ tiếng Việt bị lỗi font; thêm công cụ đo &amp; ghi kích thước.</li>
+            <li><span class="font-semibold text-ink">0.2.31</span> · 15/07 — Sửa lỗi lớp tô màu khác biệt phủ kín màn hình.</li>
+            <li><span class="font-semibold text-ink">0.2.30</span> · 15/07 — Mũi tên kèm nhãn; ghi chú dạng chuỗi bình luận; chồng lớp hai bản vẽ.</li>
+            <li><span class="font-semibold text-ink">0.2.29</span> · 13/07 — Menu chuột phải cho copy/paste và chèn ảnh.</li>
+            <li><span class="font-semibold text-ink">0.2.28</span> · 13/07 — Đóng dấu ảnh cho nhiều trang một lần; vẽ mây revision tự do.</li>
+            <li><span class="font-semibold text-ink">0.2.27</span> · 13/07 — Mở nhiều cửa sổ; “Open with Nabu PDF” từ Windows; copy/paste ảnh trong trang.</li>
+            <li><span class="font-semibold text-ink">0.2.26</span> · 12/07 — Tối ưu bộ nhớ khi xem tài liệu dài.</li>
+            <li><span class="font-semibold text-ink">0.2.25</span> · 08/07 — Tuỳ chọn in: khổ giấy và in hai mặt; chọn model Gemini.</li>
+            <li><span class="font-semibold text-ink">0.2.24</span> · 08/07 — Sửa lỗi in ra giấy trắng.</li>
+            <li><span class="font-semibold text-ink">0.2.23</span> · 08/07 — Dịch PDF bằng AI, giữ nguyên bố cục.</li>
+            <li><span class="font-semibold text-ink">0.2.22</span> · 08/07 — In tài liệu; giao diện song ngữ Việt / Anh.</li>
+            <li><span class="font-semibold text-ink">0.2.21</span> · 07/07 — Đánh số trang.</li>
+            <li><span class="font-semibold text-ink">0.2.20</span> · 07/07 — Cải thiện zoom; hoàn tác / làm lại trong trình chú thích.</li>
+            <li><span class="font-semibold text-ink">0.2.19</span> · 07/07 — Gộp nhiều PDF thành một file, chọn và sắp xếp thứ tự.</li>
+            <li><span class="font-semibold text-ink">0.2.18</span> · 06/07 — Khoanh mây revision; màu nền cho vùng khoanh.</li>
+            <li><span class="font-semibold text-ink">0.2.17</span> · 06/07 — Tách PDF thành nhiều file; logo mới.</li>
+            <li><span class="font-semibold text-ink">0.2.16</span> · 02/07 — So sánh bản vẽ CAD/Revit bằng đối chiếu hình ảnh.</li>
+            <li><span class="font-semibold text-ink">0.2.14</span> · 01/07 — So sánh hai file PDF; sửa tự cập nhật cho bản cài.</li>
+          </ul>
+        </section>
+
+        <section>
+          <h2 class="text-sm font-bold uppercase tracking-wider text-brand-700">Tháng 6 / 2026 — thành ứng dụng desktop</h2>
+          <ul class="mt-4 space-y-2.5 text-ink-muted">
+            <li><span class="font-semibold text-ink">0.2.13</span> · 30/06 — Che thông tin chọn màu; hộp văn bản có font, đậm, nghiêng, gạch chân; thêm trang trắng.</li>
+            <li><span class="font-semibold text-ink">0.2.12</span> · 29/06 — Đóng dấu mã nguồn vào engine đóng gói để không bao giờ phát hành nhầm bản cũ.</li>
+            <li><span class="font-semibold text-ink">0.2.11</span> · 29/06 — Chú thích lưu đúng chiều trên trang đã xoay; ô tìm kiếm giữ nguyên khi chuyển trang.</li>
+            <li><span class="font-semibold text-ink">0.2.10</span> · 28/06 — Tìm trong tài liệu (Ctrl+F); chọn và bôi chữ.</li>
+            <li><span class="font-semibold text-ink">0.2.9</span> · 27/06 — Hiện nội dung ghi chú đã lưu ngay trong trình xem.</li>
+            <li><span class="font-semibold text-ink">0.2.8</span> · 26/06 — Bản cài nhẹ đi khoảng 400MB; sửa font khi chỉnh chữ.</li>
+            <li><span class="font-semibold text-ink">0.2.7</span> · 26/06 — Engine RapidViet: kết hợp phát hiện chữ của RapidOCR với nhận dạng tiếng Việt của VietOCR.</li>
+            <li><span class="font-semibold text-ink">0.2.4 – 0.2.6</span> · 26/06 — Tăng tốc OCR khoảng 3–4 lần, sau đó quay lại engine cũ vì bản nhanh làm sai dấu tiếng Việt.</li>
+            <li><span class="font-semibold text-ink">0.2.3</span> · 25/06 — Tự khai báo trường cần bóc tách; sửa pipeline OCR.</li>
+            <li><span class="font-semibold text-ink">0.2.2</span> · 24/06 — Thanh công cụ hai hàng; logo chữ Na Sumer.</li>
+            <li><span class="font-semibold text-ink">0.2.1</span> · 24/06 — Công bố giấy phép thư viện bên thứ ba; siết bảo mật và hiệu năng.</li>
+            <li><span class="font-semibold text-ink">0.2.0</span> · 24/06 — <strong class="font-semibold text-ink">Chuyển hẳn sang miễn phí và mã nguồn mở (AGPL-3.0)</strong>, bỏ khoá bản quyền.</li>
+            <li><span class="font-semibold text-ink">0.1.7 – 0.1.9</span> · 24/06 — Khoá &amp; mã hoá file, trích xuất ảnh, chuyển đổi PDF ↔ ảnh.</li>
+            <li><span class="font-semibold text-ink">0.1.4 – 0.1.6</span> · 23/06 — Chèn ảnh và chữ ký; dùng font hệ thống khi sửa chữ; menu và phím tắt chuẩn Windows.</li>
+            <li><span class="font-semibold text-ink">0.1.1</span> · 22/06 — Đổi tên thành <strong class="font-semibold text-ink">Nabu PDF</strong>; tự cập nhật; mở PDF có mật khẩu; giao diện sáng.</li>
+            <li><span class="font-semibold text-ink">0.1.0</span> · 20–21/06 — Bản desktop đầu tiên: trình xem, thao tác trang, bóc tách OCR, tạo PDF tìm-kiếm-được, nén, trình chú thích, và bộ cài Windows.</li>
+          </ul>
+        </section>
+
+        <section>
+          <h2 class="text-sm font-bold uppercase tracking-wider text-brand-700">Tháng 3 / 2026 — khởi đầu</h2>
+          <ul class="mt-4 space-y-2.5 text-ink-muted">
+            <li><span class="font-semibold text-ink">Dự án gốc</span> · 03/2026 — Bắt đầu là một pipeline OCR tiếng Việt kết hợp AI để đọc hợp đồng và bóc tách các trường dữ liệu, chạy trên nền web. Đây là phần về sau trở thành tính năng “Bóc tách dữ liệu bằng AI” của Nabu PDF.</li>
+          </ul>
+        </section>
+
+      </div>
+
+      <p class="mt-14 border-t border-slate-200 pt-6 text-sm text-ink-muted">
+        Một vài số hiệu không xuất hiện ở trên (0.2.15, 0.2.54…) là các bản dựng nội bộ được gộp
+        vào bản phát hành ngay sau đó.
+      </p>
+    </main>
+
+    <!-- Footer -->
+    <footer class="border-t border-slate-200 bg-slate-50">
+      <div class="mx-auto flex max-w-6xl flex-col gap-4 px-5 py-10 sm:flex-row sm:items-center">
+        <div class="flex items-center gap-2.5">
+          <img src="/assets/nabu-icon.png" alt="" class="h-7 w-7 rounded-md" />
+          <span class="font-bold">Nabu PDF</span>
+          <span class="text-sm text-ink-muted">· developed by Nam Ta</span>
+        </div>
+        <nav class="flex flex-wrap gap-4 text-sm text-ink-muted sm:ml-auto">
+          <a href="/#features" class="hover:text-ink">Tính năng</a>
+          <a href="/#download" class="hover:text-ink">Tải về</a>
+          <a href="/lich-su-phien-ban.html" class="hover:text-ink">Lịch sử phiên bản</a>
+          <a href="/chinh-sach.html" class="hover:text-ink">Chính sách</a>
+          <a href="mailto:hoangnam.mng@gmail.com" class="hover:text-ink">Liên hệ</a>
+        </nav>
+      </div>
+      <div class="border-t border-slate-200 py-5 text-center text-xs text-ink-muted">© <span id="year"></span> Tạ Hoàng Nam · Nabu PDF. Mọi quyền được bảo lưu.</div>
+    </footer>
+
+    <script>
+      document.getElementById("year").textContent = new Date().getFullYear();
+    </script>
+  </body>
+</html>

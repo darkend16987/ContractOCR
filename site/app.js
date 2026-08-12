@@ -21,25 +21,30 @@ const I = {
   move: '<path d="M12 2v20"/><path d="M2 12h20"/><path d="m5 9-3 3 3 3"/><path d="m9 5 3-3 3 3"/><path d="m15 19-3 3-3-3"/><path d="m19 9 3 3-3 3"/>',
 };
 
+// Overview, not a manual. Each card answers "what can this do for me" in a line or
+// two; the how-to lives in the in-app Hướng dẫn sử dụng (F1) and HUONG-DAN-SU-DUNG.md.
+// Keyboard shortcuts, option lists and edge-case behaviour deliberately do NOT belong
+// here — they made the grid unreadable and went stale every release.
 const FEATURES = [
-  { i: "ai", t: "Bóc tách dữ liệu bằng AI", d: "OCR tiếng Việt + AI đọc mọi loại văn bản (hợp đồng, hóa đơn, biểu mẫu…), bóc tách các trường rồi xuất Excel/JSON. Tự khai báo trường tùy chỉnh cần bóc tách." },
-  { i: "translate", t: "Dịch PDF bằng AI (giữ layout)", d: "Dịch tài liệu sang ngôn ngữ khác mà giữ nguyên bố cục, xuất ra PDF mới. Giữ nguyên số/ngày/email/mã không dịch. Dành cho PDF có text thật (cần Gemini API key)." },
-  { i: "combine", t: "Gộp nhiều PDF thành một", d: "Chọn nhiều file cùng lúc, kéo–thả sắp xếp thứ tự rồi gộp thành một PDF — không cần mở file nào trước." },
-  { i: "type", t: "Sửa nội dung gốc của PDF", d: "Chỉnh trực tiếp văn bản thật trong PDF — không phải vẽ đè. Giữ nguyên font gốc, đúng cỡ chữ và nền ô bảng: chữ sửa xong đứng đúng chỗ, không dài ra đè chữ bên cạnh, không để lại vệt trắng. Tự OCR lấy lại chữ tiếng Việt bị lỗi font (font .Vn cổ, bản vẽ CAD/Revit mã hóa hỏng)." },
-  { i: "pages", t: "Ghép · Tách · Chèn · Số trang", d: "Quản lý trang linh hoạt: kéo-thả sắp xếp, ghép/chèn từ file khác, tách trang chọn hoặc tách thành nhiều file (theo N trang / khoảng trang), thêm trang trắng, đánh số trang. Xoá nhiều trang <strong>theo khoảng</strong>: nhập từ trang X đến trang Y, trừ ra vài trang muốn giữ lại — không phải tick chọn từng trang, và có dòng xem trước đúng những trang sẽ mất." },
-  { i: "compare", t: "So sánh & chồng lớp bản vẽ", d: "So sánh 2 file PDF theo từng dòng/từ; so sánh bản vẽ CAD/Revit bằng diff hình ảnh (chỉ ra vùng thêm/xóa/sửa, tick chọn từng vùng để khoanh mây rồi xuất bản đánh dấu); và chồng lớp (overlay) 2 bản vẽ lên nhau — tự căn chỉnh + tô màu khác biệt để soi thay đổi giữa 2 phiên bản." },
-  { i: "pen", t: "Chú thích & đánh dấu", d: "Hộp văn bản (font, cỡ, đậm/nghiêng/gạch chân), ghi chú, mũi tên và <strong>ảnh/chữ ký chèn vào</strong> đều sửa & di chuyển lại được cả sau khi đã áp dụng và lưu; mũi tên chọn đặt nhãn ở đầu (mũi nhọn) hoặc ở cuối (gốc), <strong>dấu ✓ / ✗</strong> (bấm một cái ra cỡ chuẩn, kéo để tự chọn cỡ, đổi màu và độ dày nét), tô sáng, vẽ tay (<strong>giữ Shift</strong> để nét thành đoạn thẳng), khoanh mây revision (chữ nhật hoặc vẽ tự do, cỡ vòng tùy chỉnh), che thông tin (redact an toàn, chọn màu), watermark, điền form, đóng dấu ảnh/chữ ký lên nhiều trang, ghi chú dạng chuỗi bình luận kèm bảng danh sách ghi chú toàn tài liệu (bấm để nhảy tới)." },
-  { i: "history", t: "Tự lưu & khôi phục khi sự cố", d: "Tự động lưu nền trong lúc bạn làm việc; nếu máy tắt đột ngột, app đóng bất ngờ hay lỡ quên lưu, mở lại sẽ mời khôi phục bản mới nhất — không mất công sức đang dở. Đóng cửa sổ khi còn thay đổi chưa lưu sẽ hỏi Lưu / Không lưu / Huỷ." },
-  { i: "ruler", t: "Đo & ghi kích thước", d: "Công cụ đo cho bản vẽ CAD/Revit: hiệu chuẩn theo một đoạn đã biết kích thước, các đoạn còn lại kéo ra là tự ghi số theo đúng tỷ lệ." },
-  { i: "print", t: "In tài liệu", d: "In trực tiếp từ app (Ctrl+P): chọn máy in, khổ giấy A4–A0 (kèm Letter/Legal), hướng giấy, in một mặt hoặc hai mặt (lật cạnh dài/ngắn), số bản — và <strong>chọn khoảng trang cần in</strong> ngay trong app (vd 1-2, 5, 8-10), có dòng xem trước đúng những trang sẽ ra giấy. Mỗi trang tài liệu luôn in gọn trong <strong>đúng một tờ giấy</strong> và giữ nguyên tỷ lệ, ở mọi khổ giấy — không bị đẩy phần dưới sang tờ sau, không cắt, không kéo méo." },
-  { i: "search", t: "Tạo PDF tìm-kiếm-được", d: "OCR thêm lớp text vô hình để PDF scan có thể tìm kiếm và bôi chọn chữ." },
-  { i: "archive", t: "Nén PDF", d: "Giảm dung lượng file (tối ưu ảnh) với nhiều mức nén, giữ chất lượng đọc tốt." },
-  { i: "shield", t: "Khóa & mã hóa", d: "Đặt mật khẩu, mã hóa, trích xuất ảnh — bảo vệ tài liệu nhạy cảm." },
-  { i: "signature", t: "Ký số bằng USB token", d: "Ký số PKI bằng chứng thư trên token USB (VNPT-CA, Viettel-CA, FPT-CA, BKAV…) qua kho chứng thư Windows — như Foxit/Acrobat. Chữ ký nhìn thấy (khung + tên/ngày/lý do + ảnh con dấu) kèm dấu thời gian (TSA). Khoá bí mật không rời token." },
-  { i: "convert", t: "Chuyển đổi PDF ↔ ảnh", d: "Tạo PDF từ ảnh, xuất từng trang ra ảnh, gộp ảnh thành tài liệu theo thứ tự." },
-  { i: "combine", t: "Tab đa tài liệu & khôi phục phiên", d: "Mở nhiều tài liệu bằng tab trong một cửa sổ: kéo sắp xếp, kéo tách tab ra cửa sổ riêng hoặc thả sang cửa sổ khác, Ctrl+T/Ctrl+W/Ctrl+Tab/Ctrl+1–9. Bật app lại là có đúng bộ tab lần trước. Chọn được <strong>file mở ra vào tab mới hay cửa sổ mới</strong> (trong Cài đặt) — áp dụng cho cả nút Mở, kéo–thả và \"Open with\" từ Explorer. Kèm copy/paste & chèn ảnh, menu chuột phải." },
-  { i: "move", t: "Ngắm & di chuyển tài liệu", d: "Zoom <strong>bám theo con trỏ</strong> bằng Ctrl + lăn chuột (40–300%): trang bám tay ngay lập tức, dừng lại khoảng 0,2 giây là tự làm nét — không giật từng nấc. <strong>Bàn tay</strong> để kéo trang đi (phím H, giữ Space để dùng tạm, hoặc kéo nút giữa chuột — cách này pan được cả khi đang chú thích). Cột trang <strong>sáng theo trang bạn đang đọc</strong> và tự trượt vào khung nhìn, nhưng không làm đổi những trang bạn đã tick chọn. Kéo giãn cột trang 130–300px, bấm đúp tay nắm để về mặc định." },
-  { i: "fullscreen", t: "Đọc toàn màn hình (F11)", d: "Trọn trang nằm gọn trong màn hình, ẩn hết thanh công cụ và danh sách trang — để trình bày hoặc đọc kỹ. Rê chuột vào mép trái là dải thumbnail trượt ra để nhảy trang (F4 để ghim lại), trang không bị co giãn theo. Kèm \"vừa cả trang\" chạy được với cả khổ lớn A0–A1." },
+  { i: "ai", t: "Bóc tách dữ liệu bằng AI", d: "OCR tiếng Việt kết hợp AI để đọc hợp đồng, hoá đơn, biểu mẫu — lấy ra đúng những trường bạn cần rồi xuất Excel hoặc JSON." },
+  { i: "translate", t: "Dịch PDF bằng AI", d: "Dịch tài liệu sang ngôn ngữ khác mà giữ nguyên bố cục, kể cả bảng biểu, và xuất ra một file PDF mới." },
+  { i: "type", t: "Sửa nội dung gốc của PDF", d: "Chỉnh trực tiếp chữ thật trong tài liệu chứ không vẽ đè, giữ đúng font, cỡ chữ và nền sẵn có." },
+  { i: "search", t: "Tìm & Thay thế chữ", d: "Tìm một từ khoá trong toàn bộ tài liệu rồi thay từng chỗ hoặc thay tất cả trong một lần — quen tay như trong Word." },
+  { i: "pages", t: "Quản lý trang", d: "Ghép, tách, chèn, xoay, sắp xếp, xoá theo khoảng, thêm trang trắng và đánh số trang — tất cả trong một chỗ." },
+  { i: "combine", t: "Gộp nhiều PDF thành một", d: "Chọn nhiều file cùng lúc, sắp xếp thứ tự rồi gộp thành một tài liệu duy nhất." },
+  { i: "pen", t: "Chú thích & đánh dấu", d: "Hộp văn bản, ghi chú, mũi tên, khoanh mây revision, tô sáng, vẽ tay, che thông tin, watermark, chữ ký ảnh — sửa và di chuyển lại được cả sau khi đã lưu." },
+  { i: "compare", t: "So sánh & chồng lớp bản vẽ", d: "Đối chiếu hai phiên bản của một tài liệu hoặc hai bản vẽ CAD/Revit, chỉ ra vùng khác biệt và chồng lớp lên nhau để soi thay đổi." },
+  { i: "ruler", t: "Đo & ghi kích thước", d: "Hiệu chuẩn theo một đoạn đã biết kích thước, các đoạn còn lại tự ghi số đúng tỷ lệ — dành cho bản vẽ kỹ thuật." },
+  { i: "signature", t: "Ký số bằng USB token", d: "Ký số PKI bằng chứng thư trên token USB (VNPT-CA, Viettel-CA, FPT-CA…), chữ ký nhìn thấy được kèm dấu thời gian. Khoá bí mật không rời token." },
+  { i: "print", t: "In tài liệu", d: "In thẳng từ app với khổ giấy A4 đến A0, chọn khoảng trang, một hoặc hai mặt. Mỗi trang tài liệu luôn gọn trong đúng một tờ giấy." },
+  { i: "archive", t: "Nén PDF", d: "Giảm dung lượng bằng cách tối ưu ảnh, nhiều mức để cân giữa chất lượng và kích thước. Chạy được cả tài liệu vài trăm MB." },
+  { i: "search", t: "Tạo PDF tìm-kiếm-được", d: "OCR thêm một lớp chữ vô hình để bản scan tìm kiếm và bôi chọn được như tài liệu thường." },
+  { i: "convert", t: "Chuyển đổi PDF ↔ ảnh", d: "Tạo PDF từ ảnh chụp hay ảnh scan, và xuất từng trang tài liệu ra ảnh." },
+  { i: "shield", t: "Khoá & mã hoá", d: "Đặt mật khẩu mở file và trích xuất ảnh — cho tài liệu nhạy cảm." },
+  { i: "combine", t: "Tab đa tài liệu", d: "Mở nhiều tài liệu bằng tab trong một cửa sổ, tách tab ra cửa sổ riêng khi cần. Mở app lại là có đúng bộ tab lần trước." },
+  { i: "history", t: "Tự lưu & khôi phục", d: "Lưu nền trong lúc bạn làm việc. Mất điện hay app đóng đột ngột thì lần mở sau vẫn còn bản mới nhất." },
+  { i: "move", t: "Ngắm & di chuyển tài liệu", d: "Zoom bám theo con trỏ, bàn tay kéo trang đi, cột trang sáng theo trang đang đọc." },
+  { i: "fullscreen", t: "Đọc toàn màn hình", d: "Trọn trang nằm gọn trong màn hình, ẩn hết thanh công cụ — để trình bày hoặc đọc kỹ." },
 ];
 
 document.getElementById("feature-grid").innerHTML = FEATURES.map((f) => `
