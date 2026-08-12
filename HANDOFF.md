@@ -57,8 +57,14 @@ _Cập nhật: 2026-08-12 · v0.2.57 đã phát hành (dưới đây) · v0.2.56
 > `find` 129→**138**, `text-find` 46→**52**, **`sidecar` 7 ca mới**) · probe HTTP thật đo
 > lại `/health`, hợp đồng lỗi, và hai lệnh nén song song.
 >
-> **⚠️ Còn nợ:** nhánh **frozen** của worker (`sys.executable` là `sidecar.exe`, argv khác
-> dev) **chưa từng chạy** — phải thử tay trên bản đóng gói theo dòng ma trận **BI-54**.
+> **Nhánh frozen của worker: ĐÃ kiểm, ngay trong đợt đóng gói này.** Đây là chỗ rủi ro nhất
+> của phép sửa (argv khi frozen khác hẳn argv lúc dev), nên nó được chạy thật trên **cả hai**
+> binary: `dist/sidecar/sidecar.exe` và bản nằm trong app đã đóng gói
+> (`dist-app/win-unpacked/resources/sidecar/sidecar.exe`). Cả hai đều: nén ra **PDF hợp lệ**
+> (exit 0, khởi động 1,8–2,4 s), preset sai → **exit 3** kèm đúng câu tiếng Việt **không bị
+> rác** (đây chính là chỗ lỗi encoding đã bắt được), file hỏng → exit 3. Phần **còn lại phải
+> thử tay** khi cài đặt thật: không nháy cửa sổ console đen lúc nén, và thoát app giữa lúc
+> nén thì không sót `sidecar.exe` trong Task Manager — xem dòng ma trận **BI-54**.
 
 > **v0.2.56 · Tìm & Thay thế: sửa đúng ba thứ người dùng báo** (**có đụng `api.py` ⇒
 > rebuild sidecar**). Báo cáo test của người dùng trên bộ bản vẽ **480 trang khổ A1**:

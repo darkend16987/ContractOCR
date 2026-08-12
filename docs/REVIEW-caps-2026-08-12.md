@@ -238,14 +238,25 @@ thẳng ngoại lệ vào docstring.
 
 **Đụng `api.py` và `sidecar.py` ⇒ bắt buộc `npm run build:sidecar` trước khi đóng gói.**
 
-> ### ⚠️ Việc còn nợ của bước 5: PHẢI thử trên bản ĐÓNG GÓI
-> Worker chạy bằng `sys.executable`, mà giá trị đó **khác nhau** giữa dev (python của
-> venv + đường dẫn `sidecar.py`) và bản frozen (`sidecar.exe`, cờ đi thẳng). Nhánh frozen
-> **chưa từng chạy trên máy này** — ở đây chỉ có nhánh dev.
-> `test_compress_worker_command_shape` canh *hình dạng* argv ở cả hai nhánh, nhưng không
-> thay được một lần chạy thật. Danh sách thử tay nằm ở dòng ma trận của **BI-54**; hai
-> mục dễ trượt nhất là **nháy cửa sổ console đen** và **`sidecar.exe` sót lại** sau khi
-> thoát app giữa lúc nén.
+> ### ✅ Nhánh frozen của bước 5 — đã chạy thật lúc phát hành v0.2.57
+> Worker chạy bằng `sys.executable`, mà giá trị đó **khác nhau** giữa dev (python của venv
+> + đường dẫn `sidecar.py`) và bản frozen (`sidecar.exe`, cờ đi thẳng). Lúc viết mục này
+> nhánh frozen chưa từng chạy; nó **đã được chạy thật** ngay trong đợt đóng gói v0.2.57,
+> trên **cả hai** binary — `dist/sidecar/sidecar.exe` và bản nằm trong app đã đóng gói
+> `dist-app/win-unpacked/resources/sidecar/sidecar.exe`:
+>
+> | Ca | Kết quả |
+> |---|---|
+> | nén một PDF 3 trang | `exit 0`, body ra **đúng `%PDF`**, khởi động **1,8–2,4 s** |
+> | preset sai | `exit 3` + `preset phải là screen\|ebook\|printer\|lossless` — **không bị rác**, đúng chỗ lỗi encoding đã bắt được |
+> | file hỏng | `exit 3` + `Không mở được PDF: …` |
+>
+> Con số khởi động **1,8–2,4 s** cũng xác nhận hằng `COMPRESS_WORKER_START_S = 3` là hợp lý
+> (hơi rộng tay, tức ước tính nghiêng về phía an toàn).
+>
+> **Còn lại phải thử tay trên máy đã cài** — hai thứ chỉ thấy được bằng mắt: **không nháy
+> cửa sổ console đen** lúc nén, và thoát app giữa lúc nén thì **không sót `sidecar.exe`**
+> trong Task Manager. Xem dòng ma trận của **BI-54**.
 
 ---
 
