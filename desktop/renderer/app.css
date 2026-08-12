@@ -1032,6 +1032,10 @@ body.editing .text-layer, body.text-editing .text-layer {
 .form-row label { font-size: 11px; color: var(--muted); }
 .form-row input[type="checkbox"] { width: 18px; height: 18px; accent-color: var(--accent); }
 .cmp-note { font-size: 12px; color: var(--muted); margin: 4px 0 12px; line-height: 1.5; }
+/* Live size + time readout. `.warn` is the "this one will hurt" state — same amber the
+   rest of the app uses for a caution that is not an error. */
+.cmp-eta { font-size: 12px; color: var(--muted); margin: 0 0 12px; line-height: 1.5; }
+.cmp-eta.warn { color: var(--warn); font-weight: 600; }
 /* Live summary in "Xoá nhiều trang theo khoảng" — reserve its height so typing in
    the fields doesn't make the dialog jump, and colour the refusal cases. */
 .delrange-preview { min-height: 36px; color: var(--fg); }

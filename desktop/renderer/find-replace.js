@@ -228,6 +228,12 @@ if (typeof document !== "undefined") {
       // current bytes, BI-50) but the two Thay buttons go dark: replacing would
       // rewrite matches of the OLD query with the NEW replacement text.
       stale: false,
+      // The last scan hit /text-find's max_hits ceiling and stopped early, and the
+      // page it stopped on. Kept on `fr` — not just written into `sticky` — because
+      // "Thay tất cả" has to know: its confirm text is the only place that promises
+      // the user what the action covers, and "toàn bộ tài liệu" is false here.
+      truncated: false,
+      truncatedPage: 0,
       // Scan generation. A whole-document walk takes seconds on a big file, so two
       // can easily be in flight (Enter pressed twice, a replace re-scan overlapping
       // a manual one). Without this the SLOWER one lands last and wins, and the
@@ -423,6 +429,11 @@ if (typeof document !== "undefined") {
       fr.query = q;
       fr.sticky = null;
       fr.stale = false;
+      // Cleared here, at the top, not only on the success path: every early return
+      // below (empty query, oversized file, request error) would otherwise leave the
+      // PREVIOUS scan's truncation flag standing behind the next "Thay tất cả".
+      fr.truncated = false;
+      fr.truncatedPage = 0;
       if (!q) {
         fr.hits = [];
         fr.cur = -1;
@@ -491,6 +502,8 @@ if (typeof document !== "undefined") {
           return;
         }
         fr.hits = data.hits || [];
+        fr.truncated = !!data.truncated;
+        fr.truncatedPage = data.truncated_page || 0;
         if (!data.has_text) {
           fr.cur = -1;
           drawAllLayers();
@@ -506,12 +519,12 @@ if (typeof document !== "undefined") {
         if (seq !== fr.runSeq) return;
         // After goTo, which repaints the count — otherwise this warning is written and
         // immediately overwritten by "{i}/{n} kết quả".
-        if (data.truncated) {
+        if (fr.truncated) {
           setSticky(
-            data.truncated_page
+            fr.truncatedPage
               ? tr("Quá nhiều kết quả — chỉ hiện {n} vị trí đầu tiên, dừng quét ở trang {p}.", {
                   n: fr.hits.length,
-                  p: data.truncated_page,
+                  p: fr.truncatedPage,
                 })
               : tr("Quá nhiều kết quả — chỉ hiện {n} vị trí đầu tiên.", { n: fr.hits.length }),
             "warn"
@@ -628,14 +641,40 @@ if (typeof document !== "undefined") {
       // Confirm first: "Thay tất cả" is the one action here that rewrites the whole
       // document in a single step, and the count is the only thing that tells the user
       // whether their query was as specific as they thought.
-      const ok = await uiConfirm(
-        tr("Thay {n} vị trí trong toàn bộ tài liệu?", { n: replaceable }) +
-          (crossing
-            ? "\n\n" +
-              tr("{k} vị trí bị chia làm nhiều đoạn định dạng sẽ được GIỮ NGUYÊN.", { k: crossing })
-            : ""),
-        { title: tr("Thay tất cả"), okText: tr("Thay tất cả"), cancelText: tr("Hủy") }
-      );
+      //
+      // "trong toàn bộ tài liệu" is a PROMISE, and it is only true when the scan
+      // reached the last page. /text-find stops at max_hits (5000) — measured: a
+      // common word in a 600-page file stops the walk on page 28, i.e. 5% in. Saying
+      // "toàn bộ tài liệu" there makes the one dialog whose entire job is to prevent a
+      // surprise into the thing that causes it: the user replaces 5000 of many more,
+      // is told it is done, and the rest sit untouched.
+      const head = fr.truncated
+        ? tr("Thay {n} vị trí trong phần tài liệu đã quét?", { n: replaceable })
+        : tr("Thay {n} vị trí trong toàn bộ tài liệu?", { n: replaceable });
+      const notes = [];
+      if (fr.truncated) {
+        notes.push(
+          fr.truncatedPage
+            ? tr(
+                "Lượt quét dừng ở trang {p} vì chạm trần {m} kết quả — phần sau CHƯA được quét. Thay xong hãy bấm Tìm lại để xử lý nốt.",
+                { p: fr.truncatedPage, m: fr.hits.length }
+              )
+            : tr(
+                "Lượt quét dừng sớm vì chạm trần {m} kết quả — phần sau CHƯA được quét. Thay xong hãy bấm Tìm lại để xử lý nốt.",
+                { m: fr.hits.length }
+              )
+        );
+      }
+      if (crossing) {
+        notes.push(
+          tr("{k} vị trí bị chia làm nhiều đoạn định dạng sẽ được GIỮ NGUYÊN.", { k: crossing })
+        );
+      }
+      const ok = await uiConfirm(head + (notes.length ? "\n\n" + notes.join("\n\n") : ""), {
+        title: tr("Thay tất cả"),
+        okText: tr("Thay tất cả"),
+        cancelText: tr("Hủy"),
+      });
       if (!ok) return;
       await applyEdits(edits, null, tr("Đã thay {n} vị trí.", { n: replaceable }));
     }
@@ -705,6 +744,8 @@ if (typeof document !== "undefined") {
       fr.query = "";
       fr.stale = false;
       fr.sticky = null;
+      fr.truncated = false;
+      fr.truncatedPage = 0;
       // Closing the panel abandons the question, so abandon the scan answering it —
       // otherwise a 480-page walk keeps the sidecar busy for a panel nobody can see.
       fr.runSeq++;

@@ -241,6 +241,134 @@ check("no gap on a 5-page doc both counts as a move and changes nothing",
     return moved === gapIsNoOp(g, 2); // a real move that is flagged no-op, or vice versa
   }), []);
 
+// ---- compressEta: "how long will Nén take" -------------------------------
+//
+// The estimate is shown before a job that can run for minutes and cannot be cancelled,
+// so being wrong here is not cosmetic — it is the number the user plans around.
+//
+// It predicts from BYTES, and that is the measured choice, not a convenience: across
+// an all-image scan, a 600-page text document and a CAD-like A0 vector set, seconds
+// per MB spanned 0.098–0.189 (2x) while seconds per PAGE spanned 0.001–0.439 (439x).
+
+const COMPRESS_S_PER_MB = extractConst("renderer/app.js", "COMPRESS_S_PER_MB");
+const COMPRESS_WORKER_MIN_BYTES = extractConst("renderer/app.js", "COMPRESS_WORKER_MIN_BYTES");
+const COMPRESS_WORKER_START_S = extractConst("renderer/app.js", "COMPRESS_WORKER_START_S");
+const COMPRESS_WARN_BYTES = extractConst("renderer/app.js", "COMPRESS_WARN_BYTES");
+const compressEta = extractFn("renderer/app.js", "compressEta");
+
+const MB = 1e6;
+
+// Against the real measurements, with one correction that matters: the 57.8 MB
+// figures below were timed by calling the compressor DIRECTLY, while a document that
+// size goes through the child process in the app — so what the user waits for is the
+// measured time PLUS the worker's interpreter start. The 86.7 MB figure was already
+// measured end to end over HTTP, worker included.
+function within(actual, expected, tol) {
+  return Math.abs(actual - expected) <= expected * tol;
+}
+const W = COMPRESS_WORKER_START_S;
+check("86.7 MB ebook ≈ the 16.8s measured end-to-end",
+  within(compressEta(86.7 * MB, "ebook"), 16.8, 0.3), true);
+check("57.8 MB ebook ≈ the measured 8.8s + worker start",
+  within(compressEta(57.8 * MB, "ebook"), 8.8 + W, 0.3), true);
+check("57.8 MB screen ≈ the measured 2.7s + worker start",
+  within(compressEta(57.8 * MB, "screen"), 2.7 + W, 0.5), true);
+check("57.8 MB printer ≈ the measured 10.3s + worker start",
+  within(compressEta(57.8 * MB, "printer"), 10.3 + W, 0.3), true);
+// A 6.1 MB text document measured 0.60 s and stays in-process — no worker cost at all.
+check("6.1 MB text ≈ the measured 0.6s, with no worker cost",
+  compressEta(6.1 * MB, "ebook") <= 2, true);
+
+// lossless skips rewrite_images, which is 98.9% of the work. If the estimate ever
+// stops reflecting that, the dialog tells people a cleanup will take minutes.
+check("lossless is far cheaper than ebook",
+  compressEta(500 * MB, "lossless") * 5 < compressEta(500 * MB, "ebook"), true);
+
+// The worker's interpreter start is a STEP at the threshold, not a slope — a document
+// one byte over should not look dramatically slower than one byte under.
+const under = compressEta(COMPRESS_WORKER_MIN_BYTES - 1, "ebook");
+const over = compressEta(COMPRESS_WORKER_MIN_BYTES, "ebook");
+check("crossing the worker threshold adds the startup cost",
+  over - under, COMPRESS_WORKER_START_S);
+check("…and nothing more", over - under <= COMPRESS_WORKER_START_S, true);
+
+// Monotonic and never zero: "0 giây" on a real document reads as "it is broken".
+check("bigger is never faster",
+  [1, 10, 100, 500, 999].every((mb) => compressEta(mb * MB, "ebook") >= compressEta((mb - 1) * MB, "ebook")),
+  true);
+check("an empty document still reports at least 1s", compressEta(0, "ebook"), 1);
+check("garbage input does not produce NaN", compressEta(undefined, "ebook"), 1);
+check("an unknown preset falls back to ebook",
+  compressEta(50 * MB, "nonsense"), compressEta(50 * MB, "ebook"));
+
+// Every preset offered by the dialog must have a number, or it silently gets ebook's.
+const presetsInHtml = (fs.readFileSync(path.join(__dirname, "..", "renderer", "index.html"), "utf8")
+  .match(/<select id="cmp-preset">[\s\S]*?<\/select>/) || [""])[0]
+  .match(/value="([a-z]+)"/g) || [];
+check("the dialog offers 4 presets", presetsInHtml.length, 4);
+for (const raw of presetsInHtml) {
+  const p = /value="([a-z]+)"/.exec(raw)[1];
+  check(`COMPRESS_S_PER_MB covers "${p}"`, typeof COMPRESS_S_PER_MB[p], "number");
+}
+
+// ---- the thresholds must agree with the sidecar ---------------------------
+//
+// Same cross-language discipline find-replace.test.js applies to the payload ceilings:
+// the renderer's estimate is built on where api.py actually switches to the worker, so
+// a change on one side that misses the other makes the estimate quietly wrong.
+const apiSrc = fs.readFileSync(path.join(__dirname, "..", "..", "api.py"), "utf8");
+const pyNum = (re) => {
+  const m = re.exec(apiSrc);
+  return m ? Number(m[1].replace(/_/g, "")) : NaN;
+};
+check("renderer and sidecar agree on the worker threshold",
+  pyNum(/_COMPRESS_WORKER_MIN_BYTES\s*=\s*([\d_]+)/), COMPRESS_WORKER_MIN_BYTES);
+// The warning has to fire well before the sidecar's hard ceiling, or the only feedback
+// a user gets on an impossible document is a 400.
+check("the warn threshold sits below the sidecar's hard cap",
+  COMPRESS_WARN_BYTES < pyNum(/_MAX_PDF_BIN\s*=\s*([\d_]+)/), true);
+check("…and above the worker threshold",
+  COMPRESS_WARN_BYTES > COMPRESS_WORKER_MIN_BYTES, true);
+
+// The dialog's live line and its heads-up are built in JS, so they are NOT covered by
+// i18n's static markup sweep. A missing key is not an error at runtime — t() returns
+// its input — so the English UI would just quietly show Vietnamese.
+const i18nSrc = fs.readFileSync(path.join(__dirname, "..", "renderer", "i18n.js"), "utf8");
+for (const key of [
+  "{n} giây",
+  "{n} phút",
+  "Tài liệu {size} · ước tính khoảng {time}",
+  "tài liệu rất lớn, máy sẽ cần nhiều RAM",
+  "Đang nén PDF… (khoảng {time})",
+  "Tài liệu {size} — nén có thể mất khoảng {time} và dùng nhiều bộ nhớ. Trong lúc chạy không dừng lại được. Tiếp tục?",
+]) {
+  check(`i18n has ${JSON.stringify(key)}`, i18nSrc.includes('"' + key + '"'), true);
+}
+// …and the readout must be excluded from the language sweep, or switching to English
+// overwrites "Tài liệu 82 MB · ước tính…" with stale static text (BI-10).
+check("cmp-eta is in SKIP_IDS", /SKIP_IDS[\s\S]{0,2000}"cmp-eta"/.test(i18nSrc), true);
+
+// The DOM half gets source assertions, the compromise this repo already makes for
+// renderer code (see REGRESSION-GUARD §1). Three wires, each of which fails silently:
+// a missing element writes nowhere, a missing call leaves the line blank, and a
+// missing onchange leaves a 20×-wrong number on screen after switching preset.
+const appSrc = fs.readFileSync(path.join(__dirname, "..", "renderer", "app.js"), "utf8");
+const htmlSrc = fs.readFileSync(path.join(__dirname, "..", "renderer", "index.html"), "utf8");
+check("the dialog has somewhere to write", /id="cmp-eta"/.test(htmlSrc), true);
+check("opening the dialog fills it",
+  /function openCompress\(\)[\s\S]{0,600}updateCompressEta\(\)/.test(appSrc), true);
+check("changing the preset refreshes it",
+  /\$\("cmp-preset"\)\.onchange\s*=\s*updateCompressEta/.test(appSrc), true);
+// The heads-up has to come BEFORE bakePending(), which rewrites state.bytes: baking
+// first would leave a dirtied document behind a cancelled compress.
+// Anchored on the CALL, not the bare word: the prose above it names bakePending too,
+// and matching that would test the comment instead of the code.
+const runAt = appSrc.indexOf("async function runCompress");
+const confirmAt = appSrc.indexOf("COMPRESS_WARN_BYTES", runAt);
+const bakeAt = appSrc.indexOf("Editor.bakePending()", runAt);
+check("the large-document confirm runs before annotations are baked",
+  confirmAt > 0 && confirmAt < bakeAt, true);
+
 // ---- summary -------------------------------------------------------------
 
 console.log(`\n${pass} pass, ${fail} fail`);

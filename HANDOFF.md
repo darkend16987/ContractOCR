@@ -4,7 +4,61 @@
 > [DESIGN.md](DESIGN.md) (kiến trúc), [ROADMAP.md](ROADMAP.md) (tiến độ chi tiết),
 > [SETUP.md](SETUP.md) (dựng môi trường).
 
-_Cập nhật: 2026-08-12 · v0.2.56 đã phát hành (dưới đây) · v0.2.55 là bản trước đó_
+_Cập nhật: 2026-08-12 · v0.2.57 đã phát hành (dưới đây) · v0.2.56 là bản trước đó_
+
+> **v0.2.57 — đợt RÀ SOÁT, không phải đợt tính năng** (**có đụng `api.py` + `sidecar.py`
+> ⇒ BẮT BUỘC rebuild sidecar**). Xuất phát từ một câu hỏi: hai đợt nâng/bỏ trần dung lượng
+> ở v0.2.55–56 có gây hồi quy gì không? Toàn bộ phương pháp, số đo và phần chưa làm nằm ở
+> **[docs/REVIEW-caps-2026-08-12.md](docs/REVIEW-caps-2026-08-12.md)**; dưới đây là thứ đã
+> ship.
+>
+> **Kết luận của đợt rà soát: không có hồi quy chức năng.** Bán kính v0.2.56 trong `api.py`
+> chỉ gói trong khối `text-find`. Nhưng việc nâng trần đã **gỡ mất cái chốt che** bốn vấn đề
+> vận hành sẵn có — và cả bốn đã sửa.
+>
+> **1. Nén file lớn KHÔNG còn treo cả engine (BI-54).** Đo được: nén 30 trang làm `/health`
+> **không trả lời 13.088 ms**; ở trần 3000 trang là **~19 phút** mọi tab khác treo theo, vì
+> mọi route là `async def` và app dùng **một** sidecar cho **mọi tab**.
+> **Phương án đầu tiên đã bị bác bỏ bằng phép đo:** `run_in_threadpool` **không** cứu được —
+> `doc.rewrite_images()` chiếm **98,9%** thời gian và **giữ GIL suốt** (thread quan sát chạy
+> được **0,1%**, dấu thời gian đầu tiên của nó rơi ở giây **10,79** của một lệnh dài 10,96s);
+> nó là một lệnh mức document **không có tham số khoảng trang** nên cũng không cắt nhỏ để
+> chèn `await`; và PyMuPDF gọi `mupdf.reinit_singlethreaded()` **lúc import** nên hai thread
+> cùng chạy là **không an toàn**. Cách sửa thật: **tiến trình riêng** —
+> `sidecar.exe --compress-worker`, tức chính chương trình này chạy lại, nên **không có nhị
+> phân thứ hai** phải build/ký/ship. Đo lại: **13.088 ms → 32 ms** (bằng lúc rảnh), file nhỏ
+> vẫn nén tại chỗ **0,00 s** nhờ ngưỡng 25MB, hai lệnh nén song song ra kết quả giống hệt.
+> Có **fallback**: worker không khởi chạy được thì quay về nén tại chỗ.
+>
+> **2. Hộp Nén báo trước thời gian, và hỏi lại với tài liệu rất lớn.** Ước tính tính theo
+> **BYTE chứ không theo TRANG** — đo trên ba loại tài liệu, **giây/MB lệch 2 lần** còn
+> **giây/trang lệch 439 lần**. Theo cả preset: `lossless` nhanh hơn `printer` ~60 lần.
+> Trần `_MAX_PDF_BIN` **giữ nguyên 1GB** (hạ xuống là từ chối tài liệu chạy tốt trên máy
+> 32GB — giới hạn thật là **máy**, không phải định dạng); thay vào đó **cảnh báo từ 300MB**,
+> vì đỉnh bộ nhớ cả chuỗi ≈ **4 lần cỡ file** rải trên ba tiến trình.
+>
+> **3. Sidecar chết đột ngột giờ nói ra (BI-53).** Trước đây `child.on("exit")` chỉ
+> `console.log`, `sidecarState` chỉ ghi **một lần** lúc khởi động ⇒ sau khi sidecar chết,
+> badge vẫn xanh, nút vẫn sáng, mỗi lần bấm là một lỗi `fetch` trần. Nửa khó là nửa thứ hai:
+> tắt **có chủ ý** phải im lặng, nếu không sẽ vẽ "đã dừng đột ngột" đè lên sidecar mới.
+>
+> **4. "Thay tất cả" hết nói quá (BI-53).** `/text-find` dừng ở `max_hits` = 5000 — đo được:
+> một từ khoá phổ biến trên file 600 trang dừng ở **trang 28**. Câu xác nhận vẫn ghi "trong
+> toàn bộ tài liệu". Nay có `fr.truncated` và câu chữ đổi theo.
+>
+> **Cộng hai phép sửa nhỏ:** `_FIND_CACHE_MAX_PARTS` 300k → **80k** (đo: ~1,5KB/span nên
+> 300k cho phép **~450MB** ghim cả phiên — đúng cái nó sinh ra để ngăn), và `bbox` của hit
+> cắt-qua-span nay là hộp **chưa xoay** đúng như hợp đồng của nó.
+>
+> **Lỗi thật bắt được lúc làm:** worker ghi stderr theo **codepage console** còn cha giải mã
+> UTF-8 ⇒ "preset phải là…" sẽ đến tay người dùng thành ký tự rác. Nay chốt UTF-8 hai đầu.
+>
+> **Kiểm chứng:** `run_tests.py` **12/12** · **13 lưới JS** 0 fail (`geom` 55→**86**,
+> `find` 129→**138**, `text-find` 46→**52**, **`sidecar` 7 ca mới**) · probe HTTP thật đo
+> lại `/health`, hợp đồng lỗi, và hai lệnh nén song song.
+>
+> **⚠️ Còn nợ:** nhánh **frozen** của worker (`sys.executable` là `sidecar.exe`, argv khác
+> dev) **chưa từng chạy** — phải thử tay trên bản đóng gói theo dòng ma trận **BI-54**.
 
 > **v0.2.56 · Tìm & Thay thế: sửa đúng ba thứ người dùng báo** (**có đụng `api.py` ⇒
 > rebuild sidecar**). Báo cáo test của người dùng trên bộ bản vẽ **480 trang khổ A1**:

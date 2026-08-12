@@ -397,7 +397,21 @@ function buildMenu(lang) {
 // until this resolves; the rest of the app works without it.
 function bootSidecar() {
   setSidecarState({ state: "starting", port: null, error: null });
-  startSidecar(SIDECAR_TOKEN)
+  // A sidecar that dies by itself has to say so. The renderer already handles
+  // state:"error" everywhere (red badge with this message as its tooltip, and
+  // updateToolbar dimming every engine-backed button) — it was simply never told.
+  const onExit = (code, handle) => {
+    // Only the sidecar we are actually using may report its own death. An older one
+    // exiting late (after a restart) must not overwrite the new one's "ready".
+    if (sidecar !== handle) return;
+    sidecar = null;
+    setSidecarState({
+      state: "error",
+      port: null,
+      error: `Engine đã dừng đột ngột (mã ${code}). Khởi động lại app để dùng tiếp.`,
+    });
+  };
+  startSidecar(SIDECAR_TOKEN, onExit)
     .then((sc) => {
       sidecar = sc;
       setSidecarState({ state: "ready", port: sc.port, error: null });

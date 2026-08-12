@@ -77,7 +77,14 @@ function waitForHealth(port, timeoutMs = 180000, intervalMs = 600) {
   });
 }
 
-async function startSidecar(token) {
+// `onExit(code, handle)` fires when the sidecar dies on its OWN — not when we killed
+// it. Without it a crash is completely invisible: the process is gone, but
+// `sidecarState` in main.js was only ever written from this function's promise, so it
+// stays "ready", every engine button stays enabled, and each click fails with a bare
+// fetch error. The only cure the user has is restarting the app, and nothing on
+// screen suggests that. A big compress or a several-hundred-page index is exactly the
+// kind of job that can end in an OOM kill, so this path is reachable.
+async function startSidecar(token, onExit) {
   const port = await findFreePort();
   const { command, args, cwd } = sidecarCommand(port);
 
@@ -87,15 +94,24 @@ async function startSidecar(token) {
   if (token) env.SIDECAR_TOKEN = token;
 
   const child = spawn(command, args, { cwd, env, stdio: ["ignore", "pipe", "pipe"] });
+  // The handle is built BEFORE the exit listener so `stopping` — set by stopSidecar —
+  // is readable from inside it. A deliberate shutdown (app quit, "restart engine")
+  // must not report itself as a crash, least of all on top of a replacement sidecar
+  // that is already up.
+  const handle = { child, port, stopping: false };
   child.stdout.on("data", (d) => process.stdout.write(`[sidecar] ${d}`));
   child.stderr.on("data", (d) => process.stderr.write(`[sidecar] ${d}`));
-  child.on("exit", (code) => console.log(`[sidecar] exited with code ${code}`));
+  child.on("exit", (code) => {
+    console.log(`[sidecar] exited with code ${code}`);
+    if (!handle.stopping && typeof onExit === "function") onExit(code, handle);
+  });
 
   await waitForHealth(port);
-  return { child, port };
+  return handle;
 }
 
 function stopSidecar(sidecar) {
+  if (sidecar) sidecar.stopping = true; // this exit is ours; don't report it as a crash
   const child = sidecar && sidecar.child;
   if (!child || child.killed) return;
   // On Windows a plain SIGTERM to the launcher can orphan the real server

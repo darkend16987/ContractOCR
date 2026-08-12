@@ -277,6 +277,58 @@ if res.hits:
     h = res.hits[0]
     check("R10b …and reports a separate displayed box", h.bbox != h.bbox_view, True)
 
+# R10c — the SAME contract has to hold for a crossing hit, and it did not: the union
+# was built from the already-rotated parts and copied into both fields, so `bbox` —
+# documented as "UNROTATED span box; this is what /edit-text redraws into" — carried
+# displayed coordinates. Harmless only while these hits stay replaceable=False; the
+# day anyone lifts that, /edit-text redacts the wrong rectangle on rotated pages and
+# says nothing. Pin both boxes to the two spaces they belong to.
+doc = fitz.open()
+pg = doc.new_page(width=400, height=200)
+pg.insert_text((40, 60), "Hop", fontsize=11)
+pg.insert_text((40 + fitz.get_text_length("Hop", fontsize=11) + 6, 60), "dong so 5", fontsize=11)
+pg.set_rotation(90)
+rot_gap = doc.tobytes()
+doc.close()
+
+res = find(rot_gap, "Hop dong")
+check("R10c a crossing match is found on a rotated page", len(res.hits), 1)
+if res.hits:
+    h = res.hits[0]
+    check("R10c …and is still locked", h.replaceable, False)
+    # The two boxes must NOT be the same rectangle: one is page space, one is screen.
+    check("R10c …bbox and bbox_view are different rectangles", h.bbox != h.bbox_view, True)
+    # And `bbox` must be the union of the UNROTATED span boxes — the rectangle
+    # /edit-text would redact. Recover them from the index and compare.
+    d = fitz.open(stream=rot_gap, filetype="pdf")
+    idx, _n = _find_build_index(d)
+    d.close()
+    parts = idx[0][0][2]  # page 0, first line, its spans
+    ux0 = min(p[2][0] for p in parts)
+    uy0 = min(p[2][1] for p in parts)
+    ux1 = max(p[2][2] for p in parts)
+    uy1 = max(p[2][3] for p in parts)
+    check(
+        "R10c …bbox is the union of the UNROTATED span boxes",
+        [round(v, 3) for v in h.bbox],
+        [round(v, 3) for v in (ux0, uy0, ux1, uy1)],
+    )
+    vx0 = min(p[3][0] for p in parts)
+    vy0 = min(p[3][1] for p in parts)
+    vx1 = max(p[3][2] for p in parts)
+    vy1 = max(p[3][3] for p in parts)
+    check(
+        "R10c …bbox_view is the union of the DISPLAYED span boxes",
+        [round(v, 3) for v in h.bbox_view],
+        [round(v, 3) for v in (vx0, vy0, vx1, vy1)],
+    )
+
+# R10d — on an UNROTATED page rotation_matrix is the identity, so the two unions must
+# come out identical. This is what makes the fix above a no-op for ordinary documents.
+res = find(gap, "Hop dong")
+if res.hits:
+    check("R10d unrotated: the two boxes still agree", res.hits[0].bbox, res.hits[0].bbox_view)
+
 # The index builder must survive a page it can say nothing about.
 d = fitz.open(stream=blank_pdf(), filetype="pdf")
 pages_idx, total = _find_build_index(d)

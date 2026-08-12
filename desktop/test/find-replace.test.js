@@ -372,6 +372,44 @@ for (const label of ["Lỗi tìm: {msg}", "Quá nhiều kết quả", "không c�
   check(`"${label}" survives the busy flag being cleared`, paintedStickily(label), true);
 }
 
+// ---- "Thay tất cả" must not promise more than the scan covered ------------
+//
+// /text-find stops at max_hits (5000). Measured on a 600-page file, a common word
+// stops the walk on page 28 — 5% in. The confirm dialog is the ONLY place that tells
+// the user what the action covers, so "trong toàn bộ tài liệu" there is a promise the
+// app cannot keep: they replace 5000 of far more, are told it is done, and the rest
+// sit untouched. The truncation is reported by runFind's sticky line, but replaceAll
+// cannot read a sticky string — the flag has to live on `fr`.
+
+check("the scan records that it was truncated", /fr\.truncated = !!data\.truncated/.test(src), true);
+check("…and where it stopped", /fr\.truncatedPage = data\.truncated_page \|\| 0/.test(src), true);
+
+// Reset BEFORE the request, not on the success path: every early return below (empty
+// query, oversized file, transport error) would otherwise leave the previous scan's
+// flag standing behind the next "Thay tất cả".
+const resetAt = src.indexOf("fr.truncated = false");
+const fetchAt = src.indexOf('sidecarFetch("/text-find-bin"');
+check("the flag is cleared before the request goes out", resetAt > 0 && resetAt < fetchAt, true);
+
+// The wording has to branch on it, and the "toàn bộ tài liệu" claim has to sit on the
+// FALSE side of that branch rather than being emitted unconditionally.
+check(
+  "the confirm text branches on the truncation flag",
+  /const head = fr\.truncated[\s\S]{0,260}tr\("Thay \{n\} vị trí trong toàn bộ tài liệu\?"/.test(src),
+  true
+);
+check(
+  "…and says so when the scan stopped early",
+  /fr\.truncatedPage[\s\S]{0,200}Lượt quét dừng ở trang \{p\}/.test(src),
+  true
+);
+// Closing the panel abandons the answer, so it must abandon the claim with it.
+check(
+  "closePanel clears the truncation flag",
+  /function closePanel\(\)[\s\S]{0,600}fr\.truncated = false/.test(src),
+  true
+);
+
 // ---- the two ceilings (v0.2.56) -------------------------------------------
 //
 // Reading and writing travel differently, so they have DIFFERENT limits, and the

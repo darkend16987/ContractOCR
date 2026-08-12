@@ -292,6 +292,89 @@ def test_compress_bin_bad_preset_400():
 
 
 # --------------------------------------------------------------------------- #
+# The out-of-process compressor.
+#
+# A big compression runs in a CHILD PROCESS, because PyMuPDF's rewrite_images holds
+# the GIL for its whole duration (measured: 98.9% of the wall time, 0.1% left for
+# anything else) and the sidecar's single event loop is shared by every tab and
+# window. These tests drive _compress_via_worker_blocking directly, so they exercise
+# the real subprocess without needing a 25 MB document to cross the threshold.
+# --------------------------------------------------------------------------- #
+def test_compress_worker_produces_the_same_document():
+    """The worker is not a second implementation — it calls the same compressor. If
+    these two ever disagree, the process boundary is corrupting something."""
+    src = base64.b64decode(_npage_pdf(3))
+    via_worker = api._compress_via_worker_blocking(src, "ebook")
+    in_process = api._compress_pdf_bytes(src, "ebook")
+    a = fitz.open(stream=via_worker, filetype="pdf")
+    b = fitz.open(stream=in_process, filetype="pdf")
+    try:
+        assert a.page_count == b.page_count == 3
+        assert [p.get_text() for p in a] == [p.get_text() for p in b]
+    finally:
+        a.close()
+        b.close()
+
+
+def test_compress_worker_reports_caller_errors_as_400():
+    """Exit code 3 must come back as the SAME HTTPException the in-process path
+    raises, message included — the renderer shows `detail` to the user verbatim."""
+    src = base64.b64decode(_npage_pdf(1))
+    try:
+        api._compress_via_worker_blocking(src, "ultra")
+        assert False, "expected HTTPException"
+    except HTTPException as e:
+        assert e.status_code == 400
+        # The message crosses a process boundary as bytes. It is Vietnamese, and a
+        # plain sys.stderr.write in the child encodes it with the console codepage
+        # (cp1258/cp1252 on Windows) while the parent decodes UTF-8 — which turned it
+        # into mojibake. Both ends are pinned to UTF-8; this is what checks it.
+        assert "preset" in e.detail, e.detail
+        assert "�" not in e.detail, "message was mangled crossing the process boundary"
+        assert e.detail == "preset phải là screen|ebook|printer|lossless", repr(e.detail)
+
+
+def test_compress_worker_rejects_an_unopenable_file():
+    try:
+        api._compress_via_worker_blocking(b"definitely not a pdf", "ebook")
+        assert False, "expected HTTPException"
+    except HTTPException as e:
+        assert e.status_code == 400
+        assert e.detail.startswith("Không mở được PDF"), repr(e.detail)
+
+
+def test_compress_worker_command_shape():
+    """Frozen, sys.executable IS sidecar.exe so the flag goes straight to it; in dev
+    the script has to be named. Getting this backwards launches the wrong thing."""
+    import os
+    import sys
+
+    cmd = api._compress_worker_cmd("in.pdf", "out.pdf", "ebook")
+    assert cmd[0] == sys.executable
+    assert cmd[-3:] == ["in.pdf", "out.pdf", "ebook"]
+    assert api._COMPRESS_WORKER_FLAG in cmd
+    if getattr(sys, "frozen", False):
+        assert cmd[1] == api._COMPRESS_WORKER_FLAG
+    else:
+        assert os.path.basename(cmd[1]) == "sidecar.py"
+        assert os.path.exists(cmd[1]), cmd[1]
+        assert cmd[2] == api._COMPRESS_WORKER_FLAG
+
+
+def test_compress_worker_threshold_keeps_small_files_in_process():
+    """The worker costs a fresh `import api` (~2s). Below the threshold that would be
+    pure overhead on a job nobody notices, so small documents must NOT pay it."""
+    assert api._COMPRESS_WORKER_MIN_BYTES >= 1_000_000, "threshold too low to be worth a process"
+    assert api._COMPRESS_WORKER_MIN_BYTES < api._MAX_PDF_BIN
+    src = base64.b64decode(_npage_pdf(2))
+    assert len(src) < api._COMPRESS_WORKER_MIN_BYTES, "fixture grew past the threshold"
+    # …and the small-file route still returns a real PDF through the in-process path.
+    resp = _run(api.compress_bin(_bin_request(src), preset="lossless"))
+    assert resp.media_type == "application/pdf"
+    assert bytes(resp.body[:4]) == b"%PDF"
+
+
+# --------------------------------------------------------------------------- #
 # /text-find — the read half of Find & Replace.
 #
 # What matters here is not "does str.find work" but the two things the FEATURE can
@@ -484,6 +567,11 @@ if __name__ == "__main__":
         test_compress_bin_matches_json_route,
         test_compress_bin_empty_body_400,
         test_compress_bin_bad_preset_400,
+        test_compress_worker_produces_the_same_document,
+        test_compress_worker_reports_caller_errors_as_400,
+        test_compress_worker_rejects_an_unopenable_file,
+        test_compress_worker_command_shape,
+        test_compress_worker_threshold_keeps_small_files_in_process,
         test_compress_page_cap_is_generous,
         test_text_find_reports_every_occurrence,
         test_text_find_hits_are_in_reading_order,

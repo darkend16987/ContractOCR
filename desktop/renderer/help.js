@@ -590,6 +590,14 @@
           ul: [
             T("**Nén (giảm dung lượng)** — chỉ ảnh độ phân giải cao bị hạ xuống mức bạn chọn; **văn bản và vector giữ nguyên**.", "**Compress** — only high-resolution images are downsampled to the level you pick; **text and vectors are untouched**."),
             T(
+              "**Nén mất bao lâu?** Hộp thoại Nén hiện dung lượng tài liệu và **ước tính thời gian** ngay khi mở, và cập nhật lại mỗi lần bạn đổi mức nén — mức **Không giảm chất lượng** nhanh hơn các mức khác rất nhiều. Thời gian phụ thuộc **dung lượng file**, gần như không phụ thuộc số trang: một bộ 600 trang chữ nén nhanh hơn hẳn một bản scan 20 trang.",
+              "**How long does compressing take?** The Compress dialog shows the document size and a **time estimate** as soon as it opens, and updates it whenever you change the level — **No quality loss** is far quicker than the others. The time depends on **file size**, almost not at all on page count: a 600-page text document compresses much faster than a 20-page scan."
+            ),
+            T(
+              "**Tài liệu rất lớn.** App nhận file tới **~1GB**, nhưng đó là giới hạn của định dạng chứ không phải của máy: lúc nén, file được giữ đồng thời ở vài nơi nên cần khoảng **gấp 4 lần dung lượng file** bộ nhớ trống. Từ khoảng **300MB** trở lên app sẽ hỏi lại trước khi chạy. Máy 8GB RAM nên dừng ở khoảng 300–400MB; máy 16GB trở lên thì thoải mái hơn. Trong lúc nén **không dừng lại được**, nhưng các thẻ khác vẫn dùng bình thường.",
+              "**Very large documents.** The app accepts files up to **~1GB**, but that is the format's limit, not your machine's: while compressing, the file is held in several places at once, so you need roughly **4× the file size** in free memory. From about **300MB** up the app asks for confirmation first. On an 8GB machine, stop around 300–400MB; 16GB and above is more comfortable. Compressing **cannot be cancelled** once started, but your other tabs keep working normally."
+            ),
+            T(
               "**Copy ảnh trong trang** — bấm vào một ảnh để copy nó, hoặc kéo chọn một vùng bất kỳ. Rồi `Ctrl+V` dán sang app khác (Word, Excel, chat…).",
               "**Copy an image from the page** — click an image to copy it, or drag out any region. Then `Ctrl+V` into another app (Word, Excel, a chat window…)."
             ),

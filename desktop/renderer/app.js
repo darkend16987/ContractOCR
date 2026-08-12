@@ -3031,6 +3031,64 @@ function fmtBytes(n) {
   return (n / 1024 / 1024).toFixed(2) + " MB";
 }
 
+// ---- "how long will this take", and "is this document big enough to warn about" ----
+//
+// ESTIMATE ON BYTES, NOT PAGES — measured, and the two axes are not close. Across an
+// all-image scan, a 600-page text document and a CAD-like A0 vector set, seconds per
+// MB spanned 0.098–0.189 (a factor of 2) while seconds per PAGE spanned 0.001–0.439
+// (a factor of 439). A page-based estimate would be wrong by two orders of magnitude
+// on whichever document type it was not fitted to.
+//
+// Per preset, because they are not the same job: "lossless" skips rewrite_images
+// altogether, and rewrite_images is 98.9% of the work. Measured on one 57.8 MB scan:
+// screen 0.047 · ebook 0.155 · printer 0.179 · lossless 0.003 s/MB. The numbers below
+// are rounded UP from those — an estimate that finishes early is a good surprise.
+const COMPRESS_S_PER_MB = { screen: 0.06, ebook: 0.16, printer: 0.19, lossless: 0.01 };
+// At or above this the sidecar compresses in a child process (_COMPRESS_WORKER_MIN_BYTES
+// in api.py — the two are checked against each other by the test grid), which costs one
+// interpreter start. Measured at ~3.4 s.
+const COMPRESS_WORKER_MIN_BYTES = 25000000;
+const COMPRESS_WORKER_START_S = 3;
+// A heads-up threshold, NOT a refusal. Peak memory across the whole chain is roughly
+// 4× the file (renderer bytes + Blob copy + sidecar body + worker copy), so a 300 MB
+// document reaches ~1.2 GB spread over three processes — the point where an 8 GB
+// machine starts to swap. The sidecar's own ceiling stays at 1 GB as a backstop
+// against absurd input; this is where the USER gets told, because the machine, not
+// the format, is the real limit.
+const COMPRESS_WARN_BYTES = 300000000;
+
+// Seconds "Nén" will take for `bytes` at `preset`. Deliberately a rough number.
+function compressEta(bytes, preset) {
+  const n = Math.max(0, Number(bytes) || 0);
+  const perMb = COMPRESS_S_PER_MB[preset] || COMPRESS_S_PER_MB.ebook;
+  const worker = n >= COMPRESS_WORKER_MIN_BYTES ? COMPRESS_WORKER_START_S : 0;
+  return Math.max(1, Math.round((n / 1e6) * perMb + worker));
+}
+
+// Seconds → "45 giây" / "3 phút". Rounds to whole minutes above a minute: claiming
+// "2 phút 37 giây" from a ±2× estimate would be false precision.
+function fmtDuration(sec) {
+  const s = Math.max(1, Math.round(Number(sec) || 0));
+  if (s < 60) return t("{n} giây", { n: s });
+  return t("{n} phút", { n: Math.max(1, Math.round(s / 60)) });
+}
+
+// Repaint the size/time line in the Nén dialog. Called when it opens and whenever the
+// preset changes, because the preset moves the estimate by up to 20×.
+function updateCompressEta() {
+  const el = $("cmp-eta");
+  if (!el) return;
+  const n = (state.bytes && state.bytes.length) || 0;
+  const preset = ($("cmp-preset") && $("cmp-preset").value) || "ebook";
+  const big = n >= COMPRESS_WARN_BYTES;
+  el.textContent =
+    t("Tài liệu {size} · ước tính khoảng {time}", {
+      size: fmtBytes(n),
+      time: fmtDuration(compressEta(n, preset)),
+    }) + (big ? " · " + t("tài liệu rất lớn, máy sẽ cần nhiều RAM") : "");
+  el.className = "cmp-eta" + (big ? " warn" : "");
+}
+
 function openCompress() {
   if (gateProFeature()) return;
   if (sidecar.state !== "ready" || !sidecar.base) {
@@ -3041,14 +3099,37 @@ function openCompress() {
     toast("Mở PDF trước.", "bad");
     return;
   }
+  updateCompressEta();
   $("cmp-modal").hidden = false;
 }
 
 async function runCompress() {
   $("cmp-modal").hidden = true;
-  if (window.Editor) await window.Editor.bakePending();
   const preset = $("cmp-preset").value || "ebook";
-  showOverlay("Đang nén PDF…");
+  // One last confirmation for the documents that will actually hurt. The sidecar no
+  // longer freezes on these (compression runs in a child process), but the job still
+  // takes minutes and still costs roughly 4× the file in RAM across three processes,
+  // and there is no way to cancel it once started. Better asked than discovered.
+  //
+  // Asked BEFORE bakePending(), deliberately: baking writes pending annotations into
+  // the document, so doing it first would leave the user with a modified, dirtied file
+  // after they pressed Hủy.
+  const before = (state.bytes && state.bytes.length) || 0;
+  if (before >= COMPRESS_WARN_BYTES) {
+    const ok = await uiConfirm(
+      t("Tài liệu {size} — nén có thể mất khoảng {time} và dùng nhiều bộ nhớ. Trong lúc chạy không dừng lại được. Tiếp tục?", {
+        size: fmtBytes(before),
+        time: fmtDuration(compressEta(before, preset)),
+      }),
+      { title: t("Nén PDF"), okText: t("Nén"), cancelText: t("Hủy") }
+    );
+    if (!ok) return;
+  }
+  if (window.Editor) await window.Editor.bakePending();
+  // Re-read the size: baking annotations rewrites state.bytes, so the number taken
+  // before it is not the one being sent.
+  const size = (state.bytes && state.bytes.length) || 0;
+  showOverlay(t("Đang nén PDF… (khoảng {time})", { time: fmtDuration(compressEta(size, preset)) }));
   try {
     // /compress-bin, NOT /compress: the JSON route carries the document as base64
     // both ways, which is what capped "nén" at ~200 MB — the exact size range users
@@ -4208,6 +4289,9 @@ $("find-next").onclick = () => gotoMatch(search.current + 1);
 $("find-prev").onclick = () => gotoMatch(search.current - 1);
 $("cmp-cancel").onclick = () => ($("cmp-modal").hidden = true);
 $("cmp-ok").onclick = runCompress;
+// The preset moves the estimate by up to 20× (lossless skips rewrite_images, which is
+// 98.9% of the work), so the readout has to follow it, not just the file size.
+$("cmp-preset").onchange = updateCompressEta;
 $("tr-cancel").onclick = () => ($("tr-modal").hidden = true);
 $("tr-ok").onclick = runTranslate;
 $("btn-to-office").onclick = openOffice;

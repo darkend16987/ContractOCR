@@ -684,6 +684,10 @@
           </select>
         </label>
         <p class="cmp-note">Chỉ ảnh độ phân giải cao bị hạ xuống mức đã chọn; văn bản và vector giữ nguyên.</p>
+        <!-- Filled by updateCompressEta() on open and on every preset change. In
+             SKIP_IDS, like every other live readout, so a language switch cannot
+             overwrite it with stale static text (BI-10). -->
+        <p class="cmp-eta" id="cmp-eta"></p>
         <div class="modal-actions">
           <button id="cmp-cancel" data-modal-close>Hủy</button>
           <button id="cmp-ok" class="primary">Nén &amp; lưu</button>

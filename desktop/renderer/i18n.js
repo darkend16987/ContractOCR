@@ -97,6 +97,15 @@
     "Quá nhiều kết quả — chỉ hiện {n} vị trí đầu tiên.":
       "Too many matches — showing only the first {n}.",
     "Thay {n} vị trí trong toàn bộ tài liệu?": "Replace {n} matches throughout the document?",
+    // The truncated variant of the same question. "throughout the document" is a
+    // promise the app cannot keep once the scan stopped at max_hits, so it says what
+    // it actually covered instead.
+    "Thay {n} vị trí trong phần tài liệu đã quét?":
+      "Replace {n} matches in the part of the document that was scanned?",
+    "Lượt quét dừng ở trang {p} vì chạm trần {m} kết quả — phần sau CHƯA được quét. Thay xong hãy bấm Tìm lại để xử lý nốt.":
+      "The scan stopped on page {p} after hitting the {m}-match ceiling — everything past it was NOT scanned. Replace, then press Tìm again to handle the rest.",
+    "Lượt quét dừng sớm vì chạm trần {m} kết quả — phần sau CHƯA được quét. Thay xong hãy bấm Tìm lại để xử lý nốt.":
+      "The scan stopped early after hitting the {m}-match ceiling — everything past it was NOT scanned. Replace, then press Tìm again to handle the rest.",
     "{k} vị trí bị chia làm nhiều đoạn định dạng sẽ được GIỮ NGUYÊN.":
       "{k} matches are split across formatting runs and will be LEFT UNCHANGED.",
     "Đã thay 1 vị trí.": "Replaced 1 match.",
@@ -332,6 +341,15 @@
     "Chỉ ảnh độ phân giải cao bị hạ xuống mức đã chọn; văn bản và vector giữ nguyên.":
       "Only high-resolution images are downscaled; text and vectors are untouched.",
     "Nén & lưu": "Compress & save",
+    // Live readout + the heads-up for documents big enough to hurt (see
+    // updateCompressEta / runCompress in app.js).
+    "{n} giây": "{n} sec",
+    "{n} phút": "{n} min",
+    "Tài liệu {size} · ước tính khoảng {time}": "Document {size} · roughly {time}",
+    "tài liệu rất lớn, máy sẽ cần nhiều RAM": "very large document, this needs a lot of RAM",
+    "Đang nén PDF… (khoảng {time})": "Compressing PDF… (about {time})",
+    "Tài liệu {size} — nén có thể mất khoảng {time} và dùng nhiều bộ nhớ. Trong lúc chạy không dừng lại được. Tiếp tục?":
+      "This document is {size} — compressing may take about {time} and use a lot of memory, and it cannot be stopped once started. Continue?",
 
     // --- translate dialog ---
     "Dịch PDF (AI)": "Translate PDF (AI)",
@@ -620,6 +638,9 @@
     "page-count", "sidecar-badge", "api-badge", "update-badge", "find-count",
     "pos-title", "pos-hint", "i2p-count", "combine-summary",
     "cmp2-a-name", "cmp2-b-name",
+    // Live "Tài liệu 82 MB · ước tính khoảng 16 giây" line in the Nén dialog: rewritten
+    // by updateCompressEta() on open and on every preset change (BI-10).
+    "cmp-eta",
     "set-version", "set-status", "set-update-status",
     "lic-status", "lic-badge", "lic-hwid",
     "compare-summary", "compare-pagenum", "compare-zoom",

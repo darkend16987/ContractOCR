@@ -283,6 +283,8 @@ Nhập key **ngay trong app**, không cần đụng tới file hay biến môi t
 | Bóc tách báo thiếu key | Bấm ⚙ → dán API key → Lưu (mục 6). |
 | App mở chậm lần đầu | Bình thường — engine OCR tải ngầm ở lần dùng đầu. Lần sau nhanh hơn. |
 | Máy yếu, OCR chậm | Engine chạy trên CPU; PDF nhiều trang sẽ lâu. Các thao tác PDF thường (xem/ghép/sửa chữ) vẫn nhanh. |
+| Nén file lớn chạy lâu | Bình thường. Hộp thoại **Nén** hiện **ước tính thời gian** ngay khi mở — thời gian phụ thuộc **dung lượng file**, gần như không phụ thuộc số trang. Trong lúc nén **không dừng lại được**, nhưng **các thẻ khác vẫn dùng được bình thường**. |
+| Nén file rất lớn thì máy ì | Lúc nén, file được giữ đồng thời ở vài nơi nên cần khoảng **gấp 4 lần dung lượng file** bộ nhớ trống. Từ ~**300MB** app sẽ hỏi lại trước khi chạy. Nếu máy 8GB RAM: nên dừng ở khoảng 300–400MB. |
 
 ---
 
@@ -291,8 +293,12 @@ Nhập key **ngay trong app**, không cần đụng tới file hay biến môi t
 - Windows 10/11 **64-bit**.
 - ~2 GB trống cho app + ~1 GB cho cache model (lần đầu OCR).
 - Khuyến nghị ≥ 8 GB RAM để OCR mượt.
+- **Tài liệu lớn:** app nhận file tới ~1GB, nhưng đó là giới hạn của định dạng chứ không
+  phải của máy. Cần khoảng **gấp 4 lần dung lượng file** RAM trống khi **Nén**. Thực tế:
+  máy **8 GB** thoải mái tới ~300–400MB; máy **16 GB trở lên** xử lý được file lớn hơn
+  nhiều. Việc **tìm** chữ nhẹ hơn nhiều so với **nén** hay **thay** chữ.
 - Internet cho **lần đầu** dùng OCR (và mỗi lần dùng "Bóc tách").
 
 ---
 
-*Phiên bản: 0.2.51 · Installer (NSIS, tự cập nhật) cho Windows x64.*
+*Phiên bản: 0.2.57 · Installer (NSIS, tự cập nhật) cho Windows x64.*

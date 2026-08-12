@@ -11,6 +11,9 @@ import hashlib
 import io
 import logging
 import os
+import shutil
+import subprocess
+import sys
 import tempfile
 import zipfile
 from contextlib import asynccontextmanager
@@ -20,6 +23,7 @@ import re as _re
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel
@@ -821,6 +825,109 @@ def _compress_pdf_bytes(pdf_bytes: bytes, preset: str) -> bytes:
     return pdf_bytes if len(out_bytes) >= len(pdf_bytes) else out_bytes
 
 
+# ---------------------------------------------------------------------------
+# Running the compressor OUT OF PROCESS
+# ---------------------------------------------------------------------------
+#
+# WHY A WHOLE PROCESS, AND WHY NOTHING SMALLER WORKS. Every route here is `async
+# def`, so a synchronous PyMuPDF call occupies the one event loop, and the app has one
+# sidecar shared by every tab and window. Measured on this code: a 30-page compress
+# left /health unanswered for 13.1 s, and at the current ceiling (3000 pages, ~0.377
+# s/page) that becomes roughly 19 minutes with every other tab's engine call hanging
+# behind it.
+#
+# The obvious fix — hand the work to a worker thread — DOES NOT WORK, and the reason
+# is worth writing down so nobody spends the afternoon rediscovering it:
+#
+#   * `doc.rewrite_images()` is 98.9% of the wall time (measured; subset_fonts and
+#     tobytes are ~1% together) and it holds the GIL for its entire duration. With the
+#     work on a second thread, an observer thread got 0.1% of the wall time and did not
+#     execute a single iteration until the compression had finished. A thread frees
+#     nothing.
+#   * It is one document-level call with no page-range parameter, so it cannot be
+#     sliced into chunks with an `await` between them either.
+#   * And PyMuPDF calls `mupdf.reinit_singlethreaded()` at import, which drops MuPDF's
+#     internal locking — so running it from two threads at once is not merely
+#     unhelpful, it is unsafe.
+#
+# A child process has its own GIL and its own MuPDF context, and the parent waits on
+# it with a plain OS wait (which releases the GIL). That is the only arrangement that
+# actually keeps the sidecar answering while a big document is being compressed.
+#
+# The worker is THIS PROGRAM re-launched with --compress-worker (see sidecar.py), so
+# there is no second executable to build, sign or ship, and the frozen binary already
+# contains everything the work needs.
+
+_COMPRESS_WORKER_FLAG = "--compress-worker"
+
+# Below this, compress in-process. Starting the worker costs a fresh `import api`
+# (measured 2.1 s in dev, more for the frozen exe), while compression itself runs at
+# ~0.138 s/MB — so under ~25 MB the worker would be pure overhead on a job the user
+# never notices, and over it the startup is amortised many times over.
+_COMPRESS_WORKER_MIN_BYTES = 25_000_000
+
+# Exit codes the worker speaks. Kept narrow on purpose: the parent has to tell "your
+# request was wrong" (400, message shown to the user) from "we broke" (reported as a
+# failure) from "the worker never ran" (fall back and compress in-process).
+_WORKER_OK = 0
+_WORKER_INTERNAL = 1
+_WORKER_BAD_REQUEST = 3
+
+
+def _compress_worker_cmd(src: str, dst: str, preset: str) -> list[str]:
+    """Argv that re-launches this program as a one-shot compressor.
+
+    Frozen: `sys.executable` IS sidecar.exe, so the flag goes straight to it. Dev:
+    `sys.executable` is the venv python and the script has to be named explicitly.
+    """
+    if getattr(sys, "frozen", False):
+        return [sys.executable, _COMPRESS_WORKER_FLAG, src, dst, preset]
+    here = os.path.dirname(os.path.abspath(__file__))
+    return [sys.executable, os.path.join(here, "sidecar.py"), _COMPRESS_WORKER_FLAG, src, dst, preset]
+
+
+def _compress_via_worker_blocking(pdf_bytes: bytes, preset: str) -> bytes:
+    """Compress in a child process. Runs on a worker THREAD (see the route).
+
+    The thread is safe here precisely because it does no PyMuPDF work — it writes a
+    file, waits on a process, and reads a file. All three release the GIL, so the
+    event loop keeps running, and MuPDF stays confined to one process at a time.
+
+    Raises HTTPException for caller errors, RuntimeError for a worker failure, and
+    OSError when the worker could not be launched at all (the caller falls back).
+    """
+    tmp = tempfile.mkdtemp(prefix="nabu-compress-")
+    src = os.path.join(tmp, "in.pdf")
+    dst = os.path.join(tmp, "out.pdf")
+    try:
+        with open(src, "wb") as f:
+            f.write(pdf_bytes)
+
+        kwargs = {}
+        if os.name == "nt":
+            # Without this the frozen exe flashes a console window on every compress.
+            kwargs["creationflags"] = 0x08000000  # CREATE_NO_WINDOW
+
+        proc = subprocess.run(  # noqa: S603 (argv is built here, never from the request)
+            _compress_worker_cmd(src, dst, preset),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            **kwargs,
+        )
+        err = (proc.stderr or b"").decode("utf-8", "replace").strip()
+
+        if proc.returncode == _WORKER_BAD_REQUEST:
+            raise HTTPException(status_code=400, detail=err or "Không nén được PDF.")
+        if proc.returncode != _WORKER_OK:
+            raise RuntimeError(err or f"Tiến trình nén thoát với mã {proc.returncode}.")
+        if not os.path.exists(dst):
+            raise RuntimeError("Tiến trình nén không tạo ra file kết quả.")
+        with open(dst, "rb") as f:
+            return f.read()
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 @app.post("/compress", response_model=CompressResponse)
 async def compress(req: CompressRequest):
     """Shrink a PDF: downsample/recompress high-DPI images + strip redundant objects.
@@ -893,7 +1000,22 @@ async def compress_bin(request: Request, preset: str = "ebook"):
 
     original_size = len(pdf_bytes)
     try:
-        out_bytes = _compress_pdf_bytes(pdf_bytes, preset)
+        if len(pdf_bytes) >= _COMPRESS_WORKER_MIN_BYTES:
+            # Big enough that blocking the loop would be felt in every other tab —
+            # see the note above _COMPRESS_WORKER_FLAG for why this must be a process
+            # and not a thread doing the PyMuPDF work.
+            try:
+                out_bytes = await run_in_threadpool(_compress_via_worker_blocking, pdf_bytes, preset)
+            except OSError as e:
+                # The worker could not be launched (missing script, no temp space, a
+                # locked-down machine). Never lose the FEATURE over that: fall back to
+                # compressing here, which is exactly the pre-worker behaviour.
+                logger.warning("compress worker unavailable (%s) — compressing in-process", e)
+                out_bytes = _compress_pdf_bytes(pdf_bytes, preset)
+        else:
+            # Small document: in-process is sub-second, and starting a worker would
+            # cost more than the compression itself.
+            out_bytes = _compress_pdf_bytes(pdf_bytes, preset)
     except HTTPException:
         raise
     except Exception as e:
@@ -1719,10 +1841,17 @@ def _find_occurrences(
 _FIND_CACHE: dict = {"entry": None}  # (key, pages), swapped as ONE tuple so a
 # concurrent reader can never pair a new key with an old index.
 
-# Ceiling on what may be cached, so a pathological file cannot pin hundreds of MB in
-# the sidecar for the rest of the session. Above it searches still work — they just
+# Ceiling on what may be cached, so a big file cannot pin hundreds of MB in the
+# sidecar for the rest of the session. Above it searches still work — they just
 # re-parse every time.
-_FIND_CACHE_MAX_PARTS = 300_000
+#
+# THE NUMBER IS MEASURED, NOT GUESSED. A flattened span costs ~1.5 KB once the two
+# box tuples, the origin, the text and the font name are counted: a real 600-page
+# text PDF indexed to 27,000 spans for +41 MB of RSS. The first value here was
+# 300,000, which permits ~450 MB — i.e. exactly the "hundreds of MB" the ceiling is
+# meant to prevent. 80,000 keeps it near 100 MB, and nothing is refused: a document
+# past the line simply pays the parse again on its next search.
+_FIND_CACHE_MAX_PARTS = 80_000
 
 
 def _find_build_index(doc) -> tuple[list, int]:
@@ -1873,10 +2002,20 @@ def _find_scan_index(
                 # Straddles a formatting boundary (or a synthesised gap): counted and
                 # highlighted across the union of everything it touches, never
                 # rewritten — half a replacement would wreck the run's formatting.
-                union = None
+                #
+                # TWO unions, not one. `bbox` is contractually the UNROTATED box — it is
+                # the rectangle /edit-text would redact — while `bbox_view` is the
+                # displayed one, and on a /Rotate page those are different rectangles.
+                # Building both from the rotated parts made `bbox` a lie: harmless only
+                # for as long as these hits stay replaceable=False, and a silent
+                # wrong-rectangle redaction the day anyone lifts that restriction.
+                union = None  # unrotated: parts[i][2]
+                union_v = None  # displayed: parts[i][3]
                 for i in touched:
-                    r = fitz.Rect(*parts[i][3])
+                    r = fitz.Rect(*parts[i][2])
                     union = r if union is None else (union | r)
+                    rv = fitz.Rect(*parts[i][3])
+                    union_v = rv if union_v is None else (union_v | rv)
                 crossing += 1
                 first = parts[touched[0]]
                 hits.append(
@@ -1888,7 +2027,7 @@ def _find_scan_index(
                         end=len(joined),
                         span_text=joined,
                         bbox=[union.x0, union.y0, union.x1, union.y1],
-                        bbox_view=[union.x0, union.y0, union.x1, union.y1],
+                        bbox_view=[union_v.x0, union_v.y0, union_v.x1, union_v.y1],
                         origin=[union.x0, union.y1],
                         size=first[5],
                         font=first[6],

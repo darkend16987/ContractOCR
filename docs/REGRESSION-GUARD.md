@@ -941,6 +941,70 @@ chỉ tên hàm.
   làm gì"; `test_compress_bin_matches_json_route` là lưới canh đúng chỗ đó.
 - **Vỡ khi:** nén file 300MB báo "PDF quá lớn" · hoặc nén xong hiện "Đã nén: 0 B → 0 B".
 
+### BI-54 · Nén file lớn phải chạy ở TIẾN TRÌNH RIÊNG — thread không cứu được
+_Ghi 2026-08-12, từ `docs/REVIEW-caps-2026-08-12.md`. Sửa ở `api.py`
+(`_compress_worker_cmd`, `_compress_via_worker_blocking`, `_COMPRESS_WORKER_MIN_BYTES`)
++ `sidecar.py` (`--compress-worker`, `_err`)._
+
+- **Vấn đề, đo được:** mọi route trong `api.py` là `async def`, nên một lệnh PyMuPDF đồng
+  bộ chiếm trọn **một** event loop — mà app dùng **một** sidecar cho **mọi tab và cửa sổ**.
+  Nén 30 trang làm `/health` **không trả lời 13.088 ms**; ở trần 3000 trang (0,377 s/trang)
+  là **~19 phút** mọi tab khác treo theo.
+- **Ba lý do khiến thread KHÔNG phải lời giải** — ghi lại để không ai mất buổi chiều tìm
+  lại: (1) `doc.rewrite_images()` chiếm **98,9%** thời gian và **giữ GIL suốt** — thread
+  quan sát chạy được **0,1%** thời gian và không xong nổi một vòng lặp cho tới khi nén
+  xong; (2) nó là **một** lệnh mức document, **không có tham số khoảng trang**, nên không
+  cắt nhỏ để chèn `await` được; (3) PyMuPDF gọi `mupdf.reinit_singlethreaded()` **lúc
+  import**, bỏ khoá nội bộ của MuPDF — chạy hai thread cùng lúc không chỉ vô ích mà **không
+  an toàn**. Tiến trình con có GIL riêng và context MuPDF riêng; cha chờ bằng `subprocess`
+  trong thread, mà **chờ tiến trình thì nhả GIL**. Kết quả đo lại: **32 ms**, bằng lúc rảnh.
+- **Worker là CHÍNH chương trình này chạy lại** với `--compress-worker` (`sidecar.py`), nên
+  không có nhị phân thứ hai phải build/ký/ship. `sys.executable` là `sidecar.exe` khi
+  frozen, là python của venv khi dev ⇒ **hai dạng argv khác nhau**, có lưới canh
+  (`test_compress_worker_command_shape`).
+- **Hợp đồng mã thoát: 0 = xong · 3 = lỗi của người gọi (stderr là câu tiếng Việt cho người
+  dùng, map thành HTTP 400) · 1 = hỏng bên trong.** Đổi một đầu phải đổi đầu kia.
+- **stderr của worker phải ghi UTF-8 tường minh** (`_err`). Đây là **lỗi thật đã bắt được
+  lúc làm**: `sys.stderr.write` trong tiến trình con mã hoá theo **codepage console**
+  (cp1258/cp1252 trên Windows) còn cha giải mã UTF-8 ⇒ "preset phải là…" đến tay người dùng
+  thành rác. `test_compress_worker_reports_caller_errors_as_400` so **đúng từng ký tự**.
+- **Có ngưỡng, và ngưỡng là cố ý.** Khởi động worker tốn một lần `import api` (đo 2,1 s ở
+  dev, hơn nữa khi frozen). Dưới `_COMPRESS_WORKER_MIN_BYTES` (25 MB) thì nén tại chỗ —
+  đo được **0,00 s** cho file nhỏ; bật worker ở đó chỉ là phí thuần.
+- **Không được để mất TÍNH NĂNG vì worker.** Nếu không khởi chạy được (thiếu script, hết
+  chỗ temp, máy bị khoá), route bắt `OSError` và **quay về nén tại chỗ** — tức đúng hành vi
+  trước khi có worker, chậm nhưng không hỏng.
+- **Đường JSON `/compress` KHÔNG đổi** — nó chỉ phục vụ lưới test; hai đường vẫn dùng chung
+  `_compress_pdf_bytes` (BI-49).
+- **Chỉ Nén được chuyển ra ngoài, không phải mọi thứ.** Dựng index của Tìm nhả GIL ~45% và
+  chỉ mất ~1,8 s cho 600 trang, không đáng đổi rủi ro. Và vì `reinit_singlethreaded`, đưa
+  **bất kỳ** việc PyMuPDF nào sang thread sẽ khiến nó chạy song song với việc PyMuPDF đang
+  chạy trên event loop ⇒ **không được làm** nếu chưa đặt toàn bộ sau cùng một khoá.
+- **Ước tính thời gian tính theo BYTE, không theo TRANG** (`compressEta`, `app.js`). Đo
+  trên ba loại tài liệu — scan toàn ảnh, 600 trang chữ, bản vẽ vector kiểu CAD khổ A0 —
+  **giây/MB** trải 0,098–0,189 (**2 lần**) còn **giây/trang** trải 0,001–0,439 (**439
+  lần**). Ước tính theo trang sẽ sai **hai bậc độ lớn** với loại tài liệu nó không được
+  hiệu chuẩn. Và phải **theo preset**: `lossless` bỏ hẳn `rewrite_images` (98,9% công
+  việc) nên nhanh hơn ~50 lần — đo trên một file 57,8 MB: screen 0,047 · ebook 0,155 ·
+  printer 0,179 · lossless 0,003 s/MB. Ngưỡng worker là một **bậc thang** cộng thêm
+  (~3 s), không phải độ dốc. Lưới `npm run test:geom` so lại với chính các số đo này, và
+  so **xuyên ngôn ngữ** `COMPRESS_WORKER_MIN_BYTES` (JS) với `_COMPRESS_WORKER_MIN_BYTES`
+  (api.py) — lệch nhau thì ước tính sai âm thầm.
+- **Hỏi lại trước khi nén tài liệu rất lớn, và hỏi TRƯỚC `bakePending()`.** Đỉnh bộ nhớ cả
+  chuỗi ≈ **4 lần cỡ file** (bytes ở renderer + bản sao Blob + body ở sidecar + bản của
+  worker), nên 300 MB là ~1,2 GB rải trên ba tiến trình — chỗ máy 8 GB bắt đầu đuối. Đây là
+  **cảnh báo, không phải từ chối**: trần cứng `_MAX_PDF_BIN` = 1 GB vẫn giữ làm chốt chặn
+  đầu vào vô lý, còn giới hạn thật là **máy**, không phải định dạng. Thứ tự bắt buộc: hỏi
+  **trước** `Editor.bakePending()`, vì bake ghi chú thích vào tài liệu — bake trước rồi
+  người dùng bấm Hủy là để lại một file đã bị sửa và bẩn.
+- **`#cmp-eta` phải nằm trong `SKIP_IDS`** — nó là số liệu sống, đổi ngôn ngữ mà quét trúng
+  thì đè mất (BI-10). Sáu chuỗi `t()` của khối này **không** nằm trong markup tĩnh nên
+  không được i18n quét tự động; lưới `test:geom` liệt kê đích danh cả sáu.
+- **Vỡ khi:** nén file lớn mà tab khác vẫn treo · hoặc preset sai báo lỗi bằng ký tự rác ·
+  hoặc nén file nhỏ bỗng mất 3 giây · hoặc bản **đóng gói** nén xong không ra file (argv
+  frozen sai) · hoặc nháy cửa sổ console đen mỗi lần nén (thiếu `CREATE_NO_WINDOW`) · hoặc
+  đổi mức nén mà dòng ước tính đứng im · hoặc bấm Hủy ở hộp cảnh báo mà tài liệu đã bị bẩn.
+
 ### BI-50 · Tìm & Thay thế: mọi hit là offset của MỘT phiên bản bytes — bytes đổi thì list là hư cấu
 - `renderer/find-replace.js` (`invalidate`, `applyEdits`, `indexAtOrAfter`, `groupEdits`);
   hai chỗ móc trong `app.js`: cuối `renderAll()` và cuối `rerenderChanged()`.
@@ -1035,9 +1099,55 @@ chỉ tên hàm.
   hàng trăm MB trong sidecar.
 - **Bộ cứu font legacy phải giống hệt `/text-spans`.** Thiếu nó thì "Sửa nội dung" hiện
   đúng chữ TCVN3 còn Tìm bảo không có — hai tính năng bất đồng về việc trang giấy ghi gì.
+- **Trần cache là con số ĐO ĐƯỢC, không phải số cho đẹp** (sửa 2026-08-12). Một span
+  phẳng tốn **~1.5 KB** khi tính đủ hai tuple hộp, origin, text và tên font — đo trên PDF
+  600 trang chữ thật: **27.000 span → +41 MB RSS**. Giá trị đầu tiên là `300_000`, tức
+  cho phép **~450 MB** — đúng cái "hàng trăm MB" mà trần này sinh ra để ngăn. Nay
+  `_FIND_CACHE_MAX_PARTS = 80_000` (≈100 MB). Không tài liệu nào bị **từ chối**: vượt trần
+  thì chỉ là lần tìm sau parse lại. Cache **không** được thả khi đóng panel/tài liệu/tab —
+  nó chỉ bị thay khi index một tài liệu khác, nên trần là thứ duy nhất chặn nó.
+- **Hit cắt-qua-span phải mang HAI hộp khác nhau** (sửa 2026-08-12). `bbox` theo hợp đồng
+  là hộp **chưa xoay** (chính là hình chữ nhật `/edit-text` sẽ redact), `bbox_view` là hộp
+  **hiển thị**. Bản đầu dựng **một** union từ `parts[i][3]` (đã xoay) rồi chép vào cả hai
+  ⇒ `bbox` nói dối trên trang có `/Rotate`. Vô hại **chỉ chừng nào** loại hit này còn
+  `replaceable=False`; ngày ai đó gỡ hạn chế đó thì `/edit-text` redact **sai hình chữ
+  nhật**, im lặng, và chỉ trên trang xoay. Nay hai union riêng (`parts[i][2]` và
+  `parts[i][3]`); trên trang **không** xoay `rotation_matrix` là đơn vị nên hai hộp trùng
+  nhau — đó là lý do phép sửa này không đổi gì với tài liệu thường. Lưới: `R10c`/`R10d`.
 - **Vỡ khi:** tìm "Hợp đồng" trong văn bản canh đều ra 0 kết quả · hoặc tick "Đúng nguyên
   từ" rồi Thay làm hỏng chữ dính liền · hoặc sửa tài liệu xong tìm lại vẫn ra kết quả cũ
   (cache ôi thiu) · hoặc file 300MB tìm được nhưng bấm Thay ra lỗi khó hiểu.
+
+### BI-53 · Câu xác nhận không được HỨA nhiều hơn thứ đã quét; sidecar chết phải nói ra
+_Ghi 2026-08-12, từ đợt rà soát hệ quả của việc nâng trần (`docs/REVIEW-caps-2026-08-12.md`)._
+
+- **"Thay tất cả" chỉ được nói "toàn bộ tài liệu" khi lượt quét đã đi hết.**
+  `renderer/find-replace.js` (`fr.truncated`, `fr.truncatedPage`, `replaceAll`).
+  `/text-find` dừng ở `max_hits` = 5000 — **đo được**: một từ khoá phổ biến trên file 600
+  trang dừng ở **trang 28**, tức 5% tài liệu. Hộp xác nhận là **chỗ duy nhất** nói cho
+  người dùng biết thao tác này bao trùm cái gì, nên câu "trong toàn bộ tài liệu" ở đó biến
+  đúng hộp thoại sinh ra để chặn bất ngờ thành thứ **gây** bất ngờ: thay 5000 trong số
+  nhiều hơn thế, được báo "đã xong", phần còn lại nằm im. Cờ **phải nằm trên `fr`** —
+  `replaceAll` không đọc được chuỗi trong `fr.sticky`. Đặt lại **ở đầu** `runFind`, trước
+  request: mọi nhánh return sớm (rỗng, quá lớn, lỗi mạng) nếu không sẽ để cờ của lượt
+  trước đứng lại sau lưng lần "Thay tất cả" kế tiếp.
+- **Sidecar chết đột ngột phải đẩy `state: "error"` ra renderer.**
+  `desktop/src/sidecar.js` (`startSidecar(token, onExit)`, cờ `handle.stopping`) +
+  `main.js` (`bootSidecar`). Trước đây `child.on("exit")` chỉ `console.log`, còn
+  `sidecarState` chỉ được ghi **một lần** từ promise lúc khởi động ⇒ sau khi sidecar chết,
+  badge vẫn "OCR: sẵn sàng", mọi nút engine vẫn sáng, mỗi lần bấm là một lỗi `fetch` trần,
+  và cách chữa duy nhất là khởi động lại app — **không có gì trên màn hình gợi ý điều đó**.
+  Renderer **đã** xử lý sẵn `state:"error"` (badge đỏ + `updateToolbar` làm mờ); nó chỉ
+  chưa bao giờ được báo. Trần mới (1 GB, 3000 trang, index cả tài liệu) làm ca OOM-kill
+  thành chuyện có thật chứ không còn lý thuyết.
+- **Nửa khó là nửa thứ hai: tắt CÓ CHỦ Ý phải im lặng.** `stopSidecar` chạy lúc thoát app
+  và lúc "khởi động lại engine", mà sự kiện `exit` của đứa cũ đến **không đồng bộ** — có
+  thể sau khi đứa thay thế đã chạy. Bắn callback ở đó là vẽ "Engine đã dừng đột ngột" đè
+  lên một sidecar hoàn toàn khoẻ mạnh. Vì thế có cờ `handle.stopping` (đặt **trước** khi
+  kill), **và** thêm một lớp chốt ở `main.js`: `if (sidecar !== handle) return`.
+- **Vỡ khi:** bấm "Thay tất cả" trên tài liệu lớn, được báo "đã thay xong" mà mở ra vẫn còn
+  hàng nghìn chỗ chưa đổi · hoặc kill `sidecar.exe` mà badge vẫn xanh và nút vẫn bấm được ·
+  hoặc "khởi động lại engine" xong badge lại đỏ dù engine mới đang chạy.
 
 ---
 
@@ -1110,9 +1220,10 @@ chỉ tên hàm.
 | Bề rộng sidebar (`--sidebar-w`, `applySidebarWidth`, `#sidebar-resizer`) | Kéo rộng/hẹp → dừng đúng ở 130/300 · **kéo–thả 1 PDF từ ngoài vào giữa dải thumbnail → chèn đúng vị trí** (BI-33) · bấm đúp tay nắm → về 180 · đóng mở app → nhớ bề rộng · thu sidebar (F4) → tay nắm biến mất · F11 → lớp phủ đúng bề rộng đã kéo (BI-34) |
 | Tuỳ chọn hiện đường dẫn (`set-breadcrumb`, `breadcrumbEnabled`) | Tắt → dải đường dẫn biến mất **ngay**, mở lại app vẫn tắt · bật lại → hiện · mặc định máy mới = **bật** · đổi VI↔EN → dòng cài đặt đổi theo |
 | Đóng hộp thoại (`dismissModal`, `topOpenModal`, `[data-modal-close]`, `.modal-x`, `data-modal-manual`) | BI-48 · probe boot phải báo `dialogs_without_close` **và** `dialogs_without_x` rỗng · thử **cả ba** đường (Esc / bấm nền / ✕) trên: **Cài đặt** (hộp cuộn được — ✕ phải **dính** ở đầu khi cuộn xuống), **Nén**, **Gộp file** · bấm **bên trong** thẻ rồi thả chuột ra nền → hộp thoại **không** đóng · mở PDF có mật khẩu rồi `Esc` → app không treo, mở lại file được · `Esc` khi đang **F11** với 1 hộp thoại mở → chỉ đóng hộp thoại, **vẫn** ở toàn màn hình · `Esc` trong trang **Hướng dẫn** khi ô tìm còn chữ → xoá chữ trước, lần hai mới đóng (BI-47) |
-| `/compress` · `/compress-bin` · `_compress_pdf_bytes` · `runCompress` | BI-49 · `.venv\Scripts\python run_tests.py` · nén một PDF **>200MB thật** → ra file, **không** báo "PDF quá lớn" · nén PDF **>500 trang** → chạy, không báo "quá nhiều trang" · nén file hỏng/preset sai → hiện **đúng câu lỗi** chứ không lưu ra PDF rác · dòng toast ghi đúng cỡ trước → sau · **rebuild sidecar** trước khi đóng gói (đụng `api.py`) |
+| `/compress` · `/compress-bin` · `_compress_pdf_bytes` · `runCompress` · **worker `--compress-worker`** · `compressEta`/`updateCompressEta` | BI-49 + **BI-54** · `.venv\Scripts\python run_tests.py` **và** `cd desktop ; npm run test:geom` · **test tay dòng ước tính:** mở **Nén** → thấy `Tài liệu … · ước tính khoảng …` · đổi mức sang **Không giảm chất lượng** → con số **tụt hẳn** · mở file **>300MB** → dòng chuyển **màu cảnh báo** và bấm Nén thì **hỏi lại**; bấm **Hủy** → tài liệu **không** bị bẩn (không có ● trên tiêu đề) · đổi ngôn ngữ sang English khi hộp đang mở → dòng này **không** bị đè bằng chữ cũ · **BI-54 test tay, BẮT BUỘC trên bản ĐÓNG GÓI** (argv frozen khác argv dev): nén một file **>25MB** → trong lúc chạy, mở **tab khác** và bấm một tính năng engine bất kỳ (Ctrl+F trong Sửa nội dung, OCR) → **phải phản hồi ngay**, không đợi nén xong · **không** nháy cửa sổ console đen · nén file **nhỏ** (<25MB) → xong **tức thì**, không có 3 giây khựng · preset sai trên file lớn → câu tiếng Việt **đọc được**, không phải ký tự rác · thoát app giữa lúc nén → **không** còn `sidecar.exe` nào sót trong Task Manager · nén một PDF **>200MB thật** → ra file, **không** báo "PDF quá lớn" · nén PDF **>500 trang** → chạy, không báo "quá nhiều trang" · nén file hỏng/preset sai → hiện **đúng câu lỗi** chứ không lưu ra PDF rác · dòng toast ghi đúng cỡ trước → sau · **rebuild sidecar** trước khi đóng gói (đụng `api.py`) |
 | Thanh công cụ hàng 1 (`.brand`, `.brand-text`, `.by`, `icon-only` của `btn-save`/`btn-print`, `#sb-credit`) | Thu cửa sổ **1920 → 1600 → 1366 → 1280**: hàng 1 **không cao hơn** bản trước (đã đo bằng probe: 98 → 91px ở 1600) · nút **Lưu**/**In** rê chuột ra **đúng tooltip**, và `Ctrl+S`/`Ctrl+P` + menu **Tập tin** vẫn chạy · đổi **VI↔EN** → tooltip đổi theo, nút **không** mọc lại chữ (BI-10) · dòng `developed by Nam Ta` thấy được ở **thanh trạng thái** kể cả khi cửa sổ hẹp (dưới 1400px byline trên brand bị ẩn có chủ ý) |
-| `renderer/find-replace.js` · `/text-find` · Ctrl+H | BI-50 + **BI-51** · `cd desktop ; npm run test:find` **và** `.venv\Scripts\python run_tests.py` · **BI-51 test tay:** gõ vào ô Tìm → **không** có gì chạy, app không đứng · `Enter` → quét **một** lượt · gõ thêm ký tự → hai nút **Thay** tắt, vệt tô cũ còn nguyên · file **>200MB** → hiện **"PDF quá lớn"**, không phải "không tìm thấy" · file **scan** → nhắc **OCR**, không phải "không tìm thấy" · rồi **test tay trên hợp đồng thật**: tìm một từ có ≥2 lần **trên cùng một dòng** → **Thay tất cả** → mở lại file, **cả hai** đều đổi (bẫy gộp span) · **Thay** từng cái từ trên xuống, bấm ↓ bỏ qua vài chỗ → chỉ đúng chỗ đã bấm Thay bị đổi · thay bằng chuỗi **chứa chính từ khoá** ("hợp đồng" → "phụ lục hợp đồng") → **dừng lại**, không lặp vô hạn · `Ctrl+Z` sau "Thay tất cả" → về nguyên trạng **trong một bước** · tìm xong rồi **xoá một trang** → vệt tô **biến mất** (BI-50) · mở trên **PDF scan** → báo đi OCR, không im lặng · từ khoá **có dấu** ("hợp đồng") tìm ra, gõ **không dấu** thì **không** ra (cố ý) · trang có chữ **in đậm giữa từ** → vệt **vàng nét đứt**, nút **Thay** mờ · **zoom** khi đang mở → vệt bám đúng chữ (BI-36) · đang **Chú thích**/**Sửa nội dung** → bấm Ctrl+H bị từ chối (BI-2) |
+| `renderer/find-replace.js` · `/text-find` · Ctrl+H | BI-50 + **BI-51** · `cd desktop ; npm run test:find` **và** `.venv\Scripts\python run_tests.py` · **BI-51 test tay:** gõ vào ô Tìm → **không** có gì chạy, app không đứng · `Enter` → quét **một** lượt · gõ thêm ký tự → hai nút **Thay** tắt, vệt tô cũ còn nguyên · file **>200MB** → hiện **"PDF quá lớn"**, không phải "không tìm thấy" · file **scan** → nhắc **OCR**, không phải "không tìm thấy" · rồi **test tay trên hợp đồng thật**: tìm một từ có ≥2 lần **trên cùng một dòng** → **Thay tất cả** → mở lại file, **cả hai** đều đổi (bẫy gộp span) · **Thay** từng cái từ trên xuống, bấm ↓ bỏ qua vài chỗ → chỉ đúng chỗ đã bấm Thay bị đổi · thay bằng chuỗi **chứa chính từ khoá** ("hợp đồng" → "phụ lục hợp đồng") → **dừng lại**, không lặp vô hạn · `Ctrl+Z` sau "Thay tất cả" → về nguyên trạng **trong một bước** · tìm xong rồi **xoá một trang** → vệt tô **biến mất** (BI-50) · mở trên **PDF scan** → báo đi OCR, không im lặng · từ khoá **có dấu** ("hợp đồng") tìm ra, gõ **không dấu** thì **không** ra (cố ý) · trang có chữ **in đậm giữa từ** → vệt **vàng nét đứt**, nút **Thay** mờ · **zoom** khi đang mở → vệt bám đúng chữ (BI-36) · đang **Chú thích**/**Sửa nội dung** → bấm Ctrl+H bị từ chối (BI-2) · **BI-53:** tìm một từ **rất phổ biến** trên file vài trăm trang cho tới khi hiện "dừng quét ở trang N" → bấm **Thay tất cả** → hộp xác nhận phải nói **"trong phần tài liệu đã quét"** kèm dòng "phần sau CHƯA được quét", **không** nói "toàn bộ tài liệu" |
+| `desktop/src/sidecar.js` · `bootSidecar` trong `main.js` | **BI-53** · `cd desktop ; npm run test:sidecar` (7 ca, boot sidecar dev thật; tự SKIP nếu chưa có `.venv`) · **test tay:** mở app, đợi badge xanh, rồi `taskkill /F /IM sidecar.exe` (hoặc kill tiến trình python lúc dev) → badge phải **đỏ** trong ~1s, mọi nút engine (OCR, Nén, Dịch, Tách, Ctrl+H, Sửa nội dung) **mờ đi**, tooltip badge ghi "Engine đã dừng đột ngột" · **ca ngược, quan trọng hơn:** thoát app bình thường → **không** thấy thông báo lỗi nào chớp lên |
 | `i18n.js` | Đổi VI↔EN khi đang mở tài liệu, đang chú thích, đang sửa nội dung |
 | `api.py` / `src/pdf/*` | `.venv\Scripts\python run_tests.py` **và** rebuild sidecar trước khi đóng gói |
 
