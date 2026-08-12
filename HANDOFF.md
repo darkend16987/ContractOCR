@@ -4,7 +4,41 @@
 > [DESIGN.md](DESIGN.md) (kiến trúc), [ROADMAP.md](ROADMAP.md) (tiến độ chi tiết),
 > [SETUP.md](SETUP.md) (dựng môi trường).
 
-_Cập nhật: 2026-08-12 · v0.2.58 đã phát hành (dưới đây) · v0.2.57 là bản trước đó_
+_Cập nhật: 2026-08-12 · v0.2.59 đã phát hành (dưới đây) · v0.2.58 là bản trước đó_
+
+> **v0.2.59 — đợt SỬA LỖI theo report người dùng.** Ba thứ, hai trong số đó là bug đã
+> nằm im nhiều bản.
+>
+> **1. Xoá chú thích đã áp dụng giờ mới thật sự xoá (BI-60).** Report: tạo một hộp văn
+> bản → Lưu → vào Chú thích → xoá → **hộp quay lại**. Cơ chế xoá chưa bao giờ sai; **hai
+> cái cổng** chặn không cho nó chạy, cả hai gác bằng `hasAny()` — tức hỏi *"còn gì để
+> **thêm**?"* trong khi câu hỏi đúng là *"còn gì **thay đổi**?"*. Xoá hộp cuối cùng thì
+> `ed.annots` rỗng ⇒ `hasAny()` false ⇒ **không bake** ⇒ annotation còn nguyên trong
+> `state.bytes` ⇒ repaint vẽ lại. Cổng thứ hai trong `bakePending()` nghĩa là **Ctrl+S
+> cũng không cứu được**, và `hasUnsaved` cùng lỗi nên xoá hết rồi đóng app thì **không
+> hỏi gì**. Có từ **v0.2.35**, chỉ vỡ khi tài liệu **không còn chú thích nào** — nên test
+> với hai hộp sẽ xanh, và đó là lý do nó ẩn được 12 bản. Sửa bằng `ed._importedManaged`
+> (số annot round-trip mà `importManaged()` nhận quyền sở hữu từ file).
+>
+> **2. Xoá trắng nội dung hộp văn bản = xoá hộp.** Chốt `if (text && text !== ...)` có từ
+> **v0.2.20** làm việc xoá nội dung thành **no-op im lặng** — chữ cũ hiện lại. Không giữ
+> được hộp rỗng: `deserializeManaged` từ chối payload không có `text`, và `renderTextPng`
+> sẽ bị đòi PNG cỡ 0. Nhánh ghi chú và nhãn mũi tên vốn đã đúng, chỉ `openTextEditor`
+> lệch.
+>
+> **3. Lời mời khôi phục có lối ra.** Trước đây **Bỏ qua** không xoá gì nên **mỗi lần mở
+> app lại hỏi**, mãi mãi (chỉ có bộ prune 14 ngày mới dứt). Nay ba lựa chọn: **Khôi phục**
+> · **Để sau** (giữ, lần sau hỏi tiếp) · **Xoá, không hỏi lại**. Nhãn nút thứ ba **ghi rõ
+> số bản** sẽ xoá, vì lời mời chỉ nêu tên tài liệu mới nhất — "không hỏi lại" không được
+> âm thầm bỏ file người dùng chưa từng thấy. Xoá thật thay vì nhớ một cờ "đừng hỏi": không
+> có chỗ nào khác trong app mở được bản khôi phục, nên giữ mà không bao giờ mời là một thư
+> mục byte chết.
+>
+> `uiConfirm` nay nhận `thirdText` (tuỳ chọn) và trả `"third"`. Tương thích ngược: chỗ gọi
+> nào không truyền thì không bao giờ nhận được giá trị đó, nên mọi `if (!ok)` cũ đọc y như
+> trước. Lưới mới `npm run test:confirm` (21 ca) giữ hợp đồng đó — đáng chú ý là **một
+> hộp thoại dùng chung cho mọi confirm**, nên nút thứ ba phải được ẩn lại mỗi lần mở, kẻo
+> nó mọc lên một câu hỏi yes/no không liên quan.
 
 > **v0.2.58 — hộp chữ/mũi tên/ảnh chèn sửa lại được cả trên trang đã xoay + Ảnh→PDF mở
 > ra để chỉnh trước khi lưu.** Bắt nguồn từ report thật: một file bản vẽ A3

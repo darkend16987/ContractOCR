@@ -1303,6 +1303,12 @@
         <h3 id="confirm-title">Xác nhận</h3>
         <p class="modal-note" id="confirm-msg" style="white-space: pre-line;"></p>
         <div class="modal-actions">
+          <!-- Optional third choice (uiConfirm `thirdText`), hidden unless a caller asks
+               for one. Leftmost on purpose: every use so far is the DESTRUCTIVE branch,
+               so it sits as far from the primary button as the row allows. It must NOT
+               carry data-modal-close — Esc / backdrop / ✕ all click that one button, and
+               a dialog is documented to have exactly one. -->
+          <button id="confirm-third" hidden></button>
           <button id="confirm-cancel" data-modal-close>Hủy</button>
           <button id="confirm-ok" class="primary">OK</button>
         </div>

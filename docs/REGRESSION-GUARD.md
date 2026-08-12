@@ -1245,6 +1245,37 @@ _Ghi 2026-08-12._
 
 ---
 
+### BI-60 · Cổng bake phải hỏi “có gì THAY ĐỔI”, không phải “có gì để THÊM”
+_Ghi 2026-08-12._
+
+- `desktop/renderer/editor.js`: `exit()`, `bakePending()`, `hasUnsaved`, `openTextEditor`,
+  và trường `ed._importedManaged`.
+- Bối cảnh — report thật ở v0.2.58: tạo một hộp văn bản → Lưu → vào Chú thích → xoá → **hộp
+  quay lại**. Cơ chế xoá (`stripManagedAnnots`) chưa bao giờ sai; **hai cái cổng** chặn không
+  cho nó chạy, cả hai đều gác bằng `hasAny()`:
+  - `exit()`: `if (ed._dirty && hasAny())` — xoá hết thì `ed.annots` rỗng ⇒ `hasAny()` **false**
+    ⇒ **không bake** ⇒ annotation vẫn nằm trong `state.bytes` ⇒ `repaintRenderedPages()` vẽ nó
+    lại. Có từ **v0.2.35**, đúng bản sinh ra chú thích sửa-lại-được.
+  - `bakePending()`: `if (!hasAny()) return false` — nên **Ctrl+S cũng không cứu được**.
+- **Luật:** cổng phải là `hasAny() || ed._importedManaged`. `_importedManaged` = số annot
+  round-trip mà `importManaged()` **nhận quyền sở hữu** từ file trong phiên này; nó là **cách
+  duy nhất** biết rằng bake vẫn còn việc (xoá) khi không còn gì để thêm. Phải gán ở **cả hai**
+  chỗ gọi `importManaged()` (`enter()` và nhánh lưu-giữa-phiên của `bakePending()` — chỗ thứ
+  hai đọc lại file nên số phải cập nhật theo) và **xoá trong `reset()`**.
+- `hasUnsaved` cũng vậy: “tôi đã xoá hết hộp văn bản” **là** một thay đổi chưa lưu. Gác bằng
+  `hasAny()` thì đóng app không hỏi gì và mất luôn.
+- **Xoá trắng nội dung hộp văn bản = XOÁ hộp**, không phải “không có gì thay đổi”. Chốt cũ
+  `if (text && text !== existing.text)` (có từ **v0.2.20**) làm việc xoá nội dung thành no-op
+  im lặng. Không giữ được hộp rỗng: `deserializeManaged` từ chối payload không có `text`
+  (`if (!data.text) return null`) nên nó sẽ biến mất ở lần mở sau, và `renderTextPng` sẽ bị
+  đòi một PNG cỡ 0. Nhánh `editOrig` của ghi chú vốn đã làm đúng — dùng nó làm mẫu.
+- **Vỡ khi:** xoá hộp văn bản cuối cùng rồi bấm Xong → nó quay lại · hoặc xoá trắng nội dung
+  rồi bấm ra ngoài → chữ cũ hiện lại · hoặc xoá hết rồi đóng app → **không** có cảnh báo.
+- Lưới: `npm run test:managed` §3b (cơ chế, đo thật) + §3c (hai cổng, assertion trên source —
+  `exit()`/`bakePending()` cần DOM nên không đo trực tiếp được).
+
+---
+
 ## 4. Hàm nút thắt (đổi chữ ký = ảnh hưởng diện rộng)
 
 | Hàm | Định nghĩa | Ai gọi |
@@ -1277,6 +1308,7 @@ _Ghi 2026-08-12._
 | Ảnh round-trip (`addManagedAnnot` nhánh image, `managedSrcBytes`, `collectManagedChain`, `freeManagedTrash`, `MANAGED_KINDS`) | `cd desktop ; npm run test:managed` · chèn 1 ảnh → Áp dụng → Lưu → **mở lại** → Chỉnh sửa → ảnh **kéo/đổi cỡ/xoá được**, “Áp nhiều trang” vẫn dùng được · lưu 3–4 lần liên tiếp → **cỡ file không phình** · áp 1 chữ ký cho 20 trang → file ~1 lần cỡ ảnh, không 20 · ảnh trên trang **đã xoay** → **cũng sửa lại được** kể từ v0.2.58, xem hàng dưới (BI-59) · xoá ảnh round-trip rồi **thêm ô redact trên chính trang đó** → Áp dụng: ảnh **không** quay lại thành pixel, và ảnh còn lại **không nhân đôi** (BI-37, BI-38) |
 | Tay nắm đổi cỡ (`resizeRect`, `RESIZABLE_KINDS`, `.handle.h-*`) | `npm run test:geom` · kéo **cả 4 góc** của ảnh/tô sáng/redact/chữ nhật/elip → góc đối diện **đứng yên** · **giữ Shift** → không méo · Esc giữa lúc kéo → về đúng vị trí+cỡ cũ · Ctrl+Z sau khi đổi cỡ · bấm vào tay nắm rồi **không kéo** → không tạo bước undo rỗng |
 | `editor.js` bake | Chú thích → Xong → sửa lại được · số trang không đổi · comment panel còn đúng (BI-5) |
+| Cổng bake (`exit()`, `bakePending()`, `hasUnsaved`, `ed._importedManaged`) hay `openTextEditor` | `cd desktop ; npm run test:managed` · **đường xoá, làm trên tài liệu chỉ có ĐÚNG MỘT chú thích** (đó là ca vỡ): tạo hộp văn bản → Xong → Lưu → vào Chú thích → `Delete` → Xong → hộp **mất thật**, mở lại file vẫn mất · lặp lại nhưng thay `Delete` bằng **xoá trắng nội dung rồi bấm ra ngoài** → hộp mất, chữ cũ **không** hiện lại · lặp lại nhưng bấm **Ctrl+S** thay vì Xong → cũng mất · xoá hết rồi **đóng app** → **có** hỏi lưu · xoá 1 trong 2 hộp → hộp còn lại **nguyên vẹn**, không nhân đôi (BI-60) |
 | Đặt `/AP` trên trang xoay (`apMatrixFor`, `apRectFor`, `apRotatable`, `normAngle`, ba nhánh `/AP` của `addManagedAnnot`) | `cd desktop ; npm run test:rotate ; npm run test:managed` · `docs/SPEC-annot-rotated.md` §7 lưới tay: với **cả 4 góc** `/Rotate` × {hộp chữ, mũi tên, ảnh, ghi chú} → bake → **Xong** → mở lại Chú thích → **sửa/kéo/xoá được**, không méo, không lệch 90° · re-bake 3 lần → **không** thành hai con dấu, file không phình · mở file đã bake bằng **Foxit + Acrobat + Chrome** → thấy đúng chỗ · và **hồi quy quan trọng nhất**: một tài liệu 0° bake rồi lưu phải ra **byte y hệt** bản trước (BI-59) |
 | Ảnh → PDF (`runImagesToPdf`) và **giá trị trả về của `loadBytes`** | Ảnh→PDF → kết quả **mở ra trong app** (không bắt Lưu trước), có chấm ● · sắp xếp lại trang / xoay / chú thích được · Ctrl+S → hiện hộp thoại **Lưu thành** · đang có tài liệu **bẩn** rồi chạy Ảnh→PDF → chọn **"Ở lại"** thì **vẫn được hỏi nơi lưu** file vừa tạo (không mất công convert) · đóng app khi chưa lưu → **có** cảnh báo |
 | Tầng tab/cửa sổ (`main.js`, `tabs.js`) | Toàn bộ `docs/TABS-TEST-L1.md` (24 mục) |
@@ -1285,6 +1317,7 @@ _Ghi 2026-08-12._
 | Khôi phục phiên (`src/session.js`, `snapshotSession`, `_closing`, `tab:reserved`) | `docs/SESSION-RESTORE.md` §5.3 (14 mục) · BI-18/19/20 · **mục #12 là hồi quy của khôi phục sự cố** |
 | Guard đóng | BI-6: nút X vs menu Thoát vs Ctrl+Q — cả 3 đường |
 | Recovery/autosave | BI-7: mở 2 tab, chỉ tab đầu được hỏi khôi phục |
+| `uiConfirm` (nhất là `thirdText`) hay lời mời khôi phục (`checkRecovery`) | `cd desktop ; npm run test:confirm` · chọn **Để sau** → lần mở sau **vẫn hỏi** (đúng) · chọn **Xoá, không hỏi lại** → lần mở sau **im hẳn** · nhãn nút phải ghi đúng **số bản** sẽ xoá · ngay sau đó mở một hộp thoại yes/no khác (vd đóng file bẩn) → **không** được thấy nút thứ ba sót lại · `Esc` / bấm nền / ✕ trên hộp có 3 nút → vẫn là **Hủy**, không phải nút xoá |
 | Thêm nút tính năng mới | BI-9: khoá bản quyền có ăn không · BI-10: đổi VI/EN không mất chữ · **và ghi cử chỉ / phím tắt của nó vào `SECTIONS` của `help.js`** — thanh công cụ không còn chỗ để chữ hướng dẫn (BI-41) |
 | Trang Hướng dẫn (`renderer/help.js`, `#help-modal`, khối `.help-*` trong `app.css`) | `cd desktop ; npm run test:help` · mở bằng **cả 3** đường: menu **Trợ giúp**, **F1**, nút **?** · bấm từng mục lục · ô tìm gõ **không dấu** ("mui ten") vẫn ra đúng phần · đóng bằng **Đóng / Esc / bấm nền** · đổi **VI↔EN** (cả nhãn menu native) · đổi theme **Sáng** · mở **trong lúc đang Chú thích** có 1 mục đang chọn rồi bấm `Delete` → mục **không** bị xoá (BI-47) |
 | `#ed-hint` / `setEdStatus` / `#te-hint` | BI-41: **không** đặt câu hướng dẫn vào đây · thu cửa sổ về 1024px ở công cụ *Khoanh mây* → thanh **không** phình, nút **Xong** còn bấm được · vẽ mây từng điểm → có dòng nhắc cách đóng; đổi công cụ → ô **trắng** · công cụ Đo → thấy `Tỷ lệ: chưa/đã hiệu chuẩn` đúng trạng thái |

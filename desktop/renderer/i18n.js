@@ -696,6 +696,10 @@
     // Live "N/M kết quả · K vị trí không thay tự động được", rewritten on every
     // keystroke and after every replacement (BI-10).
     "fr-status",
+    // uiConfirm's optional third button: label AND visibility are set per call (e.g.
+    // "Xoá cả 3 bản, không hỏi lại" — the count comes from the caller), so it must never
+    // be captured into the registry (BI-10).
+    "confirm-third",
   ]);
 
   let lang = "vi";

@@ -102,6 +102,10 @@
               "Đóng cửa sổ khi còn thay đổi chưa lưu thì app hỏi **Lưu / Không lưu / Hủy** — không bao giờ mất im lặng.",
               "Closing a window with unsaved changes prompts **Save / Don't save / Cancel** — nothing is ever lost silently."
             ),
+            T(
+              "Nếu lần trước máy tắt đột ngột, lần mở sau app mời **khôi phục tài liệu chưa lưu**. Ba lựa chọn: **Khôi phục** · **Để sau** (giữ lại, lần sau hỏi tiếp) · **Xoá, không hỏi lại** (bỏ hẳn bản khôi phục — nút này ghi rõ sẽ xoá bao nhiêu bản).",
+              "If the machine went down last time, the next launch offers to **recover unsaved documents**. Three choices: **Khôi phục** (recover) · **Để sau** (keep them, ask again next time) · **Xoá, không hỏi lại** (discard them for good — the button spells out how many it will delete)."
+            ),
           ],
         },
         { h: T("Đóng nhanh một hộp thoại", "Closing a dialog quickly") },

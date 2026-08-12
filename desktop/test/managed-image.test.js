@@ -243,6 +243,47 @@ function readManaged(doc) {
       apRectFor(0, 120, 90, 40, 60), [40, 60, 160, 150]);
   }
 
+  // ---- 3b. deleting every round-trip annot must actually REMOVE it (BI-60) ----
+  // The bug a user hit at v0.2.58: make a text box → Lưu → Chú thích → Delete → the box
+  // came straight back. The mechanism below was never broken; two GATES made it
+  // unreachable, both asking "is there anything to ADD?" when the question had to be
+  // "is there anything to CHANGE?". So this pins the mechanism by measurement, and 3c
+  // pins the gates on source (exit()/bakePending() need the DOM).
+  {
+    const one = await PDFDocument.create();
+    const op = one.addPage([A4.width, A4.height]);
+    await addManagedAnnot(one, op, imgAnnot(), map, new Map());
+    const withAnnot = await one.save();
+    check("fixture: one managed annot is in the file", readManaged(await PDFDocument.load(withAnnot)).length, 1);
+    // Exactly what bakeInPlace does when ed.annots is empty: strip, add nothing, save.
+    const emptied = await PDFDocument.load(withAnnot);
+    check("strip reports the one it removed", stripManagedAnnots(emptied), 1);
+    const after = await emptied.save();
+    const back = await PDFDocument.load(after);
+    check("the annot is really gone from the saved file", readManaged(back).length, 0);
+    const arr = back.getPages()[0].node.Annots();
+    check("no leftover /Annots entry for a viewer to draw", arr ? arr.size() : 0, 0);
+    check("and the file shrank instead of keeping the orphaned appearance",
+      after.length < withAnnot.length, true);
+  }
+
+  // ---- 3c. the two gates that made 3b unreachable (BI-60) --------------------
+  {
+    check("exit() bakes when round-trip annots were imported, even with nothing pending",
+      /if \(ed\._dirty && \(hasAny\(\) \|\| ed\._importedManaged\)\) await bakePending\(\);/.test(SRC), true);
+    check("bakePending() no longer returns early on !hasAny() alone",
+      /if \(!hasAny\(\) && !ed\._importedManaged\) return false;/.test(SRC), true);
+    check("the close guard counts \"I deleted them all\" as an unsaved edit",
+      /hasUnsaved: \(\) => ed\._dirty && \(hasAny\(\) \|\| ed\._importedManaged > 0\)/.test(SRC), true);
+    check("the imported count is set at BOTH importManaged call sites",
+      (SRC.match(/ed\._importedManaged = (?:n|await importManaged\(\))/g) || []).length, 2);
+    check("… and cleared by reset()", /ed\._importedManaged = 0;/.test(SRC), true);
+    // Emptying an existing text box must DELETE it, not be discarded as "no change".
+    check("clearing an existing text box removes it",
+      /if \(!text\) \{[\s\S]{0,500}?filter\(\(x\) => x\.id !== existing\.id\)/.test(SRC), true);
+    check("the old silent-no-op guard is gone", /if \(text && text !== existing\.text\)/.test(SRC), false);
+  }
+
   // ---- 4. re-bake must not grow the file --------------------------------
   ({ doc, page } = await newDoc());
   await addManagedAnnot(doc, page, imgAnnot({ dataUrl: bigUrl }), map, new Map());

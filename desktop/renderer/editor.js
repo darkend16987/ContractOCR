@@ -136,6 +136,12 @@
     _taCommit: null, // commit/close fn of the open inline editor (text/note/label), or null
     _exiting: false, // guards bakePending's re-import while we're leaving edit mode
     _managedPages: new Set(), // pages that hold (or held) round-trip text/notes → always repaint on bake
+    // How many round-trip annots importManaged() took OWNERSHIP of from the file this
+    // session. Not a statistic: it is the only way to know a bake still has work when
+    // `hasAny()` is false. Deleting the last text box empties ed.annots, and the bake
+    // that must REMOVE it from the PDF was gated on there being something to ADD — so
+    // the box silently came back on repaint. See BI-60.
+    _importedManaged: 0,
   };
 
   // ---- model helpers -------------------------------------------------------
@@ -1691,7 +1697,20 @@
       const text = ta.value.replace(/\s+$/, "");
       ta.remove();
       if (existing) {
-        if (text && text !== existing.text) {
+        // Emptying the box means DELETE it, not "no change". The old `text &&` guard
+        // made clearing the text a silent no-op — the user wiped the box, clicked away,
+        // and the old words came straight back. An empty text box cannot be kept
+        // either: deserializeManaged refuses one on import (`if (!data.text)`), so it
+        // would vanish on the next open anyway, and renderTextPng would be asked for a
+        // zero-size PNG. The note editor's editOrig branch already got this right. BI-60.
+        if (!text) {
+          pushEdUndo();
+          const hit = findAnnot(existing.id);
+          if (hit) ed.annots[hit.page] = ed.annots[hit.page].filter((x) => x.id !== existing.id);
+          if (ed.sel === existing.id) ed.sel = null;
+          ed.selMore.delete(existing.id);
+          if (ed.tool === "select") syncCtlVisibility("select");
+        } else if (text !== existing.text) {
           pushEdUndo();
           existing.text = text;
           const m = measureText(text, existing.fontSize, textStyle(existing));
@@ -2803,7 +2822,10 @@
   // whether anything was applied. Called by Save and on exit.
   async function bakePending() {
     if (ed._taCommit) ed._taCommit(); // an open editor's text must make the bake
-    if (!hasAny()) return false;
+    // `!hasAny()` alone was the bug: with every round-trip annot deleted there is
+    // nothing to ADD but plenty to REMOVE, and returning early left them in the PDF —
+    // so Ctrl+S and "Xong" both looked like they worked and changed nothing. BI-60.
+    if (!hasAny() && !ed._importedManaged) return false;
     showOverlay("Đang áp dụng chỉnh sửa…");
     try {
       const anyRedact = Object.values(ed.annots).some((a) => a.some((x) => x.kind === "redact"));
@@ -2829,7 +2851,7 @@
       // Mid-session save (still editing): pull the managed annots back in so text
       // boxes / notes stay editable and their baked copies stay hidden.
       if (ed.active && !ed._exiting) {
-        await importManaged();
+        ed._importedManaged = await importManaged(); // re-read: the count must track the FILE
         if (window.repaintRenderedPages) await window.repaintRenderedPages();
         syncOverlays();
       }
@@ -3195,6 +3217,7 @@
     // repaint so their baked appearance (rendered by pdf.js) is hidden while the
     // live overlay owns them. No managed annots → nothing to hide, common fast path.
     const n = await importManaged();
+    ed._importedManaged = n; // a later "delete them all" still owes the file a bake — BI-60
     if (n && window.repaintRenderedPages) await window.repaintRenderedPages();
     syncOverlays();
     syncUndoBtns();
@@ -3218,7 +3241,7 @@
     if (ed._poly) closePoly(); // finalize (or drop) a cloud still being drawn
     ed._exiting = true; // bakePending must not re-import while we're leaving
     try {
-      if (ed._dirty && hasAny()) await bakePending();
+      if (ed._dirty && (hasAny() || ed._importedManaged)) await bakePending();
       reset();
       clearEdHistory();
       leaveMode();
@@ -3251,6 +3274,7 @@
     ed._dirty = false;
     ed._taCommit = null;
     ed._managedPages = new Set();
+    ed._importedManaged = 0;
     clearEdHistory();
   }
 
@@ -3801,7 +3825,9 @@
       return ed.active;
     },
     // Pending, un-applied annotation edits this edit session (for the close guard).
-    hasUnsaved: () => ed._dirty && hasAny(),
+    // `_importedManaged` is in here for the same reason as in exit(): "I deleted every
+    // text box" IS an unsaved edit, and gating on hasAny() alone let it close silently.
+    hasUnsaved: () => ed._dirty && (hasAny() || ed._importedManaged > 0),
     syncOverlays,
     bakePending,
     reset,

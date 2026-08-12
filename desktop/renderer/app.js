@@ -94,34 +94,50 @@ function hideOverlay() {
 // stays false, so the next textarea we .focus() shows no caret (the annotation
 // text-box "no cursor after Hủy bỏ" bug). This in-DOM modal never touches OS
 // focus and never blocks. Returns a Promise<boolean> (true = OK/Enter).
+// Resolves `true` (ok) or `false` (cancel / Esc / backdrop / ✕) — and, ONLY when the
+// caller passes `thirdText`, the string `"third"` for that extra button. Callers that
+// don't ask for one can never receive it, so every long-standing `if (!ok)` still reads
+// exactly as before.
 function uiConfirm(message, opts) {
-  const { okText = "OK", cancelText = "Hủy", title = "Xác nhận" } = opts || {};
+  const { okText = "OK", cancelText = "Hủy", title = "Xác nhận", thirdText = null } = opts || {};
   return new Promise((resolve) => {
     const modal = $("confirm-modal");
     const okBtn = $("confirm-ok");
     const cancelBtn = $("confirm-cancel");
+    const thirdBtn = $("confirm-third");
     $("confirm-title").textContent = title;
     $("confirm-msg").textContent = message || "";
     okBtn.textContent = okText;
     cancelBtn.textContent = cancelText;
+    // Opt-in per call, so it has to be re-hidden on EVERY open: one dialog is reused for
+    // every confirm in the app, and a leftover third button would show up on the next
+    // plain yes/no question wired to nothing the caller expects.
+    thirdBtn.hidden = !thirdText;
+    if (thirdText) thirdBtn.textContent = thirdText;
     let done = false;
     const finish = (val) => {
       if (done) return;
       done = true;
       modal.hidden = true;
+      thirdBtn.hidden = true;
       okBtn.removeEventListener("click", onOk);
       cancelBtn.removeEventListener("click", onCancel);
+      thirdBtn.removeEventListener("click", onThird);
       document.removeEventListener("keydown", onKey, true);
       resolve(val);
     };
     const onOk = () => finish(true);
     const onCancel = () => finish(false);
+    // No keyboard shortcut on purpose: Enter/Esc already mean ok/cancel, and the third
+    // choice is the destructive one — it should cost a deliberate click.
+    const onThird = () => finish("third");
     const onKey = (e) => {
       if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); finish(false); }
       else if (e.key === "Enter") { e.preventDefault(); e.stopPropagation(); finish(true); }
     };
     okBtn.addEventListener("click", onOk);
     cancelBtn.addEventListener("click", onCancel);
+    thirdBtn.addEventListener("click", onThird);
     document.addEventListener("keydown", onKey, true);
     modal.hidden = false;
     okBtn.focus();
@@ -343,12 +359,40 @@ async function checkRecovery() {
   if (!orphans.length || state.bytes) return; // a file may have loaded meanwhile
   const top = orphans[0]; // most recent
   const when = top.savedAt ? new Date(top.savedAt).toLocaleString() : "";
-  const extra = orphans.length > 1 ? `\n(và ${orphans.length - 1} tài liệu khác — sẽ hỏi lại lần sau)` : "";
-  const ok = await uiConfirm(
+  const more = orphans.length - 1;
+  const extra = more ? `\n(và ${more} tài liệu khác — sẽ hỏi lại lần sau)` : "";
+  // "Để sau" keeps the snapshots, which is exactly why this used to ask on EVERY launch
+  // forever: declining changed nothing on disk, so the same document came back next time
+  // (and the 14-day prune was the only way out). The third choice is the way out — it
+  // deletes them. Its label carries the COUNT because the prompt only ever names the
+  // most recent one, and "không hỏi lại" must not quietly bin documents the user was
+  // never shown.
+  const answer = await uiConfirm(
     `Tìm thấy tài liệu chưa lưu từ phiên trước:\n"${top.name}"${when ? " — " + when : ""}\n\nKhôi phục?${extra}`,
-    { okText: "Khôi phục", cancelText: "Bỏ qua" }
+    {
+      okText: "Khôi phục",
+      cancelText: "Để sau",
+      thirdText: more ? `Xoá cả ${orphans.length} bản, không hỏi lại` : "Xoá, không hỏi lại",
+    }
   );
-  if (!ok) return; // leave the snapshots for a later launch
+  if (answer === "third") {
+    // Deleting rather than remembering a "don't ask" flag is deliberate: nothing else in
+    // the app can reach a recovery snapshot, so a kept-but-never-offered file is a folder
+    // of dead bytes the user has no way to open. Best-effort per id — one failure must
+    // not leave the rest un-deleted and the prompt back next launch.
+    let failed = 0;
+    for (const o of orphans) {
+      try {
+        if (!(await window.desktop.recovery.clear(o.docId))) failed++;
+      } catch (_) {
+        failed++;
+      }
+    }
+    if (failed) toast(`Không xoá được ${failed} bản khôi phục — sẽ hỏi lại lần sau.`, "warn");
+    else toast(orphans.length > 1 ? `Đã xoá ${orphans.length} bản khôi phục.` : "Đã xoá bản khôi phục.", "");
+    return;
+  }
+  if (!answer) return; // "Để sau" / Esc / backdrop / ✕ — keep them for a later launch
   try {
     const rec = await window.desktop.recovery.read(top.docId);
     if (!rec || !rec.ok) {
