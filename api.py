@@ -7,6 +7,7 @@ and returns extracted Vietnamese text.
 """
 
 import base64
+import hashlib
 import io
 import logging
 import os
@@ -1635,7 +1636,9 @@ class TextFindResponse(BaseModel):
     hits: list[TextFindHit] = []
     crossing: int = 0  # how many hits are replaceable=False
     truncated: bool = False  # hit max_hits and stopped
+    truncated_page: int = 0  # 1-based page it stopped on, so the UI can say where
     pages_scanned: int = 0
+    cached: bool = False  # the span index was reused, not re-parsed (diagnostic)
     error: str | None = None
 
 
@@ -1686,6 +1689,259 @@ def _find_occurrences(
     return out
 
 
+# ---------------------------------------------------------------------------
+# The document, flattened once into the shape the matcher walks
+# ---------------------------------------------------------------------------
+#
+# WHY AN INDEX AND NOT get_text("dict") ON EVERY SEARCH. Parsing is the entire cost
+# of a search: reopen the file, walk every block/line/span of every page. On a
+# 480-page A1 drawing set that is tens of seconds, and the user searches the SAME
+# document several times in a row (find, refine, replace, find again) for an
+# identical parse. So the parse is separated from the matching, and cached.
+#
+# THE CACHE KEY MUST BE A HASH OF ALL THE BYTES. Keying on length plus a couple of
+# sampled chunks is tempting and wrong: an edit in the middle would keep the key,
+# the stale index would be reused, and every offset in it would point at the wrong
+# characters — BI-50's failure mode reached from the other side, and it ends with a
+# replacement written over innocent text. blake2b over the whole buffer costs a
+# fraction of the parse it saves.
+#
+# ONE span is flattened to a plain tuple (a big drawing set has hundreds of
+# thousands of them, and the cache holds them all):
+#   0 text · 1 host · 2 bbox · 3 bbox_view · 4 origin · 5 size · 6 font · 7 color · 8 flags
+#
+# `host` is False for the whitespace-only spans PyMuPDF synthesises when a line is
+# drawn in pieces (a Td/TJ cursor jump between two words becomes a real span holding
+# " "). Their text STAYS in the joined line — dropping it is what used to make
+# "Hợp đồng" unfindable, because the line joined to "Hợpđồng" — but they never host
+# a match, so a replacement is never written into one.
+
+_FIND_CACHE: dict = {"entry": None}  # (key, pages), swapped as ONE tuple so a
+# concurrent reader can never pair a new key with an old index.
+
+# Ceiling on what may be cached, so a pathological file cannot pin hundreds of MB in
+# the sidecar for the rest of the session. Above it searches still work — they just
+# re-parse every time.
+_FIND_CACHE_MAX_PARTS = 300_000
+
+
+def _find_build_index(doc) -> tuple[list, int]:
+    """Flatten `doc` to per-page lists of (joined, offsets, parts, span_base)."""
+    import fitz  # PyMuPDF (cached; the caller already ensured it imports)
+
+    pages: list = []
+    total_parts = 0
+    for pno in range(doc.page_count):
+        page = doc[pno]
+        # get_text returns bbox in UNROTATED page space; the overlay draws in
+        # displayed space. Identity on an unrotated page, so no behaviour change.
+        rot_mat = page.rotation_matrix
+        data = page.get_text("dict")
+        lines: list = []
+        span_idx = 0
+        for block in data.get("blocks", []):
+            for line in block.get("lines", []):
+                parts: list = []
+                for sp in line.get("spans", []):
+                    txt = sp.get("text", "")
+                    x0, y0, x1, y1 = sp["bbox"]
+                    if (x1 - x0) < 0.5 or (y1 - y0) < 0.5:
+                        continue  # degenerate box; same filter /text-spans uses
+                    host = bool(txt.strip())
+                    font_name = str(sp.get("font", ""))
+                    # The same legacy-font ladder /text-spans climbs, so a TCVN3 span
+                    # that "Sửa nội dung" displays correctly is also FINDABLE. Without
+                    # it the two features disagree about what the page says, and the
+                    # user is told a word they can SEE is not there.
+                    if host and _span_is_suspect(txt, font_name) and _is_legacy_font(font_name):
+                        conv = _transcode_tcvn3(txt)
+                        if conv != txt and _looks_vietnamese(conv):
+                            txt = conv
+                    vr = fitz.Rect(x0, y0, x1, y1) * rot_mat
+                    vr.normalize()  # rotation can flip corners; keep x0<x1, y0<y1
+                    ox, oy = sp.get("origin", (x0, y1))
+                    parts.append(
+                        (
+                            txt,
+                            host,
+                            (x0, y0, x1, y1),
+                            (vr.x0, vr.y0, vr.x1, vr.y1),
+                            (ox, oy),
+                            float(sp.get("size", 11.0)),
+                            font_name,
+                            int(sp.get("color", 0)),
+                            int(sp.get("flags", 0)),
+                        )
+                    )
+                if not any(p[1] for p in parts):
+                    continue  # blank line — nothing findable on it
+                offsets: list[int] = []
+                acc = 0
+                for p in parts:
+                    offsets.append(acc)
+                    acc += len(p[0])
+                lines.append(("".join(p[0] for p in parts), offsets, parts, span_idx))
+                span_idx += len(parts)
+                total_parts += len(parts)
+        pages.append(lines)
+    return pages, total_parts
+
+
+def _find_index_for(pdf_bytes: bytes) -> tuple[list, bool]:
+    """The flattened index for these exact bytes. Returns (pages, came_from_cache)."""
+    key = hashlib.blake2b(pdf_bytes, digest_size=16).hexdigest()
+    entry = _FIND_CACHE["entry"]
+    if entry is not None and entry[0] == key:
+        return entry[1], True
+
+    doc = _open_pdf_stream(pdf_bytes)
+    try:
+        pages, total_parts = _find_build_index(doc)
+    finally:
+        doc.close()
+
+    _FIND_CACHE["entry"] = (key, pages) if total_parts <= _FIND_CACHE_MAX_PARTS else None
+    return pages, False
+
+
+def _find_scan_index(
+    pages: list, query: str, match_case: bool, whole_word: bool, max_hits: int
+) -> tuple[list, int, int]:
+    """Match `query` against a built index. Returns (hits, crossing, truncated_page).
+
+    ONE pass, over the joined line. The previous version matched twice — once inside
+    each span, once over the concatenation — and that is where two silent bugs lived:
+
+    * "Đúng nguyên từ" was judged on the SPAN, so a line drawn as ["AB", "2026"]
+      reported `2026` as a whole word (it does start its span) and marked it
+      replaceable — and replacing it corrupted `AB2026`. On the joined line the
+      character before it is `B`, so it is correctly not a whole word.
+    * Whitespace-only spans were dropped before joining, so a query spanning a
+      synthesised gap could not be found at all.
+
+    Matching once on the line and mapping the offsets back to spans gives both
+    correct boundaries and correct joining, with less code than the two-pass form.
+    """
+    import fitz  # PyMuPDF
+
+    hits: list[TextFindHit] = []
+    crossing = 0
+    truncated_page = 0
+
+    for pno, lines in enumerate(pages):
+        if truncated_page:
+            break
+        for joined, offsets, parts, span_base in lines:
+            if truncated_page:
+                break
+            for s, e in _find_occurrences(joined, query, match_case, whole_word):
+                if len(hits) >= max_hits:
+                    truncated_page = pno + 1
+                    break
+                touched = [
+                    i
+                    for i in range(len(parts))
+                    if offsets[i] < e and offsets[i] + len(parts[i][0]) > s
+                ]
+                if not touched:
+                    continue
+
+                if len(touched) == 1 and parts[touched[0]][1]:
+                    # Wholly inside one real span → /edit-text can rewrite it.
+                    i = touched[0]
+                    p = parts[i]
+                    hits.append(
+                        TextFindHit(
+                            id=0,
+                            page=pno,
+                            span=span_base + i,
+                            start=s - offsets[i],
+                            end=e - offsets[i],
+                            span_text=p[0],
+                            bbox=list(p[2]),
+                            bbox_view=list(p[3]),
+                            origin=list(p[4]),
+                            size=p[5],
+                            font=p[6],
+                            color=p[7],
+                            flags=p[8],
+                            replaceable=True,
+                        )
+                    )
+                    continue
+
+                # Straddles a formatting boundary (or a synthesised gap): counted and
+                # highlighted across the union of everything it touches, never
+                # rewritten — half a replacement would wreck the run's formatting.
+                union = None
+                for i in touched:
+                    r = fitz.Rect(*parts[i][3])
+                    union = r if union is None else (union | r)
+                crossing += 1
+                first = parts[touched[0]]
+                hits.append(
+                    TextFindHit(
+                        id=0,
+                        page=pno,
+                        span=span_base + touched[0],
+                        start=0,
+                        end=len(joined),
+                        span_text=joined,
+                        bbox=[union.x0, union.y0, union.x1, union.y1],
+                        bbox_view=[union.x0, union.y0, union.x1, union.y1],
+                        origin=[union.x0, union.y1],
+                        size=first[5],
+                        font=first[6],
+                        color=first[7],
+                        flags=first[8],
+                        replaceable=False,
+                    )
+                )
+
+    # Reading order: PyMuPDF yields blocks in the order they were drawn, which is not
+    # always top-to-bottom. "Tìm tiếp" must walk the page the way a human reads it.
+    hits.sort(key=lambda h: (h.page, round(h.bbox_view[1], 1), round(h.bbox_view[0], 1), h.start))
+    for i, h in enumerate(hits):
+        h.id = i
+    return hits, crossing, truncated_page
+
+
+def _text_find_core(
+    pdf_bytes: bytes, query: str, match_case: bool, whole_word: bool, max_hits: int
+) -> TextFindResponse:
+    """Shared body of /text-find and /text-find-bin — the two differ only in how the
+    document arrives, so neither can drift away from the other's results."""
+    try:
+        import fitz  # noqa: F401  (PyMuPDF; presence check before we promise anything)
+    except ImportError:
+        raise HTTPException(status_code=503, detail="PyMuPDF (fitz) chưa cài — không tìm được text.")
+
+    if not query:
+        raise HTTPException(status_code=400, detail="Chưa nhập từ khoá cần tìm.")
+
+    try:
+        pages, cached = _find_index_for(pdf_bytes)
+        hits, crossing, truncated_page = _find_scan_index(
+            pages, query, match_case, whole_word, max(1, max_hits)
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("text-find error")
+        return TextFindResponse(success=False, error=str(e))
+
+    return TextFindResponse(
+        success=True,
+        has_text=any(pages),
+        hits=hits,
+        crossing=crossing,
+        truncated=bool(truncated_page),
+        truncated_page=truncated_page,
+        pages_scanned=len(pages),
+        cached=cached,
+    )
+
+
 @app.post("/text-find", response_model=TextFindResponse)
 async def text_find(req: TextFindRequest):
     """Every occurrence of `query` in the document, with the span data needed to edit it.
@@ -1695,164 +1951,49 @@ async def text_find(req: TextFindRequest):
     ends in the next — which happens when a word changes style mid-way, e.g. "Bên **A**"
     — is still reported (so the count the user sees is the truth) but flagged
     `replaceable: False` rather than replaced wrongly.
-    """
-    try:
-        import fitz  # PyMuPDF
-    except ImportError:
-        raise HTTPException(status_code=503, detail="PyMuPDF (fitz) chưa cài — không tìm được text.")
 
-    if not req.query:
-        raise HTTPException(status_code=400, detail="Chưa nhập từ khoá cần tìm.")
+    This is the base64/JSON route, kept for the test grid and any non-desktop caller.
+    The desktop app uses /text-find-bin — see the note there.
+    """
     if len(req.pdf_b64) > _MAX_PDF_B64:
         raise HTTPException(status_code=400, detail="PDF quá lớn (tối đa ~200MB).")
     try:
         pdf_bytes = base64.b64decode(req.pdf_b64)
     except Exception:
         raise HTTPException(status_code=400, detail="pdf_b64 không hợp lệ")
+    return _text_find_core(pdf_bytes, req.query, req.match_case, req.whole_word, req.max_hits)
 
-    doc = _open_pdf_stream(pdf_bytes)
-    hits: list[TextFindHit] = []
-    crossing = 0
-    truncated = False
-    any_text = False
-    hid = 0
 
-    try:
-        for pno in range(doc.page_count):
-            if truncated:
-                break
-            page = doc[pno]
-            rot_mat = page.rotation_matrix
-            data = page.get_text("dict")
-            span_idx = 0
-            for block in data.get("blocks", []):
-                for line in block.get("lines", []):
-                    # Collect this LINE's spans first. Matching runs twice over the
-                    # same line: once inside each span (replaceable), and once over
-                    # the concatenation (to notice the ones that straddle a boundary).
-                    raw = []
-                    for sp in line.get("spans", []):
-                        txt = sp.get("text", "")
-                        if not txt.strip():
-                            continue
-                        x0, y0, x1, y1 = sp["bbox"]
-                        if (x1 - x0) < 0.5 or (y1 - y0) < 0.5:
-                            continue  # degenerate box; same filter /text-spans uses
-                        raw.append((sp, txt, (x0, y0, x1, y1)))
-                    if not raw:
-                        continue
-                    any_text = True
+@app.post("/text-find-bin", response_model=TextFindResponse)
+async def text_find_bin(
+    request: Request,
+    query: str = "",
+    match_case: bool = False,
+    whole_word: bool = False,
+    max_hits: int = 5000,
+):
+    """The same search, with the document carried as RAW BYTES in the request body.
 
-                    joined = "".join(t for _, t, _ in raw)
-                    # offset of each span's text inside `joined`
-                    offsets = []
-                    acc = 0
-                    for _, t, _b in raw:
-                        offsets.append(acc)
-                        acc += len(t)
+    WHY THIS EXISTS. /text-find is base64-in-JSON, so a 250 MB drawing set costs
+    ~350 MB of base64 text built in the renderer, the same again as a Python str
+    while json parses it, and the decoded bytes on top. _MAX_PDF_B64 refused it
+    outright at ~200 MB — and a several-hundred-page A1 set, which is exactly the
+    document nobody wants to search by hand, is over that line.
 
-                    # 1. in-span matches → replaceable
-                    taken: set[tuple[int, int]] = set()
-                    for si, (sp, txt, bb) in enumerate(raw):
-                        base = offsets[si]
-                        for s, e in _find_occurrences(
-                            txt, req.query, req.match_case, req.whole_word
-                        ):
-                            if len(hits) >= req.max_hits:
-                                truncated = True
-                                break
-                            x0, y0, x1, y1 = bb
-                            ox, oy = sp.get("origin", (x0, y1))
-                            vr = fitz.Rect(x0, y0, x1, y1) * rot_mat
-                            vr.normalize()
-                            hits.append(
-                                TextFindHit(
-                                    id=hid,
-                                    page=pno,
-                                    span=span_idx + si,
-                                    start=s,
-                                    end=e,
-                                    span_text=txt,
-                                    bbox=[x0, y0, x1, y1],
-                                    bbox_view=[vr.x0, vr.y0, vr.x1, vr.y1],
-                                    origin=[ox, oy],
-                                    size=float(sp.get("size", 11.0)),
-                                    font=str(sp.get("font", "")),
-                                    color=int(sp.get("color", 0)),
-                                    flags=int(sp.get("flags", 0)),
-                                    replaceable=True,
-                                )
-                            )
-                            hid += 1
-                            taken.add((base + s, base + e))
-                        if truncated:
-                            break
-
-                    # 2. matches over the whole line that no single span contained
-                    if not truncated:
-                        for s, e in _find_occurrences(
-                            joined, req.query, req.match_case, req.whole_word
-                        ):
-                            if (s, e) in taken:
-                                continue
-                            if len(hits) >= req.max_hits:
-                                truncated = True
-                                break
-                            # union box of every span the match touches
-                            union = None
-                            for si, (_sp, txt, bb) in enumerate(raw):
-                                a, b = offsets[si], offsets[si] + len(txt)
-                                if b <= s or a >= e:
-                                    continue
-                                r = fitz.Rect(*bb) * rot_mat
-                                r.normalize()
-                                union = r if union is None else (union | r)
-                            if union is None:
-                                continue
-                            crossing += 1
-                            hits.append(
-                                TextFindHit(
-                                    id=hid,
-                                    page=pno,
-                                    span=span_idx,
-                                    start=0,
-                                    end=len(joined),
-                                    span_text=joined,
-                                    bbox=[union.x0, union.y0, union.x1, union.y1],
-                                    bbox_view=[union.x0, union.y0, union.x1, union.y1],
-                                    origin=[union.x0, union.y1],
-                                    size=float(raw[0][0].get("size", 11.0)),
-                                    font=str(raw[0][0].get("font", "")),
-                                    color=int(raw[0][0].get("color", 0)),
-                                    flags=int(raw[0][0].get("flags", 0)),
-                                    replaceable=False,
-                                )
-                            )
-                            hid += 1
-                    span_idx += len(raw)
-
-        # Reading order: PyMuPDF yields blocks in the order they were drawn, which is
-        # not always top-to-bottom. "Tìm tiếp" must walk the page the way a human
-        # reads it, so sort by page, then by the TOP of the box, then its left edge.
-        hits.sort(key=lambda h: (h.page, round(h.bbox_view[1], 1), round(h.bbox_view[0], 1), h.start))
-        for i, h in enumerate(hits):
-            h.id = i
-
-        return TextFindResponse(
-            success=True,
-            has_text=any_text,
-            hits=hits,
-            crossing=crossing,
-            truncated=truncated,
-            pages_scanned=doc.page_count,
+    Here the request body IS the PDF (Content-Type: application/pdf) and only the
+    small JSON answer comes back, so no base64 string is built on either side. Same
+    move /compress-bin made for Nén (BI-49). Errors stay JSON, and so does success —
+    unlike /compress-bin the response is not a document, so there is no Content-Type
+    contract to read: `success` in the body is the whole answer.
+    """
+    pdf_bytes = await request.body()
+    if not pdf_bytes:
+        raise HTTPException(status_code=400, detail="Không nhận được nội dung PDF.")
+    if len(pdf_bytes) > _MAX_PDF_BIN:
+        raise HTTPException(
+            status_code=400, detail=f"PDF quá lớn (tối đa ~{_MAX_PDF_BIN // 1_000_000}MB)."
         )
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.exception("text-find error")
-        return TextFindResponse(success=False, error=str(e))
-    finally:
-        doc.close()
+    return _text_find_core(pdf_bytes, query, match_case, whole_word, max_hits)
 
 
 class OcrSpanRequest(BaseModel):

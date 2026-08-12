@@ -73,9 +73,20 @@
       "Works only on PDFs with real text (not scans). A match split across two formatting runs is highlighted but not replaced automatically.",
     "Từ khoá bị chia làm nhiều đoạn định dạng — không thay tự động được":
       "This match is split across two formatting runs — it cannot be replaced automatically",
+    "Quét toàn bộ tài liệu (Enter)": "Scan the whole document (Enter)",
     "Đang tìm…": "Searching…",
     "Đang thay thế…": "Replacing…",
     "Không tìm thấy kết quả nào.": "No matches found.",
+    "Nhấn Enter (hoặc nút Tìm) để quét tài liệu.": "Press Enter (or the Tìm button) to scan the document.",
+    "Đang hiện kết quả cũ — nhấn Enter để tìm lại.":
+      "Showing the previous results — press Enter to search again.",
+    "Tài liệu vừa thay đổi — nhấn Enter để tìm lại.":
+      "The document just changed — press Enter to search again.",
+    "PDF quá lớn để tìm (giới hạn ~1GB).": "This PDF is too large to search (~1GB limit).",
+    "{i}/{n} kết quả · tài liệu quá lớn để thay tự động — dùng Nén trước":
+      "{i}/{n} matches · this document is too large to replace in — shrink it with Nén (Compress) first",
+    "Quá nhiều kết quả — chỉ hiện {n} vị trí đầu tiên, dừng quét ở trang {p}.":
+      "Too many matches — showing the first {n}; the scan stopped on page {p}.",
     "PDF này không có chữ thật (bản scan) — chạy \"OCR văn bản\" trong Công cụ trước.":
       "This PDF has no real text (it is a scan) — run \"OCR văn bản\" under Công cụ first.",
     "Thoát \"Chú thích\" trước khi dùng Tìm & Thay thế.": "Leave \"Chú thích\" before using Find & Replace.",

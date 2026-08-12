@@ -4,7 +4,62 @@
 > [DESIGN.md](DESIGN.md) (kiến trúc), [ROADMAP.md](ROADMAP.md) (tiến độ chi tiết),
 > [SETUP.md](SETUP.md) (dựng môi trường).
 
-_Cập nhật: 2026-08-11 · v0.2.55 đã phát hành (dưới đây) · v0.2.53 là bản trước đó_
+_Cập nhật: 2026-08-12 · v0.2.56 đã phát hành (dưới đây) · v0.2.55 là bản trước đó_
+
+> **v0.2.56 · Tìm & Thay thế: sửa đúng ba thứ người dùng báo** (**có đụng `api.py` ⇒
+> rebuild sidecar**). Báo cáo test của người dùng trên bộ bản vẽ **480 trang khổ A1**:
+> (1) tìm theo từng ký tự gõ làm treo app, (2) file lớn "tìm không ra từ dù từ có ở
+> trang 2–3", (3) hỏi về chuyện từ bị tách span.
+>
+> **1. "Tìm không ra" hoá ra là app BÁO SAI, không phải tìm sót.** `runFind` ghi câu lỗi
+> rồi `finally { setBusy(false) }` → `refreshStatus()` **đè ngay lập tức** bằng "Không tìm
+> thấy kết quả nào.". Nên **mọi** thất bại — 400 "PDF quá lớn", PDF là bản scan, mất kết
+> nối sidecar, chạm trần `max_hits` — đều đến tay người dùng dưới một câu duy nhất và
+> **sai**. Sửa bằng `fr.sticky`: thông báo thật luôn thắng số đếm (BI-51).
+>
+> **2. Quét là hành động người dùng YÊU CẦU.** Bỏ debounce 350ms (gõ "2026" = **bốn**
+> lượt đi hết tài liệu, và chúng đua nhau về đích). Thêm nút **Tìm**; gõ chỉ đặt cờ
+> "quá hạn" và khoá hai nút **Thay** cho tới lượt quét kế. Thêm `fr.runSeq` +
+> `AbortController` để lượt cũ không thắng lượt mới; `fr-case`/`fr-word` vào danh sách
+> khoá khi bận; ô Tìm dùng `readOnly` thay `disabled` để không nuốt phím đang gõ.
+>
+> **3. Hai lỗi thật trong `/text-find`, cả hai đều im lặng** (BI-52). Vòng khớp cũ chạy
+> **hai lượt** (trong span + trên dòng ghép), và đó là chỗ hai lỗi trú:
+> * Biên **"Đúng nguyên từ"** xét trên **span**, nên dòng vẽ thành `["AB","2026"]` báo
+>   `2026` là nguyên từ **và cho thay** ⇒ **hỏng chữ `AB2026`**. Ăn dữ liệu.
+> * Span **toàn khoảng trắng bị vứt** trước khi ghép dòng ⇒ `"Hop dong"` ghép thành
+>   `"Hopdong"` ⇒ **không tìm ra**. Tái hiện được: PyMuPDF đẻ span `' '` thật mỗi khi một
+>   dòng được vẽ làm nhiều mẩu (bước nhảy Td/TJ — rất hay gặp ở văn bản canh đều/CAD).
+>
+> Giờ khớp **một lượt trên dòng ghép** rồi ánh xạ ngược ra span: biên đúng, ghép đúng, và
+> ít code hơn dạng cũ.
+>
+> **4. Chuyện "202" + "6" — ĐO ĐƯỢC, không đoán.** PyMuPDF **tự gộp** span cùng style vẽ
+> liền nhau, nên hai mẩu cùng style **không bao giờ** tách. Tách span nghĩa là style
+> **thật sự** khác — và **lệch cỡ chữ 0.0001pt cũng đủ**, tức là mắt không thấy khác gì.
+> Vì vậy ý tưởng "gộp lại span cùng style" **không có gì để làm**; mọi chỗ tách vẫn đi
+> nhánh tô vàng, không thay (BI-50), đúng như đã chốt.
+>
+> **5. Bỏ trần 200MB cho việc TÌM: `/text-find-bin`.** Body request **là** file PDF
+> (đúng nước đi `/compress-bin` đã làm cho Nén — BI-49), chỉ câu trả lời JSON nhỏ đi
+> ngược lại. **Việc THAY vẫn qua `/edit-text`, vẫn base64, vẫn trần ~200MB** — `/edit-text`
+> là hàm nguy hiểm nhất trong app (BI-21/23/25) và không được refactor chung một đợt với
+> một bản sửa tìm kiếm. Nên tài liệu 300MB **tìm được nhưng chưa thay được**, và UI
+> **nói thẳng**: mờ hai nút Thay + ghi lý do trên dòng đếm. Còn treo cho đợt sau:
+> `/edit-text-bin` (đóng khung `[4 byte độ dài JSON][JSON][bytes PDF]`).
+>
+> **6. Cache index span** khoá bằng **blake2b của toàn bộ bytes** — khoá bằng độ dài +
+> vài mẩu lấy mẫu là sai chết người (sửa giữa file vẫn trùng khoá ⇒ index ôi thiu ⇒ mọi
+> offset trỏ sai chỗ). Giữ **một** tài liệu, có trần `_FIND_CACHE_MAX_PARTS`. Lần tìm
+> thứ hai trở đi trên cùng tài liệu gần như tức thì.
+>
+> **7. Bộ cứu font legacy TCVN3** bê từ `/text-spans` sang, để "Sửa nội dung" và "Tìm"
+> không bất đồng về việc trang giấy ghi gì.
+>
+> **Lưới mới:** `test_text_find.py` (46 ca — nửa chạy trên index dựng tay để phát biểu
+> chính xác ca "hai span lệch 0.0001pt", nửa qua PDF thật) · `npm run test:find` lên
+> **129** ca, có phép so **xuyên ngôn ngữ** hai hằng số trần giữa renderer và sidecar ·
+> `tools/find-probe.py` để đo trang nào sót và **vì sao** trên chính tệp của người dùng.
 
 > **v0.2.55 gộp HAI đợt việc.** Bốn sửa lỗi UI + bỏ trần nén (phần **B** bên dưới) ban
 > đầu định ra riêng thành v0.2.54, nhưng cả hai đợt nằm chung một cây làm việc chưa

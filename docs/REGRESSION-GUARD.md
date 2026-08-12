@@ -21,7 +21,7 @@ tài liệu này chỉ có giá trị nếu được cập nhật.
 | `desktop/src/main.js` + `src/tabs.js` | — | Tầng cửa sổ/tab — **hệ con mới nhất, ít va đập thực tế nhất** (ra mắt v0.2.41). Có lưới tự động `npm run test:tabs` cho phần logic thuần. |
 | `desktop/renderer/page-range.js` | ~170 | Số học khoảng trang. Rủi ro **thấp** vì có lưới `npm run test:pages`, nhưng hậu quả sai là **mất trang tài liệu** → xem BI-27. |
 | `desktop/renderer/pan.js` | ~380 | Bàn tay/pan. Rủi ro **trung bình**: nó giành sự kiện chuột **trên cùng phần tử** với `editor.js`/`capture.js`. Nửa logic có lưới `npm run test:pan`; nửa DOM thì không → xem BI-30/31. |
-| `desktop/renderer/find-replace.js` | ~590 | Tìm & Thay thế. Rủi ro **trung bình** nhưng hậu quả **cao và im lặng**: nó **ghi vào chữ gốc** của tài liệu hàng loạt. Nửa số học có lưới `npm run test:find`; nửa DOM thì không → xem BI-50. |
+| `desktop/renderer/find-replace.js` | ~700 | Tìm & Thay thế. Rủi ro **trung bình** nhưng hậu quả **cao và im lặng**: nó **ghi vào chữ gốc** của tài liệu hàng loạt. Nửa số học có lưới `npm run test:find`; nửa DOM chỉ có **assertion trên source** trong cùng lưới đó → xem BI-50, BI-51. |
 | `desktop/renderer/wire.js` | ~130 | Bộ mã hoá payload nhị phân. Rủi ro **thấp** nhờ lưới `npm run test:wire`, nhưng sai ở đây **im lặng**: request vẫn đúng cú pháp, chỉ là base64 hỏng → xem BI-24. |
 | `desktop/renderer/app.js` — khối zoom | ~130 dòng | `applyScaleToDom`/`commitScale` đụng CSS box của **mọi** trang + 4 lớp overlay. Sai là zoom mờ mãi hoặc chú thích lệch. Nửa số học có lưới `npm run test:geom` → xem BI-36. |
 | ~~`editor.js` — ảnh round-trip~~ → `managed-codec.js` (v0.2.49) | ~180 dòng | Ghi/đọc/giải phóng object PDF riêng. Sai ở đây **mất ảnh của người dùng** hoặc phình file âm thầm. Có lưới `npm run test:managed` → xem BI-37, BI-38. |
@@ -975,6 +975,70 @@ chỉ tên hàm.
   "Thay tất cả" báo N nhưng mở lại file thấy vài chỗ chưa đổi (lỗi gộp span) · hoặc bấm
   Thay mãi không hết vì chữ thay chứa từ khoá.
 
+### BI-51 · Tìm & Thay thế: quét là hành động NGƯỜI DÙNG YÊU CẦU, và thông báo lỗi không được bị đè
+- `renderer/find-replace.js` (`runFind`, `refreshStatus`, `setSticky`, `markStale`,
+  `setBusy`, `syncButtons`); nút `#fr-go` trong `index.html`. Lưới `npm run test:find`.
+- **Một lần quét = một lượt đi hết tài liệu.** base64 cả PDF → sidecar mở lại →
+  `get_text("dict")` **mọi trang**. Vài mili-giây với hợp đồng 3 trang, **vài chục giây**
+  với bộ bản vẽ A1 480 trang. Vì thế **KHÔNG quét theo từng ký tự gõ** (v0.2.55 có
+  debounce 350ms — gõ "2026" là **bốn** lượt đi hết tài liệu, và chúng **đua nhau**).
+  Gõ chỉ đặt cờ `stale`; **Enter / nút Tìm** mới là lệnh quét.
+- **`stale` khoá GHI, không khoá ĐỌC.** Vệt tô cũ vẫn đúng với bytes hiện tại (BI-50) nên
+  cứ để, ↑↓ vẫn duyệt được — nhưng hai nút **Thay** phải tắt, vì thay theo hit của **từ
+  khoá cũ** bằng **chữ thay mới** là ghi nhầm chỗ trong im lặng.
+- **`fr.sticky` phải thắng số đếm trong `refreshStatus()`.** Đây là lỗi thật của v0.2.55:
+  `runFind` ghi câu lỗi rồi `finally { setBusy(false) }` → `refreshStatus()` → **đè ngay
+  lập tức** bằng "Không tìm thấy kết quả nào.". Hệ quả: **mọi** thất bại — 400 "PDF quá
+  lớn", PDF là bản scan, mất kết nối sidecar, chạm trần `max_hits` — đều đến tay người
+  dùng dưới dạng "không tìm thấy", tức là **báo sai nguyên nhân**. Bốn câu bắt buộc đi
+  qua `setSticky()`, không phải `setStatus()`.
+- **Ô `#fr-find` khi bận: `readOnly`, KHÔNG `disabled`.** `disabled` làm rơi phím và mất
+  focus → ký tự gõ trong lúc quét biến mất. Ngược lại `#fr-case`/`#fr-word` **phải** nằm
+  trong danh sách `setBusy` — thiếu chúng thì tick giữa lúc quét đẻ ra lượt quét thứ hai.
+- **Mỗi lượt quét mang số thế hệ (`fr.runSeq`) + `AbortController`.** Lượt bị thay thế
+  không được vẽ, không được gỡ cờ bận. Đóng panel cũng huỷ lượt đang chạy.
+- **Trần payload phải khớp hai phía.** `MAX_B64` trong renderer = `_MAX_PDF_B64` trong
+  `src/pdf/util.py`; lưới so **xuyên ngôn ngữ** hai hằng số này. Chặn ở renderer để khỏi
+  mất vài giây dựng chuỗi base64 ~280MB cho một request chắc chắn bị từ chối.
+- **Vỡ khi:** gõ vào ô Tìm mà app đứng hình vài chục giây · hoặc file >200MB báo "không
+  tìm thấy" thay vì "PDF quá lớn" · hoặc file scan báo "không tìm thấy" thay vì nhắc OCR ·
+  hoặc đổi từ khoá rồi bấm Thay và nó thay theo từ khoá cũ.
+
+### BI-52 · /text-find: khớp MỘT lần trên DÒNG, hai trần khác nhau, cache khoá bằng toàn bộ bytes
+- `api.py` (`_find_build_index`, `_find_index_for`, `_find_scan_index`, `_text_find_core`,
+  `/text-find`, `/text-find-bin`); `renderer/find-replace.js` (`MAX_FIND_BIN`,
+  `MAX_EDIT_B64`, `overWriteLimit`). Lưới `.venv\Scripts\python test_text_find.py` +
+  `npm run test:find`.
+- **Biên "Đúng nguyên từ" tính trên DÒNG ghép, không trên span.** Bản cũ khớp hai lượt
+  (trong span + trên dòng) nên dòng vẽ thành `["AB","2026"]` báo `2026` là nguyên từ
+  (đúng là nó đứng đầu *span* của nó) **và cho thay** ⇒ **hỏng chữ `AB2026`**. Ghi sai
+  trong im lặng. Khớp một lượt trên `joined` rồi ánh xạ ngược ra span cho biên đúng, và
+  ít code hơn hẳn dạng hai lượt.
+- **Span toàn khoảng trắng GIỮ text trong `joined`, nhưng không bao giờ nhận lệnh ghi.**
+  PyMuPDF đẻ ra span `' '` thật mỗi khi một dòng được vẽ làm nhiều mẩu (bước nhảy Td/TJ —
+  rất hay gặp ở văn bản canh đều/xuất từ CAD). Vứt nó đi làm dòng ghép thành `"Hợpđồng"`
+  nên **không tìm ra "Hợp đồng"**. Cờ `host=False` giữ chữ mà chặn ghi.
+- **ĐO ĐƯỢC, đừng đoán:** PyMuPDF **tự gộp** span cùng style vẽ liền nhau, nên "202"+"6"
+  cùng style **không** tách. Tách span nghĩa là style **thật sự** khác — lệch cỡ chữ
+  **0.0001pt cũng đủ**. Vì vậy "gộp lại span cùng style" là việc **không có gì để làm**;
+  mọi chỗ tách đều đi nhánh `replaceable=False` (BI-50).
+- **HAI trần, khác nhau, và renderer phải soi gương cả hai.** Đọc đi `/text-find-bin`
+  (body **là** file PDF) → trần `_MAX_PDF_BIN` = 1GB. Ghi vẫn đi `/edit-text` (request là
+  base64 JSON) → trần `_MAX_PDF_B64` ≈ 200MB. Nên tài liệu 300MB **tìm được nhưng chưa
+  thay được**, và UI phải **nói thẳng** (mờ hai nút Thay + ghi lý do trên dòng đếm) chứ
+  không để người dùng bấm Thay rồi nhận lỗi. Lưới so **xuyên ngôn ngữ** cả hai hằng số.
+- **Cache index span khoá bằng blake2b của TOÀN BỘ bytes.** Khoá bằng độ dài + vài mẩu
+  lấy mẫu là sai chết người: sửa ở giữa file vẫn trùng khoá ⇒ dùng lại index ôi thiu ⇒
+  **mọi offset trỏ sai chỗ** — đúng kiểu vỡ của BI-50 nhìn từ phía kia. Cache giữ **một**
+  tài liệu, đổi bằng **một tuple** `(key, pages)` để đọc song song không bao giờ ghép
+  khoá mới với index cũ. Có trần `_FIND_CACHE_MAX_PARTS` để file bệnh hoạn không ghim
+  hàng trăm MB trong sidecar.
+- **Bộ cứu font legacy phải giống hệt `/text-spans`.** Thiếu nó thì "Sửa nội dung" hiện
+  đúng chữ TCVN3 còn Tìm bảo không có — hai tính năng bất đồng về việc trang giấy ghi gì.
+- **Vỡ khi:** tìm "Hợp đồng" trong văn bản canh đều ra 0 kết quả · hoặc tick "Đúng nguyên
+  từ" rồi Thay làm hỏng chữ dính liền · hoặc sửa tài liệu xong tìm lại vẫn ra kết quả cũ
+  (cache ôi thiu) · hoặc file 300MB tìm được nhưng bấm Thay ra lỗi khó hiểu.
+
 ---
 
 ## 4. Hàm nút thắt (đổi chữ ký = ảnh hưởng diện rộng)
@@ -1048,7 +1112,7 @@ chỉ tên hàm.
 | Đóng hộp thoại (`dismissModal`, `topOpenModal`, `[data-modal-close]`, `.modal-x`, `data-modal-manual`) | BI-48 · probe boot phải báo `dialogs_without_close` **và** `dialogs_without_x` rỗng · thử **cả ba** đường (Esc / bấm nền / ✕) trên: **Cài đặt** (hộp cuộn được — ✕ phải **dính** ở đầu khi cuộn xuống), **Nén**, **Gộp file** · bấm **bên trong** thẻ rồi thả chuột ra nền → hộp thoại **không** đóng · mở PDF có mật khẩu rồi `Esc` → app không treo, mở lại file được · `Esc` khi đang **F11** với 1 hộp thoại mở → chỉ đóng hộp thoại, **vẫn** ở toàn màn hình · `Esc` trong trang **Hướng dẫn** khi ô tìm còn chữ → xoá chữ trước, lần hai mới đóng (BI-47) |
 | `/compress` · `/compress-bin` · `_compress_pdf_bytes` · `runCompress` | BI-49 · `.venv\Scripts\python run_tests.py` · nén một PDF **>200MB thật** → ra file, **không** báo "PDF quá lớn" · nén PDF **>500 trang** → chạy, không báo "quá nhiều trang" · nén file hỏng/preset sai → hiện **đúng câu lỗi** chứ không lưu ra PDF rác · dòng toast ghi đúng cỡ trước → sau · **rebuild sidecar** trước khi đóng gói (đụng `api.py`) |
 | Thanh công cụ hàng 1 (`.brand`, `.brand-text`, `.by`, `icon-only` của `btn-save`/`btn-print`, `#sb-credit`) | Thu cửa sổ **1920 → 1600 → 1366 → 1280**: hàng 1 **không cao hơn** bản trước (đã đo bằng probe: 98 → 91px ở 1600) · nút **Lưu**/**In** rê chuột ra **đúng tooltip**, và `Ctrl+S`/`Ctrl+P` + menu **Tập tin** vẫn chạy · đổi **VI↔EN** → tooltip đổi theo, nút **không** mọc lại chữ (BI-10) · dòng `developed by Nam Ta` thấy được ở **thanh trạng thái** kể cả khi cửa sổ hẹp (dưới 1400px byline trên brand bị ẩn có chủ ý) |
-| `renderer/find-replace.js` · `/text-find` · Ctrl+H | BI-50 · `cd desktop ; npm run test:find` **và** `.venv\Scripts\python run_tests.py` · rồi **test tay trên hợp đồng thật**: tìm một từ có ≥2 lần **trên cùng một dòng** → **Thay tất cả** → mở lại file, **cả hai** đều đổi (bẫy gộp span) · **Thay** từng cái từ trên xuống, bấm ↓ bỏ qua vài chỗ → chỉ đúng chỗ đã bấm Thay bị đổi · thay bằng chuỗi **chứa chính từ khoá** ("hợp đồng" → "phụ lục hợp đồng") → **dừng lại**, không lặp vô hạn · `Ctrl+Z` sau "Thay tất cả" → về nguyên trạng **trong một bước** · tìm xong rồi **xoá một trang** → vệt tô **biến mất** (BI-50) · mở trên **PDF scan** → báo đi OCR, không im lặng · từ khoá **có dấu** ("hợp đồng") tìm ra, gõ **không dấu** thì **không** ra (cố ý) · trang có chữ **in đậm giữa từ** → vệt **vàng nét đứt**, nút **Thay** mờ · **zoom** khi đang mở → vệt bám đúng chữ (BI-36) · đang **Chú thích**/**Sửa nội dung** → bấm Ctrl+H bị từ chối (BI-2) |
+| `renderer/find-replace.js` · `/text-find` · Ctrl+H | BI-50 + **BI-51** · `cd desktop ; npm run test:find` **và** `.venv\Scripts\python run_tests.py` · **BI-51 test tay:** gõ vào ô Tìm → **không** có gì chạy, app không đứng · `Enter` → quét **một** lượt · gõ thêm ký tự → hai nút **Thay** tắt, vệt tô cũ còn nguyên · file **>200MB** → hiện **"PDF quá lớn"**, không phải "không tìm thấy" · file **scan** → nhắc **OCR**, không phải "không tìm thấy" · rồi **test tay trên hợp đồng thật**: tìm một từ có ≥2 lần **trên cùng một dòng** → **Thay tất cả** → mở lại file, **cả hai** đều đổi (bẫy gộp span) · **Thay** từng cái từ trên xuống, bấm ↓ bỏ qua vài chỗ → chỉ đúng chỗ đã bấm Thay bị đổi · thay bằng chuỗi **chứa chính từ khoá** ("hợp đồng" → "phụ lục hợp đồng") → **dừng lại**, không lặp vô hạn · `Ctrl+Z` sau "Thay tất cả" → về nguyên trạng **trong một bước** · tìm xong rồi **xoá một trang** → vệt tô **biến mất** (BI-50) · mở trên **PDF scan** → báo đi OCR, không im lặng · từ khoá **có dấu** ("hợp đồng") tìm ra, gõ **không dấu** thì **không** ra (cố ý) · trang có chữ **in đậm giữa từ** → vệt **vàng nét đứt**, nút **Thay** mờ · **zoom** khi đang mở → vệt bám đúng chữ (BI-36) · đang **Chú thích**/**Sửa nội dung** → bấm Ctrl+H bị từ chối (BI-2) |
 | `i18n.js` | Đổi VI↔EN khi đang mở tài liệu, đang chú thích, đang sửa nội dung |
 | `api.py` / `src/pdf/*` | `.venv\Scripts\python run_tests.py` **và** rebuild sidecar trước khi đóng gói |
 
@@ -1084,6 +1148,9 @@ chỉ tên hàm.
    (bù xoay trang cho **mọi** kind của `drawOneAnnot`, **cắt thẳng từ `editor.js`** và
    chạy trên chính pdf.js + pdf-lib đang ship — BI-45. Có ca canh gác dựng lại đúng lỗi
    mây bị xoay, nên lưới này **không thể** xanh một cách vô nghĩa).
+2k1. `.venv\Scripts\python test_text_find.py` → phải `N pass, 0 fail`
+   (luật khớp của `/text-find` — BI-52: biên nguyên-từ trên dòng, span khoảng trắng,
+   cache khoá bằng toàn bộ bytes, `/text-find-bin` khớp `/text-find` từng hit).
 2k. `cd desktop ; npm run test:find` → phải `N pass, 0 fail`
    (số học Tìm & Thay thế trong `renderer/find-replace.js` — BI-50. Lưới này cũng kiểm
    **mọi khoá `tr()` có trong từ điển i18n**, `fr-status` nằm trong `SKIP_IDS`,

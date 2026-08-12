@@ -534,8 +534,13 @@
         <b>Tìm &amp; Thay thế</b>
         <button id="fr-close" class="icon-only" title="Đóng" aria-label="Đóng">✕</button>
       </div>
+      <!-- The scan is explicit, not search-as-you-type: one walk of the whole document
+           per press, because on a 480-page file each walk costs tens of seconds. -->
       <label>Tìm
-        <input type="text" id="fr-find" placeholder="Chữ cần tìm…" autocomplete="off" spellcheck="false" />
+        <span class="fr-row">
+          <input type="text" id="fr-find" placeholder="Chữ cần tìm…" autocomplete="off" spellcheck="false" />
+          <button id="fr-go" title="Quét toàn bộ tài liệu (Enter)">Tìm</button>
+        </span>
       </label>
       <label>Thay bằng
         <input type="text" id="fr-replace" placeholder="Chữ thay thế…" autocomplete="off" spellcheck="false" />

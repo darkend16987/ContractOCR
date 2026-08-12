@@ -436,8 +436,12 @@
         {
           ul: [
             T(
-              "Gõ chữ cần tìm → app quét **toàn bộ tài liệu** và tô sáng mọi vị trí, kèm số đếm. `Enter` / `Shift+Enter` (hoặc nút ↑ ↓) đi tới vị trí kế / trước.",
-              "Type what to find → the app scans the **whole document**, highlights every match and shows a count. `Enter` / `Shift+Enter` (or the ↑ ↓ buttons) step to the next / previous one."
+              "Gõ chữ cần tìm rồi bấm **Tìm** (hoặc `Enter`) → app quét **toàn bộ tài liệu** và tô sáng mọi vị trí, kèm số đếm. App **không** quét theo từng ký tự bạn gõ: mỗi lần quét là một lượt đọc hết tài liệu, với tệp vài trăm trang có thể mất vài chục giây.",
+              "Type what to find, then press **Tìm** (or `Enter`) → the app scans the **whole document**, highlights every match and shows a count. It does **not** scan as you type: each scan reads the entire document, which on a several-hundred-page file can take tens of seconds."
+            ),
+            T(
+              "Sau khi đã có kết quả, `Enter` / `Shift+Enter` (hoặc nút ↑ ↓) đi tới vị trí kế / trước. Đổi từ khoá hay đổi tuỳ chọn thì kết quả cũ thành **quá hạn** — hai nút **Thay** tạm khoá cho tới khi bạn quét lại.",
+              "Once you have results, `Enter` / `Shift+Enter` (or the ↑ ↓ buttons) step to the next / previous one. Changing the keyword or an option marks the old results **stale** — both **Thay** buttons stay locked until you scan again."
             ),
             T(
               "**Thay** đổi đúng vị trí đang chọn (viền cam) rồi tự nhảy sang vị trí kế — duyệt lần lượt từ trên xuống, muốn bỏ qua chỗ nào thì bấm ↓ thay vì **Thay**.",
@@ -456,8 +460,12 @@
               "`Ctrl+Z` undoes an entire **Replace all** in a single step."
             ),
             T(
-              "Tài liệu **rất lớn (trên ~200MB)** chưa dùng được Tìm & Thay thế — dùng **Nén** để giảm dung lượng trước.",
-              "**Very large documents (over ~200MB)** are not supported by Find & Replace yet — shrink the file with **Nén** (Compress) first."
+              "Tài liệu **rất lớn** vẫn **tìm** được (bộ bản vẽ vài trăm trang, tới ~1GB). Riêng việc **thay** thì tài liệu trên **~200MB** chưa ghi được — app sẽ báo ngay trên dòng đếm và mờ hai nút **Thay**; dùng **Nén** để giảm dung lượng trước.",
+              "**Very large documents** can still be **searched** (drawing sets of several hundred pages, up to ~1GB). **Replacing** is the part still capped: above **~200MB** the app says so on the count line and greys out both **Thay** buttons — shrink the file with **Nén** (Compress) first."
+            ),
+            T(
+              "Lần tìm **thứ hai trở đi** trên cùng tài liệu nhanh hơn hẳn: app nhớ lại bản đồ chữ đã đọc, chỉ đọc lại khi tài liệu thay đổi.",
+              "The **second and later** searches of the same document are much faster: the app keeps the text map it built and only rebuilds it when the document changes."
             ),
           ],
         },

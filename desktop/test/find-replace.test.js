@@ -316,5 +316,93 @@ const pushIdx = src.indexOf("DocHistory.pushUndo");
 const assignIdx = src.indexOf("state.bytes = new Uint8Array");
 check("pushUndo comes before state.bytes is replaced", pushIdx > 0 && pushIdx < assignIdx, true);
 
+// ---- the scan is EXPLICIT (v0.2.56) ---------------------------------------
+//
+// Search-as-you-type was the original design and it does not survive contact with a
+// real document: one keystroke = base64 the whole PDF + reopen it + get_text("dict")
+// every page, which is milliseconds on a 3-page contract and tens of seconds on a
+// 480-page A1 set. Typing "2026" fired four of those, and they raced.
+
+const htmlSrc = fs.readFileSync(path.join(__dirname, "..", "renderer", "index.html"), "utf8");
+
+check(
+  "typing marks the result stale instead of scanning",
+  /\$\("fr-find"\)\.addEventListener\("input",\s*\(\)\s*=>\s*markStale\(\)\)/.test(src),
+  true
+);
+check(
+  "no scan is wired to the input event",
+  /addEventListener\("input"[\s\S]{0,160}runFind/.test(src),
+  false
+);
+check("there is a button to start the scan", /id="fr-go"/.test(htmlSrc), true);
+check("that button is wired to runFind", /\$\("fr-go"\)\.onclick\s*=\s*\(\)\s*=>\s*runFind\(/.test(src), true);
+check("toggling an option does not scan either", /\$\("fr-case"\)\.onchange\s*=\s*\(\)\s*=>\s*markStale\(\)/.test(src), true);
+
+// A second scan landing on top of the first is how "không tìm thấy" got reported for
+// a word that IS in the document: the older, slower answer won.
+check("scans carry a generation number", /\+\+fr\.runSeq/.test(src), true);
+check("a superseded scan does not paint", /seq !== fr\.runSeq/.test(src), true);
+
+// The options were togglable mid-scan, which started a second walk of the same
+// document while the first was still running.
+const busyList = /for \(const id of \[([^\]]*)\]/.exec(src);
+check("setBusy locks the options too", !!busyList && /"fr-case"[\s\S]*"fr-word"/.test(busyList[1]), true);
+// …but the find box must NOT be disabled: a disabled input drops keystrokes and loses
+// focus, so characters typed during a scan vanished.
+check("the find box is not disabled mid-scan", !!busyList && !/"fr-find"/.test(busyList[1]), true);
+check("the find box is read-only mid-scan instead", /readOnly = !!on/.test(src), true);
+
+// THE bug behind "it only ever says không tìm thấy": setBusy(false) → refreshStatus()
+// ran in runFind's `finally` and overwrote whatever had just been reported — the
+// error, the "this is a scan" hint, the truncation warning. Every failure reached the
+// user as "no matches found". A sticky message has to outrank the running count.
+const stickyAt = src.indexOf("if (fr.sticky) return setStatus");
+const countAt = src.indexOf('tr("Không tìm thấy kết quả nào.")');
+check("refreshStatus paints a sticky message first", stickyAt > 0 && stickyAt < countAt, true);
+// For each message that must survive: the painter call it is passed to has to be
+// setSticky, not the wipeable setStatus.
+function paintedStickily(label) {
+  const at = src.indexOf(label);
+  if (at < 0) return false;
+  const before = src.slice(Math.max(0, at - 220), at);
+  return before.lastIndexOf("setSticky(") > before.lastIndexOf("setStatus(");
+}
+for (const label of ["Lỗi tìm: {msg}", "Quá nhiều kết quả", "không có chữ thật", "PDF quá lớn để tìm"]) {
+  check(`"${label}" survives the busy flag being cleared`, paintedStickily(label), true);
+}
+
+// ---- the two ceilings (v0.2.56) -------------------------------------------
+//
+// Reading and writing travel differently, so they have DIFFERENT limits, and the
+// renderer has to mirror both. Get one wrong and it either refuses documents the
+// sidecar would have taken, or lets the user press Thay on a document /edit-text is
+// going to reject.
+const utilPy = fs.readFileSync(path.join(__dirname, "..", "..", "src", "pdf", "util.py"), "utf8");
+const apiPy = fs.readFileSync(path.join(__dirname, "..", "..", "api.py"), "utf8");
+const num = (m) => (m ? Number(m[1].replace(/_/g, "")) : NaN);
+
+const pyB64 = num(/_MAX_PDF_B64\s*=\s*([\d_]+)/.exec(utilPy));
+const jsEdit = num(/const MAX_EDIT_B64 = ([\d_]+);/.exec(src));
+check("renderer and sidecar agree on the WRITE ceiling", pyB64 === jsEdit && pyB64 > 0, true);
+
+const pyBin = num(/_MAX_PDF_BIN\s*=\s*([\d_]+)/.exec(apiPy));
+const jsFind = num(/const MAX_FIND_BIN = ([\d_]+);/.exec(src));
+check("renderer and sidecar agree on the READ ceiling", pyBin === jsFind && pyBin > 0, true);
+check("the read ceiling is the larger one", pyBin > pyB64, true);
+
+// The whole point of 3a: searching must not go through base64 any more.
+check("the search uses the binary route", /sidecarFetch\("\/text-find-bin"/.test(src), true);
+check("…with the document as the request body", /body: new Blob\(\[state\.bytes\]/.test(src), true);
+check("…and no base64 payload is built for it", /pdfJsonBody\(state\.bytes, \{\s*query/.test(src), false);
+// /edit-text is untouched and still base64 — that is deliberate, and the grid pins it
+// so nobody "tidies" the two paths into one without re-reading BI-21/23/25.
+check("the write path still uses pdfJsonBody", /sidecarFetch\("\/edit-text\?raw=1"[\s\S]{0,220}pdfJsonBody/.test(src), true);
+check("Thay is locked on a document too big to write", /lockWrite = fr\.busy \|\| fr\.stale \|\| overWriteLimit\(\)/.test(src), true);
+
+// The endpoint must actually exist on the sidecar side, with a raw body.
+check("/text-find-bin exists", /@app\.post\("\/text-find-bin"/.test(apiPy), true);
+check("…and reads the body as bytes", /async def text_find_bin[\s\S]{0,1600}await request\.body\(\)/.test(apiPy), true);
+
 console.log(`\nfind-replace: ${pass} pass, ${fail} fail`);
 process.exit(fail ? 1 : 0);

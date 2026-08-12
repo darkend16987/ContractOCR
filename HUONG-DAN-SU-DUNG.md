@@ -129,8 +129,11 @@ Giới hạn đã biết: sửa trong phạm vi từng đoạn (không tự dàn
 **Tìm & Thay thế (`Ctrl+H`)** — đổi một từ khoá xuất hiện nhiều chỗ trong cả tài liệu, giống `Ctrl+H`
 của Word. Mở bằng `Ctrl+H` hoặc nút **⇄** ở cuối ô *Tìm trong tài liệu* trên thanh công cụ.
 
-- Gõ chữ cần tìm → app quét **toàn bộ tài liệu**, tô sáng mọi vị trí và hiện số đếm. `Enter` /
-  `Shift+Enter` (hoặc nút ↑ ↓) đi tới vị trí kế / trước.
+- Gõ chữ cần tìm rồi bấm **Tìm** (hoặc `Enter`) → app quét **toàn bộ tài liệu**, tô sáng mọi vị trí
+  và hiện số đếm. App **không** quét theo từng ký tự bạn gõ: mỗi lượt quét là một lần đọc hết tài
+  liệu, với tệp vài trăm trang có thể mất vài chục giây.
+- Đã có kết quả rồi thì `Enter` / `Shift+Enter` (hoặc nút ↑ ↓) đi tới vị trí kế / trước. Đổi từ khoá
+  hoặc đổi tuỳ chọn thì kết quả cũ thành **quá hạn** — hai nút **Thay** tạm khoá cho tới khi quét lại.
 - **Thay** đổi đúng vị trí đang chọn (viền cam) rồi nhảy sang vị trí kế — duyệt lần lượt từ trên
   xuống, chỗ nào không muốn đổi thì bấm ↓ để bỏ qua.
 - **Thay tất cả** đổi hết trong một lần; app hỏi xác nhận kèm số lượng trước khi ghi. Một `Ctrl+Z`
@@ -145,7 +148,9 @@ của Word. Mở bằng `Ctrl+H` hoặc nút **⇄** ở cuối ô *Tìm trong t
 > 3. Khác ô `Ctrl+F`, ô này **có phân biệt dấu**: gõ "hop dong" **không** ra "hợp đồng". Cố ý như vậy —
 >    thay một kết quả bỏ dấu sẽ làm **mất dấu** trong hợp đồng của bạn.
 >
-> Tài liệu **trên ~200MB** chưa dùng được Tìm & Thay thế — hãy **Nén** bớt trước.
+> Tài liệu **rất lớn** vẫn **tìm** được (bộ bản vẽ vài trăm trang, tới ~1GB), và lần tìm thứ hai trở đi
+> trên cùng tài liệu nhanh hơn hẳn. Riêng việc **thay** thì tài liệu trên **~200MB** chưa ghi được — app
+> báo ngay trên dòng đếm và mờ hai nút **Thay**; hãy **Nén** bớt trước.
 
 > **Chèn chữ ký:** dùng nút **Chèn ảnh / chữ ký** → chọn ảnh chữ ký rồi bấm lên trang để đặt.
 > Nên dùng **PNG nền trong** để chữ ký không có hộp trắng đè lên tài liệu (ảnh JPG có nền đặc — app sẽ

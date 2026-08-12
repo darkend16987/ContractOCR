@@ -217,7 +217,43 @@ if (typeof document !== "undefined") {
       // doesn't fire a second scan on top of the anchored one applyEdits already
       // schedules. See invalidate().
       suppress: false,
+      // A message that must SURVIVE refreshStatus(): an error, the "this is a scan"
+      // hint, the truncation warning. Without this they were written and then wiped
+      // one line later, because setBusy(false) → refreshStatus() → "Không tìm thấy
+      // kết quả nào." — so every failure in here, including "PDF quá lớn", reached
+      // the user as "not found". {msg, kind} | null, cleared by the next scan.
+      sticky: null,
+      // The query/options changed since the last scan, so `hits` answers a question
+      // the user is no longer asking. Highlights stay (they are still true of the
+      // current bytes, BI-50) but the two Thay buttons go dark: replacing would
+      // rewrite matches of the OLD query with the NEW replacement text.
+      stale: false,
+      // Scan generation. A whole-document walk takes seconds on a big file, so two
+      // can easily be in flight (Enter pressed twice, a replace re-scan overlapping
+      // a manual one). Without this the SLOWER one lands last and wins, and the
+      // user is told "không tìm thấy" about a query they already replaced.
+      runSeq: 0,
+      abort: null,
     };
+
+    // TWO ceilings, because reading and writing travel differently.
+    //
+    // Finding goes through /text-find-bin: the request body IS the PDF, so the limit
+    // is the sidecar's raw-bytes ceiling (_MAX_PDF_BIN in api.py) — 1 GB, which no
+    // real document reaches. Replacing still goes through /edit-text, whose request is
+    // base64 JSON and therefore still capped at _MAX_PDF_B64 (src/pdf/util.py, ~200 MB
+    // of document). So a 300 MB drawing set can be SEARCHED but not rewritten, and the
+    // UI has to say that plainly instead of letting the user press Thay and collect an
+    // error. Making the write path binary too is a separate job: /edit-text is the most
+    // dangerous function in the app (BI-21/23/25) and does not get refactored in the
+    // same change as a search fix.
+    const MAX_FIND_BIN = 1000000000;
+    const MAX_EDIT_B64 = 280000000;
+
+    // Would /edit-text refuse this document? Same arithmetic the base64 encoder does.
+    function overWriteLimit() {
+      return !!state.bytes && Math.ceil(state.bytes.length / 3) * 4 > MAX_EDIT_B64;
+    }
 
     const $ = (id) => document.getElementById(id);
     // Runtime strings go through i18n's t() with {name} substitution. Guarded because
@@ -289,29 +325,93 @@ if (typeof document !== "undefined") {
       el.className = "fr-status" + (kind ? " " + kind : "");
     }
 
+    // Button enablement only. Split out of refreshStatus() because that function has
+    // early returns for "no query" and "no matches", and the buttons were left in
+    // whatever state setBusy() last put them — enabled, with zero hits behind them.
+    function syncButtons() {
+      const { total, replaceable } = PURE.summarise(fr.hits);
+      const cur = fr.hits[fr.cur];
+      // `stale` locks writing, not navigating: stepping through last scan's matches
+      // is harmless, replacing against them is not.
+      const lockWrite = fr.busy || fr.stale || overWriteLimit();
+      $("fr-replace-one").disabled = !(cur && cur.replaceable) || lockWrite;
+      $("fr-replace-all").disabled = !replaceable || lockWrite;
+      $("fr-prev").disabled = total < 1 || fr.busy;
+      $("fr-next").disabled = total < 1 || fr.busy;
+      const go = $("fr-go");
+      if (go) go.disabled = fr.busy;
+    }
+
     function refreshStatus() {
-      const { total, crossing, replaceable } = PURE.summarise(fr.hits);
+      syncButtons();
+      // Order matters. A real message (error / scan / truncated) outranks the running
+      // count, and the count must never be able to overwrite it — that clobbering is
+      // exactly what made every failure look like "Không tìm thấy kết quả nào."
+      if (fr.sticky) return setStatus(fr.sticky.msg, fr.sticky.kind);
+      const typed = (($("fr-find") || {}).value || "").trim();
+      if (fr.stale) {
+        if (!typed) return setStatus("");
+        return setStatus(
+          fr.hits.length
+            ? tr("Đang hiện kết quả cũ — nhấn Enter để tìm lại.")
+            : tr("Nhấn Enter (hoặc nút Tìm) để quét tài liệu."),
+          "warn"
+        );
+      }
+      const { total, crossing } = PURE.summarise(fr.hits);
       if (!fr.query) return setStatus("");
       if (!total) return setStatus(tr("Không tìm thấy kết quả nào."), "warn");
       const i = fr.cur >= 0 ? fr.cur + 1 : 0;
+      // The document being too big to WRITE outranks the crossing count: it disables
+      // both Thay buttons, so saying why is more useful than saying how many.
+      if (overWriteLimit()) {
+        return setStatus(
+          tr("{i}/{n} kết quả · tài liệu quá lớn để thay tự động — dùng Nén trước", { i, n: total }),
+          "warn"
+        );
+      }
       const msg = crossing
         ? tr("{i}/{n} kết quả · {k} vị trí không thay tự động được", { i, n: total, k: crossing })
         : tr("{i}/{n} kết quả", { i, n: total });
       setStatus(msg, crossing ? "warn" : "");
-      const cur = fr.hits[fr.cur];
-      $("fr-replace-one").disabled = !(cur && cur.replaceable) || fr.busy;
-      $("fr-replace-all").disabled = !replaceable || fr.busy;
-      $("fr-prev").disabled = total < 1 || fr.busy;
-      $("fr-next").disabled = total < 1 || fr.busy;
+    }
+
+    // Show a message that outlives the next refreshStatus().
+    function setSticky(msg, kind) {
+      fr.sticky = { msg, kind: kind || "" };
+      refreshStatus();
     }
 
     function setBusy(on) {
       fr.busy = !!on;
-      for (const id of ["fr-replace-one", "fr-replace-all", "fr-prev", "fr-next", "fr-find", "fr-replace"]) {
+      // fr-case/fr-word were missing here, so an option could be toggled mid-scan and
+      // start a second walk of the same document on top of the first.
+      for (const id of ["fr-replace-one", "fr-replace-all", "fr-prev", "fr-next", "fr-replace", "fr-go", "fr-case", "fr-word"]) {
         const el = $(id);
         if (el) el.disabled = !!on;
       }
+      // NOT disabled: a disabled input drops keystrokes and loses focus, so typing
+      // during a scan silently ate characters. readOnly refuses the edit and keeps
+      // the caret where it is.
+      const inp = $("fr-find");
+      if (inp) inp.readOnly = !!on;
       if (!on) refreshStatus();
+    }
+
+    // The query no longer matches what is on screen. Called on every edit to the find
+    // box and on every option toggle — NOT a scan, which is the whole point: a scan is
+    // a walk of the entire document on the sidecar and only the user asks for one.
+    function markStale(msg) {
+      fr.stale = true;
+      fr.sticky = msg ? { msg, kind: "warn" } : null;
+      if (!($("fr-find").value || "").trim()) {
+        // Emptied the box — there is nothing the old highlights could still mean.
+        fr.hits = [];
+        fr.cur = -1;
+        fr.query = "";
+        drawAllLayers();
+      }
+      refreshStatus();
     }
 
     // ---- the scan -----------------------------------------------------------
@@ -321,6 +421,8 @@ if (typeof document !== "undefined") {
     async function runFind(anchor) {
       const q = ($("fr-find").value || "").trim();
       fr.query = q;
+      fr.sticky = null;
+      fr.stale = false;
       if (!q) {
         fr.hits = [];
         fr.cur = -1;
@@ -330,47 +432,103 @@ if (typeof document !== "undefined") {
         return;
       }
       if (!state.bytes) return;
+      if (state.bytes.length > MAX_FIND_BIN) {
+        fr.hits = [];
+        fr.cur = -1;
+        drawAllLayers();
+        setSticky(tr("PDF quá lớn để tìm (giới hạn ~1GB)."), "bad");
+        return;
+      }
+
+      // Claim this generation before the first await; everything after checks that it
+      // still owns it, so a superseded scan neither paints nor clears the UI.
+      const seq = ++fr.runSeq;
+      if (fr.abort) {
+        try {
+          fr.abort.abort();
+        } catch (_) {}
+      }
+      const ac = typeof AbortController !== "undefined" ? new AbortController() : null;
+      fr.abort = ac;
+
       setBusy(true);
       setStatus(tr("Đang tìm…"));
       try {
-        const res = await sidecarFetch("/text-find", {
+        // /text-find-bin, NOT /text-find: the JSON route carries the document as
+        // base64, which is ~33% more bytes to build and hand over, and capped the
+        // whole feature at ~200 MB — the exact size a several-hundred-page drawing
+        // set reaches, which is precisely the document nobody can search by hand.
+        // Here the request body IS the PDF (the /compress-bin move, BI-49) and only
+        // the small JSON answer comes back. A Blob keeps the bytes in Blink's blob
+        // store instead of the JS heap (BI-24 in spirit).
+        const qs =
+          "?query=" +
+          encodeURIComponent(q) +
+          "&match_case=" +
+          ($("fr-case").checked ? "true" : "false") +
+          "&whole_word=" +
+          ($("fr-word").checked ? "true" : "false");
+        const res = await sidecarFetch("/text-find-bin" + qs, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: pdfJsonBody(state.bytes, {
-            query: q,
-            match_case: $("fr-case").checked,
-            whole_word: $("fr-word").checked,
-          }),
+          headers: { "Content-Type": "application/pdf" },
+          signal: ac ? ac.signal : undefined,
+          body: new Blob([state.bytes], { type: "application/pdf" }),
         });
-        const data = await res.json();
-        if (!data.success) {
+        let data = null;
+        try {
+          data = await res.json();
+        } catch (_) {} // a 4xx/5xx with a non-JSON body must not read as "no matches"
+        if (seq !== fr.runSeq) return; // a newer scan owns the UI now
+        if (!data || !data.success) {
           fr.hits = [];
           fr.cur = -1;
           drawAllLayers();
-          setStatus(tr("Lỗi tìm: {msg}", { msg: data.error || data.detail || tr("không rõ") }), "bad");
+          // FastAPI's `detail` is a string for HTTPException but a LIST for a 422, and
+          // an object would reach the user as "[object Object]".
+          let msg = (data && (data.error || data.detail)) || (res.status ? "HTTP " + res.status : null);
+          if (msg && typeof msg !== "string") msg = JSON.stringify(msg);
+          setSticky(tr("Lỗi tìm: {msg}", { msg: msg || tr("không rõ") }), "bad");
           return;
         }
         fr.hits = data.hits || [];
         if (!data.has_text) {
-          setStatus(
+          fr.cur = -1;
+          drawAllLayers();
+          setSticky(
             tr('PDF này không có chữ thật (bản scan) — chạy "OCR văn bản" trong Công cụ trước.'),
             "bad"
           );
-          fr.cur = -1;
-          drawAllLayers();
           return;
         }
         fr.cur = fr.hits.length ? PURE.indexAtOrAfter(fr.hits, anchor) : -1;
         drawAllLayers();
-        refreshStatus();
-        if (data.truncated) {
-          setStatus(tr("Quá nhiều kết quả — chỉ hiện {n} vị trí đầu tiên.", { n: fr.hits.length }), "warn");
-        }
         if (fr.cur >= 0) await goTo(fr.cur, true);
+        if (seq !== fr.runSeq) return;
+        // After goTo, which repaints the count — otherwise this warning is written and
+        // immediately overwritten by "{i}/{n} kết quả".
+        if (data.truncated) {
+          setSticky(
+            data.truncated_page
+              ? tr("Quá nhiều kết quả — chỉ hiện {n} vị trí đầu tiên, dừng quét ở trang {p}.", {
+                  n: fr.hits.length,
+                  p: data.truncated_page,
+                })
+              : tr("Quá nhiều kết quả — chỉ hiện {n} vị trí đầu tiên.", { n: fr.hits.length }),
+            "warn"
+          );
+        } else {
+          refreshStatus();
+        }
       } catch (err) {
-        setStatus(tr("Lỗi tìm: {msg}", { msg: err.message }), "bad");
+        if (seq !== fr.runSeq || (err && err.name === "AbortError")) return;
+        setSticky(tr("Lỗi tìm: {msg}", { msg: err.message }), "bad");
       } finally {
-        setBusy(false);
+        // Only the generation that still owns the UI may release the busy lock; a
+        // superseded scan clearing it would re-enable every button mid-flight.
+        if (seq === fr.runSeq) {
+          fr.abort = null;
+          setBusy(false);
+        }
       }
     }
 
@@ -535,7 +693,9 @@ if (typeof document !== "undefined") {
       if (!inp.value && tb && tb.value.trim()) inp.value = tb.value.trim();
       inp.focus();
       inp.select();
-      if (inp.value.trim()) runFind(null);
+      // Carried over, NOT scanned. Opening the panel is not a request to walk a
+      // 480-page document; pressing Enter is.
+      markStale();
     }
 
     function closePanel() {
@@ -543,6 +703,18 @@ if (typeof document !== "undefined") {
       fr.hits = [];
       fr.cur = -1;
       fr.query = "";
+      fr.stale = false;
+      fr.sticky = null;
+      // Closing the panel abandons the question, so abandon the scan answering it —
+      // otherwise a 480-page walk keeps the sidecar busy for a panel nobody can see.
+      fr.runSeq++;
+      if (fr.abort) {
+        try {
+          fr.abort.abort();
+        } catch (_) {}
+        fr.abort = null;
+      }
+      if (fr.busy) setBusy(false);
       const p = $("fr-panel");
       if (p) p.hidden = true;
       clearLayers();
@@ -562,9 +734,12 @@ if (typeof document !== "undefined") {
       fr.hits = [];
       fr.cur = -1;
       clearLayers();
-      refreshStatus();
-      if (fr.suppress) return; // applyEdits re-scans itself, with an anchor
-      if (fr.query) runFind(null);
+      if (fr.suppress) return refreshStatus(); // applyEdits re-scans itself, with an anchor
+      // Not re-scanned automatically: a rotate or a page delete would otherwise cost a
+      // full document walk the user never asked for. The list is dropped either way —
+      // BI-50 is about not KEEPING stale offsets, not about refetching them.
+      if (fr.query) markStale(tr("Tài liệu vừa thay đổi — nhấn Enter để tìm lại."));
+      else refreshStatus();
     }
 
     // Wipe every trace — used when the document is replaced under us.
@@ -587,22 +762,29 @@ if (typeof document !== "undefined") {
     $("fr-next").onclick = () => step(1);
     $("fr-replace-one").onclick = replaceCurrent;
     $("fr-replace-all").onclick = replaceAll;
-    $("fr-case").onchange = () => runFind(null);
-    $("fr-word").onchange = () => runFind(null);
+    $("fr-go").onclick = () => runFind(null);
+    // An option toggle changes the answer, so the old one is stale — but it does NOT
+    // scan on its own, for the same reason typing doesn't.
+    $("fr-case").onchange = () => markStale();
+    $("fr-word").onchange = () => markStale();
 
-    // Typing re-runs the scan, debounced — every keystroke is a whole-document walk
-    // on the sidecar, so this is not a search-as-you-type field by accident.
-    let findTimer = null;
-    $("fr-find").addEventListener("input", () => {
-      clearTimeout(findTimer);
-      findTimer = setTimeout(() => runFind(null), 350);
-    });
+    // NOT search-as-you-type. Every scan is a whole-document walk on the sidecar —
+    // base64 the entire PDF, reopen it, get_text("dict") every page — which is
+    // milliseconds on a 3-page contract and tens of seconds on a 480-page A1 set. It
+    // used to run 350 ms after each keystroke, so typing "2026" cost four of those
+    // walks and the answers raced each other home. Typing now only marks the result
+    // stale; Enter or the Tìm button is what asks for the walk.
+    $("fr-find").addEventListener("input", () => markStale());
     $("fr-find").addEventListener("keydown", (e) => {
       if (e.key === "Enter") {
         e.preventDefault();
-        clearTimeout(findTimer);
-        if (fr.hits.length && fr.query === ($("fr-find").value || "").trim()) step(e.shiftKey ? -1 : 1);
-        else runFind(null);
+        // Same query as the last scan → step through the matches we already have.
+        // Anything else → scan.
+        if (!fr.stale && fr.hits.length && fr.query === ($("fr-find").value || "").trim()) {
+          step(e.shiftKey ? -1 : 1);
+        } else if (!fr.busy) {
+          runFind(null);
+        }
       } else if (e.key === "Escape") {
         e.preventDefault();
         e.stopPropagation();
