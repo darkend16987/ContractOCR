@@ -62,7 +62,7 @@
 const fs = require("fs");
 const path = require("path");
 const PDFLib = require("pdf-lib");
-const { PDFDocument, rgb, PDFName, PDFHexString, degrees } = PDFLib;
+const { PDFDocument, rgb, PDFName, PDFHexString, PDFRawStream, degrees } = PDFLib;
 // pdf.js prints a canvas/bindings warning on require in node — harmless here, we only
 // use PageViewport arithmetic (getViewport / convertTo*Point), never rasterisation.
 const pdfjs = require("pdfjs-dist/legacy/build/pdf.js");
@@ -103,22 +103,36 @@ function fnSource(name) {
 const {
   cloudPath, cloudPathPoly, bumpOf, symbolStrokes, arrowLabelPos,
 } = require("../renderer/annot-geom.js");
-const { makeMap, pageRotate } = require("../renderer/managed-codec.js");
+const {
+  makeMap, pageRotate, sniffImage, strToBytes, serializeManaged, pushPageAnnot,
+  normAngle, apRotatable, apMatrixFor, apRectFor,
+  NABU_KIND, NABU_DATA, NABU_SRC,
+} = require("../renderer/managed-codec.js");
+const { normTextStyle } = require("../renderer/annot-text.js");
+// At MODULE scope for the LIFTED `dataUrlToBytes`, which delegates to it — an eval'd
+// function resolves bare names here, not inside the function that called lift().
+// eslint-disable-next-line no-unused-vars
+const { b64ToU8 } = require("../renderer/wire.js");
 const SYMBOL_KINDS = new Set(["check", "cross"]);
-// Only the label/image branches touch these, and this grid deliberately drives no
-// labelled or image annot (they need a real canvas). Throwing beats returning junk:
-// if a future edit routes an unlabelled kind through here, the case fails loudly
-// instead of quietly measuring nothing.
+// The two CANVAS rasterisers stay stubbed to throw: this grid drives no text box and no
+// labelled arrow, and throwing beats returning junk — if a future edit routes such a
+// kind through here, the case fails loudly instead of quietly measuring nothing.
+// `dataUrlToBytes` / `sniffImage` are NOT stubbed (they are pure byte functions, no
+// canvas), because section 5 drives the image kind through the annotation writer.
 const renderTextPng = () => {
   throw new Error("renderTextPng: this grid drives no canvas-backed kind — see header");
 };
-const dataUrlToBytes = renderTextPng;
-const sniffImage = renderTextPng;
+const renderArrowPng = renderTextPng;
 const noteThreadText = renderTextPng;
 // eslint-disable-next-line no-eval
 const lift = (name) => eval("(" + fnSource(name) + ")");
 const hexRgb = lift("hexRgb");
+const dataUrlToBytes = lift("dataUrlToBytes");
 const drawOneAnnot = lift("drawOneAnnot");
+// The annotation writer, for section 5. `f` is its number formatter — ambiguous to
+// lift (a bare arrow const), and a 2-decimal formatter is not what this grid is about.
+const addManagedAnnot = lift("addManagedAnnot");
+const f = (n) => (+n).toFixed(2);
 
 // ---- content-stream reader (the measuring instrument) ---------------------
 
@@ -164,6 +178,45 @@ function inkUserPoints(page) {
     }
   }
   return out;
+}
+
+// Same walk, but for XObject invocations instead of path operators: capture the CTM
+// live at each `Do` and push the unit square through it. drawImage emits no path ops at
+// all (`q cm /Img Do Q`), so inkUserPoints above is blind to it — this is the reader
+// section 5 needs to see where a flattened IMAGE landed.
+function xobjectUserQuad(page) {
+  const ops = page.contentStream ? page.contentStream.operators.map(String) : [];
+  const out = [];
+  let ctm = [1, 0, 0, 1, 0, 0];
+  const stack = [];
+  for (const line of ops) {
+    const t = line.trim().split(/\s+/);
+    const op = t[t.length - 1];
+    const n = t.slice(0, -1).map(Number);
+    if (op === "q") stack.push(ctm.slice());
+    else if (op === "Q") ctm = stack.pop() || [1, 0, 0, 1, 0, 0];
+    else if (op === "cm" && n.length === 6 && n.every((v) => !isNaN(v))) ctm = mul(n, ctm);
+    else if (op === "Do") for (const [u, v] of [[0, 0], [1, 0], [1, 1], [0, 1]]) out.push(apply(ctm, u, v));
+  }
+  return out;
+}
+
+// Where a VIEWER puts an appearance, by PDF 32000-1 §12.5.5: bound `Matrix × BBox` into
+// T, build A mapping T onto /Rect, draw the content through Matrix then A. Implemented
+// here rather than trusted, so the grid measures the placement a real reader computes —
+// including the scale factors, which are the tell for a stretched stamp.
+function apUserQuad(rect, m, w, h) {
+  const pts = [[0, 0], [w, 0], [w, h], [0, h]].map(([x, y]) => apply(m, x, y));
+  const xs = pts.map((p) => p[0]);
+  const ys = pts.map((p) => p[1]);
+  const tx = Math.min(...xs);
+  const ty = Math.min(...ys);
+  const tw = Math.max(...xs) - tx;
+  const th = Math.max(...ys) - ty;
+  const sx = tw ? (rect[2] - rect[0]) / tw : 1;
+  const sy = th ? (rect[3] - rect[1]) / th : 1;
+  const A = [sx, 0, 0, sy, rect[0] - tx * sx, rect[1] - ty * sy];
+  return { quad: pts.map(([x, y]) => apply(A, x, y)), scale: [+sx.toFixed(6), +sy.toFixed(6)] };
 }
 
 // One page at a given /Rotate, plus the pdf.js scale-1 viewport for it — the exact
@@ -299,6 +352,93 @@ const KINDS = [
   {
     const { page } = await makePage(0);
     check("pageRotate(unrotated page) is 0°", pageRotate(page).angle, 0);
+  }
+
+  // ---- 5. a RE-EDITABLE annotation lands where the flattened path put it (BI-59) --
+  //
+  // The same invariant as section 1, for the other writer. `addManagedAnnot` does not
+  // draw into the content stream at all — it writes a /Stamp whose /AP form the viewer
+  // places from /Rect + /Matrix — so section 1's reader cannot see it and section 1's
+  // pass says nothing about it. Until BI-59 the question did not arise: the three
+  // /AP-bearing kinds simply refused a rotated page and were flattened instead, which
+  // is irreversible and cost the user every text box on every drawing sheet.
+  //
+  // Reference is the SHIPPED flatten path for the same annot — not a hand-derived box.
+  // So a pass means "re-editable ink is where dan-cung ink was", and section 1 already
+  // pins dan-cung ink to where the user drew it. The chain is closed.
+  //
+  // Only the IMAGE kind is driven, for the reason in the header: text and arrow need a
+  // canvas. Their geometry is the SAME two calls (`apMatrixFor` / `apRectFor`) with a
+  // rasterised w×h, and `test:managed` pins /Matrix and /Rect per angle for them.
+  {
+    const PNG = Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAAD91JpzAAAAFklEQVR4nGP8z8DAwMDAxIAE0DkAAKUcA/wgQ8p3AAAAAElFTkSuQmCC",
+      "base64");
+    const a = { id: 1, kind: "image", x: 40, y: 60, w: 120, h: 90,
+                dataUrl: "data:image/png;base64," + PNG.toString("base64"), fmt: "png" };
+
+    // Read the annot the writer just produced back into a display-space quad.
+    async function annotDisplay(rot) {
+      const { doc, page, vp1 } = await makePage(rot);
+      const wrote = await addManagedAnnot(doc, page, a, makeMap(vp1, "orig"), new Map());
+      const ref = page.node.Annots().get(0);
+      const dict = doc.context.lookup(ref);
+      const rect = dict.get(PDFName.of("Rect")).asArray().map((n) => n.asNumber());
+      const form = doc.context.lookup(doc.context.lookup(dict.get(PDFName.of("AP"))).get(PDFName.of("N")));
+      const fd = form.dict || form;
+      const mtxObj = fd.get(PDFName.of("Matrix"));
+      const m = mtxObj ? mtxObj.asArray().map((n) => n.asNumber()) : [1, 0, 0, 1, 0, 0];
+      const bbox = fd.get(PDFName.of("BBox")).asArray().map((n) => n.asNumber());
+      const { quad, scale } = apUserQuad(rect, m, bbox[2] - bbox[0], bbox[3] - bbox[1]);
+      return { wrote, set: toDisplaySet(quad, vp1), scale, hasMatrix: !!mtxObj };
+    }
+    // The flattened path for the same annot, through the `Do` reader.
+    async function flatDisplay(rot) {
+      const { doc, page, vp1 } = await makePage(rot);
+      await drawOneAnnot(doc, page, a, makeMap(vp1, "orig"));
+      return toDisplaySet(xobjectUserQuad(page), vp1);
+    }
+
+    const flatRef = await flatDisplay(0);
+    check("the flatten reference actually produced a quad", flatRef.length, 4);
+    check("… and it is the box the user drew", bbox(flatRef), [40, 60, 160, 150]);
+    for (const rot of [0, 90, 180, 270]) {
+      check(`managed image: flatten path still agrees with 0° at ${rot}°`, await flatDisplay(rot), flatRef);
+      const got = await annotDisplay(rot);
+      check(`managed image: /Rotate ${rot} is written as a real annotation`, got.wrote, true);
+      check(`managed image: /Rotate ${rot} annotation == flattened placement`, got.set, flatRef);
+      check(`managed image: /Rotate ${rot} /AP mapping has no scaling (no stretch)`, got.scale, [1, 1]);
+      check(`managed image: /Matrix present only when rotated (${rot}°)`, got.hasMatrix, rot !== 0);
+    }
+
+    // ---- GUARD: prove section 5 can still FAIL ---------------------------------
+    // Re-creates the pre-BI-59 mistake by hand: an /AP written the naive way — no
+    // /Matrix, /Rect = [bx, by, bx+w, by+h] — on a rotated page. That is exactly what
+    // would ship if someone "simplified" apMatrixFor/apRectFor away, and it must
+    // DISAGREE. Without this case, section 5 could be vacuously green (same reasoning
+    // as the drawSvgPath guard in section 3 and BI-42).
+    const naive = async (rot) => {
+      const { vp1 } = await makePage(rot);
+      const [bx, by] = makeMap(vp1, "orig")(a.x, a.y + a.h);
+      const { quad } = apUserQuad([bx, by, bx + a.w, by + a.h], [1, 0, 0, 1, 0, 0], a.w, a.h);
+      return toDisplaySet(quad, vp1);
+    };
+    check("guard: the naive /AP is RIGHT at 0° (so the guard isn't measuring noise)",
+      JSON.stringify(await naive(0)), JSON.stringify(flatRef));
+    for (const rot of [90, 180, 270]) {
+      check(`guard: the naive /AP is wrong at ${rot}° (section 5 is sensitive)`,
+        JSON.stringify(await naive(rot)) !== JSON.stringify(flatRef), true);
+    }
+
+    // An angle that is not a quarter turn has no matrix that would place it right, so
+    // it must keep flattening. `/Rotate 45` is out of spec but real files carry it.
+    const odd = await makePage(0);
+    odd.page.node.set(PDFName.of("Rotate"), PDFLib.PDFNumber.of(45));
+    check("an out-of-spec /Rotate 45 still falls back to flatten",
+      await addManagedAnnot(odd.doc, odd.page, a, makeMap(odd.vp1, "orig"), new Map()), false);
+    check("apRotatable / normAngle normalise the way the writer assumes",
+      [apRotatable(-90), apRotatable(450), apRotatable(45), normAngle(-90), normAngle(360)],
+      [true, true, false, 270, 0]);
   }
 
   console.log(`annot-rotate: ${pass} pass, ${fail} fail`);

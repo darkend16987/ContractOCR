@@ -162,7 +162,33 @@
     return name;
   }
 
-  const api = { parseSpec, computeRange, formatList, extractFileName };
+  /**
+   * Which pages a page-level command acts on: just the page the user grabbed, or
+   * the whole ticked set when that page is one of them.
+   *
+   * This is the convention the thumbnail right-click menu has always used (act on
+   * one page outside the selection, keep the selection intact inside it — the same
+   * rule Explorer and Acrobat use), lifted out here because the cross-document
+   * page move needs the identical answer and getting it wrong means moving pages
+   * the user never pointed at.
+   *
+   * `index` is 0-based; `ticked` is state.selected (a Set) or any array of
+   * indices. Returns a sorted, de-duplicated 0-based array — never empty for a
+   * valid index, so a caller can act on it without a second guard.
+   */
+  function actionSet(index, ticked) {
+    const i = Math.floor(Number(index));
+    if (!Number.isInteger(i) || i < 0) return [];
+    const set = ticked instanceof Set ? ticked : new Set(Array.isArray(ticked) ? ticked : []);
+    if (!set.has(i)) return [i];
+    const out = [...set].filter((k) => Number.isInteger(k) && k >= 0).sort((a, b) => a - b);
+    // A Set that holds `i` cannot filter down to nothing, but a caller passing a
+    // hand-built array of junk plus `i` could — fall back to the grabbed page
+    // rather than returning "act on no pages" for a perfectly valid grab.
+    return out.length ? out : [i];
+  }
+
+  const api = { parseSpec, computeRange, formatList, extractFileName, actionSet };
   if (typeof window !== "undefined") window.PageRange = api;
   if (typeof module !== "undefined" && module.exports) module.exports = api;
 })();

@@ -131,6 +131,63 @@ contextBridge.exposeInMainWorld("desktop", {
     return () => ipcRenderer.removeListener("file:open", handler);
   },
 
+  // --- moving pages between documents (docs/SPEC-page-drag.md) ---
+  // This tab never names another tab: it either throws pages at a screen position
+  // (main resolves which window is there) or picks a destination id main handed it
+  // in the first place. Bytes only ever travel source → main → target (BI-52).
+  pages: {
+    // A page drag began here. Cheap and fire-and-forget — this also fires for a
+    // plain same-document reorder, which main answers with silence.
+    dragStart: () => ipcRenderer.send("pages:drag-start", {}),
+    // The drag ended. Main pairs it with the real cursor position and, if it landed
+    // in another window, runs the whole transfer before resolving:
+    // { action: "self"|"send"|"none", ok, inserted?, target?, reason? }.
+    dragEnd: () => ipcRenderer.invoke("pages:drag-end"),
+    // Destinations for "Chuyển trang tới…":
+    // [{ id, title, window, sameWindow, accepts, block }].
+    targets: () => ipcRenderer.invoke("pages:targets"),
+    // Send the pages this tab is offering to a destination from targets().
+    // Returns { ok, inserted?, target?, reason? }.
+    sendTo: (tabId) => ipcRenderer.invoke("pages:send-to", { tabId }),
+    // Answer a request from main. Every handler below is a QUESTION and must reply
+    // exactly once with the reqId it was given, or main times out and treats the
+    // whole transfer as "did not happen".
+    reply: (msg) => ipcRenderer.send("pages:reply", msg),
+    // Main asks: are you able to take pages right now? Reply { reqId, ok, block }.
+    onCanAccept: (cb) => {
+      const handler = (_e, msg) => cb(msg);
+      ipcRenderer.on("pages:can-accept", handler);
+      return () => ipcRenderer.removeListener("pages:can-accept", handler);
+    },
+    // Main asks the SOURCE: hand over the pages you are offering.
+    // Reply { reqId, ok, bytes, count, name, block }.
+    onExport: (cb) => {
+      const handler = (_e, msg) => cb(msg);
+      ipcRenderer.on("pages:export", handler);
+      return () => ipcRenderer.removeListener("pages:export", handler);
+    },
+    // Main asks the TARGET: insert these pages. msg: { reqId, bytes, count, from,
+    // at: {x,y}|null }. `at` is a point in THIS view's client coordinates (a
+    // hand-thrown page) or null (append at the end). Reply { reqId, ok, inserted }.
+    onReceive: (cb) => {
+      const handler = (_e, msg) => cb(msg);
+      ipcRenderer.on("pages:receive", handler);
+      return () => ipcRenderer.removeListener("pages:receive", handler);
+    },
+    // Pages are being dragged over this window: {x,y} in client coordinates, ~12/s.
+    onHover: (cb) => {
+      const handler = (_e, at) => cb(at);
+      ipcRenderer.on("pages:hover", handler);
+      return () => ipcRenderer.removeListener("pages:hover", handler);
+    },
+    // They left, or the drag ended. Drop every cue.
+    onHoverEnd: (cb) => {
+      const handler = () => cb();
+      ipcRenderer.on("pages:hover-end", handler);
+      return () => ipcRenderer.removeListener("pages:hover-end", handler);
+    },
+  },
+
   // --- clipboard (write an image out of a page) ---
   // bytes: Uint8Array PNG. Returns { ok, reason? }.
   writeClipboardImage: (bytes) => ipcRenderer.invoke("clipboard:write-image", bytes),

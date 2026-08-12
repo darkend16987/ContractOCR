@@ -809,6 +809,224 @@ ipcMain.handle("window:set-presentation", (e, on) => {
   return d.tw.setPresentation(!!on);
 });
 
+// ---- IPC: moving pages between documents ----------------------------------
+//
+// docs/SPEC-page-drag.md. Main is a ROUTER here and nothing else: it never parses
+// a PDF, and it never lets one renderer name another. Every transfer runs
+// source → main → target → main → source, so a renderer can only ever act on the
+// document it already owns (BI-55) — the webContents of the destination never
+// leaves this file.
+//
+// The transfer is deliberately COPY at this layer: main hands the target a set of
+// pages, and only the SOURCE may delete anything, only after the target has
+// confirmed the insert really happened (BI-56). A failure anywhere therefore
+// costs a duplicated page — visible, and one Ctrl+Z away — never a lost one.
+
+// One page-drag at a time: there is one cursor.
+let pageDrag = null; // { wc, timer, watchdog, hoveredWc }
+const PAGE_HOVER_MS = 80; // cue refresh — smooth enough to follow a hand
+const PAGE_DRAG_MAX_MS = 30000; // watchdog: a lost dragend must not leave a timer running (BI-58)
+const PAGE_ASK_MS = 800; // building the menu: a tab too busy to answer is greyed out
+const PAGE_DROP_ASK_MS = 3000; // an actual drop deserves patience — a mid-render tab is not a refusal
+const PAGE_EXPORT_MS = 60000; // pdf-lib load + copyPages + save on the source
+const PAGE_INSERT_MS = 180000; // same again on the target, plus a full re-render
+
+// main → renderer request/response. ipcMain cannot invoke INTO a renderer, so the
+// reply comes back on one shared channel carrying the same reqId. Resolves to null
+// on timeout or a dead renderer, and every caller treats null as "it did not
+// happen" rather than guessing.
+const pageReqs = new Map(); // reqId -> { wc, resolve, timer }
+let _pageReqSeq = 0;
+function askRenderer(wc, channel, payload, timeoutMs) {
+  return new Promise((resolve) => {
+    if (!wc || wc.isDestroyed()) return resolve(null);
+    const reqId = ++_pageReqSeq;
+    const timer = setTimeout(() => {
+      pageReqs.delete(reqId);
+      resolve(null);
+    }, timeoutMs);
+    pageReqs.set(reqId, { wc, resolve, timer });
+    try {
+      wc.send(channel, { ...(payload || {}), reqId });
+    } catch (_) {
+      clearTimeout(timer);
+      pageReqs.delete(reqId);
+      resolve(null);
+    }
+  });
+}
+// A reply counts only from the renderer the request was actually sent to.
+ipcMain.on("pages:reply", (e, msg) => {
+  const reqId = msg && msg.reqId;
+  const p = reqId ? pageReqs.get(reqId) : null;
+  if (!p || p.wc !== e.sender) return;
+  clearTimeout(p.timer);
+  pageReqs.delete(reqId);
+  p.resolve(msg);
+});
+
+function pageSend(wc, channel, payload) {
+  if (!wc || wc.isDestroyed()) return;
+  try {
+    wc.send(channel, payload);
+  } catch (_) {
+    /* renderer gone */
+  }
+}
+
+// Tell whichever renderer was showing a drop cue to stop. Called on every change
+// of hovered window and once more when the drag ends, so a cue can never outlive
+// the drag that drew it (P4).
+function endPageHover() {
+  if (pageDrag && pageDrag.hoveredWc) {
+    pageSend(pageDrag.hoveredWc, "pages:hover-end", {});
+    pageDrag.hoveredWc = null;
+  }
+}
+
+function stopPageDrag() {
+  if (!pageDrag) return;
+  endPageHover();
+  clearInterval(pageDrag.timer);
+  clearTimeout(pageDrag.watchdog);
+  pageDrag = null;
+}
+
+// While a page drag is in flight, push the cursor to the window under it so that
+// window can draw the insert cue. The cursor is read HERE for the same reason the
+// tab layer reads it here: renderer screen coordinates inside a WebContentsView
+// are offset by the window frame (docs/TABS-2B-DESIGN.md §2.3).
+function pageDragTick() {
+  if (!pageDrag) return;
+  if (pageDrag.wc.isDestroyed()) return stopPageDrag();
+  const src = Tabs.findDoc(pageDrag.wc);
+  let point = null;
+  try {
+    point = screen.getCursorScreenPoint();
+  } catch (_) {
+    /* no cursor info → classifyPageDrop returns "none" and we just clear the cue */
+  }
+  const d = Tabs.classifyPageDrop(point, src ? src.tw : null, Tabs.pageDropTargets());
+  // "self" is the shipped in-column reorder: not one byte of IPC, not one cue.
+  if (d.action !== "send") return endPageHover();
+  const wc = d.key.activeDocContents();
+  if (!wc) return endPageHover();
+  if (pageDrag.hoveredWc && pageDrag.hoveredWc !== wc) endPageHover();
+  pageDrag.hoveredWc = wc;
+  const at = Tabs.docViewLocalPoint(d.key.docViewScreenRect(), point);
+  if (at) pageSend(wc, "pages:hover", at);
+}
+
+// The one path pages ever travel. `at` is a point in the target view's client
+// coordinates (hand-thrown pages) or null (menu — append at the end, the same
+// predictable v1 choice the tab layer made for a tab dropped into another window,
+// docs/TABS-2B-DESIGN.md T8).
+//
+// Focus is deliberately NOT stolen: with COPY as the default the source document
+// is still the one being worked on, and for a destination that is an inactive TAB
+// switching to it would yank the user off the document they are reading. Both ends
+// toast instead, so whichever window is being looked at reports what happened.
+async function routePages(sourceWc, targetWc, { at, label } = {}) {
+  if (!targetWc || targetWc.isDestroyed()) return { ok: false, reason: "no-target" };
+  if (targetWc === sourceWc) return { ok: false, reason: "same-doc" };
+  // Ask the destination FIRST. It is the only side that can say whether that point
+  // is a real insert position, and asking costs milliseconds where exporting costs
+  // seconds on a large document — so a drop landed in the wrong place must not make
+  // the source grind through pdf-lib for nothing.
+  const can = await askRenderer(targetWc, "pages:can-accept", { at: at || null }, PAGE_DROP_ASK_MS);
+  if (!can || !can.ok) return { ok: false, reason: (can && can.block) || "busy" };
+  const ex = await askRenderer(sourceWc, "pages:export", {}, PAGE_EXPORT_MS);
+  if (!ex || !ex.ok || !ex.bytes) return { ok: false, reason: (ex && ex.reason) || "export-failed" };
+  const got = await askRenderer(
+    targetWc,
+    "pages:receive",
+    { bytes: ex.bytes, count: ex.count, from: ex.name || null, gap: can.gap },
+    PAGE_INSERT_MS
+  );
+  if (!got || !got.ok) return { ok: false, reason: (got && got.reason) || "insert-failed" };
+  return { ok: true, inserted: got.inserted || ex.count, target: label || null };
+}
+
+// A page drag started. Cheap on purpose: this fires for EVERY thumbnail drag,
+// including the plain same-document reorder, so it may not do real work.
+ipcMain.on("pages:drag-start", (e) => {
+  stopPageDrag(); // a previous drag that never reported its end
+  if (!Tabs.findDoc(e.sender)) return;
+  pageDrag = { wc: e.sender, timer: null, watchdog: null, hoveredWc: null };
+  pageDrag.timer = setInterval(pageDragTick, PAGE_HOVER_MS);
+  pageDrag.watchdog = setTimeout(stopPageDrag, PAGE_DRAG_MAX_MS);
+});
+
+// A page drag finished. Returns what the drop meant so the SOURCE can report it
+// and, for a Shift-move, delete its originals — only ever after ok:true.
+ipcMain.handle("pages:drag-end", async (e) => {
+  const mine = !!(pageDrag && pageDrag.wc === e.sender);
+  // Stop chasing the cursor, but LEAVE THE CUE UP. It is pointing at exactly where
+  // the pages are about to land, and taking it down before the insert finishes makes
+  // the destination flicker — and, when its page column was spring-loaded open, snap
+  // shut and re-open (P12). One hover-end goes out in the `finally` below instead.
+  if (mine) {
+    clearInterval(pageDrag.timer);
+    clearTimeout(pageDrag.watchdog);
+    pageDrag.timer = null;
+    pageDrag.watchdog = null;
+  }
+  try {
+    const src = Tabs.findDoc(e.sender);
+    if (!mine || !src) return { ok: false, action: "none" };
+    let point = null;
+    try {
+      point = screen.getCursorScreenPoint();
+    } catch (_) {
+      /* → "none": a drop we cannot place is a drop that does nothing */
+    }
+    const d = Tabs.classifyPageDrop(point, src.tw, Tabs.pageDropTargets());
+    if (d.action !== "send") return { ok: false, action: d.action };
+    const targetWc = d.key.activeDocContents();
+    const at = Tabs.docViewLocalPoint(d.key.docViewScreenRect(), point);
+    const res = await routePages(e.sender, targetWc, { at, label: Tabs.windowLabel(d.key) });
+    return { action: "send", ...res };
+  } finally {
+    // Only ever tear down OUR drag: another window's drag may be in flight.
+    if (mine) stopPageDrag();
+  }
+});
+
+// Destinations for "Chuyển trang tới…". Eligibility is ASKED at menu-open time
+// rather than remembered: whether a tab can take pages changes with every document
+// opened and every annotation session started, and a stale "yes" here would offer
+// a destination that then refuses (P13).
+ipcMain.handle("pages:targets", async (e) => {
+  if (!Tabs.findDoc(e.sender)) return [];
+  const cands = Tabs.pageTargetTabs(e.sender);
+  const replies = await Promise.all(
+    cands.map((c) => askRenderer(c.wc, "pages:can-accept", { at: null }, PAGE_ASK_MS))
+  );
+  return cands.map((c, i) => {
+    const r = replies[i];
+    return {
+      id: c.id,
+      title: c.title,
+      window: c.window,
+      sameWindow: c.sameWindow,
+      accepts: !!(r && r.ok),
+      // No answer at all ⇒ that renderer is wedged or still loading. Say so rather
+      // than inventing a reason the tab never gave.
+      block: r ? r.block || null : "busy",
+    };
+  });
+});
+
+// "Chuyển trang tới <tab>" was picked. Unlike a dropped page this can address an
+// INACTIVE tab, which is the whole point: two tabs in one window can never be
+// drag targets for each other (SPEC-page-drag.md §4).
+ipcMain.handle("pages:send-to", async (e, { tabId } = {}) => {
+  if (!Tabs.findDoc(e.sender)) return { ok: false, reason: "no-source" };
+  const found = Tabs.findTabById(tabId);
+  if (!found || !found.tab.view) return { ok: false, reason: "no-target" };
+  return routePages(e.sender, found.tab.view.webContents, { at: null, label: found.tab.title });
+});
+
 // ---- IPC: tab strip (shell.html) -----------------------------------------
 
 // The ＋ button — open a new empty tab in the window that owns this strip.

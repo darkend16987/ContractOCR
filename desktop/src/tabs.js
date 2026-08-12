@@ -40,6 +40,12 @@ function configure(d) {
 const tabbedWindows = new Set();
 let _seq = 0; // monotonic tab id source (unique across all windows)
 let _focused = null; // most-recently-focused TabbedWindow
+// Monotonic "who was on top most recently" stamp. Electron exposes no window
+// z-order, and document views overlap constantly, so a page dropped where two
+// windows overlap has to be resolved somehow: focus recency is the honest proxy
+// (the window you can see at that spot is, in practice, the one you touched last).
+// Only classifyPageDrop uses it — the tab strips it does not affect.
+let _focusTick = 0;
 
 class TabbedWindow {
   // `bounds` (optional) places the window explicitly — used when a torn-out tab
@@ -91,6 +97,7 @@ class TabbedWindow {
     this.base.on("move", () => Session.schedule());
     this.base.on("focus", () => {
       _focused = this;
+      this._focusSeq = ++_focusTick;
     });
     this.base.on("close", (e) => this._onClose(e));
     this.base.on("closed", () => this._onClosed());
@@ -102,6 +109,7 @@ class TabbedWindow {
 
     tabbedWindows.add(this);
     _focused = this;
+    this._focusSeq = ++_focusTick; // a brand-new window is on top
     this._layout();
   }
 
@@ -416,6 +424,20 @@ class TabbedWindow {
     return { x: b.x, y: b.y, width: b.width, height: TAB_STRIP_H };
   }
 
+  // Screen rect (DIP) of the ACTIVE document view — the drop zone for pages
+  // dragged out of another window's page column (docs/SPEC-page-drag.md §3.2).
+  // Deliberately the same arithmetic as _layout: strip band first, document
+  // below it, and no band at all while presenting. Reading it any other way
+  // would put the hit test and the pixels on screen out of step.
+  docViewScreenRect() {
+    if (this.base.isDestroyed()) return null;
+    const b = this.base.getContentBounds();
+    const stripH = this._presenting ? 0 : TAB_STRIP_H;
+    const height = Math.max(0, b.height - stripH);
+    if (!height || !b.width) return null;
+    return { x: b.x, y: b.y + stripH, width: b.width, height };
+  }
+
   // Take a tab out of this window WITHOUT closing its webContents. Returns the
   // tab record, which the caller MUST hand to another window — an unadopted tab
   // is an orphaned renderer holding a whole document in RAM with no way to close
@@ -560,6 +582,14 @@ class TabbedWindow {
     this._emit();
   }
 
+  // webContents of THIS window's active tab. For a page dropped by hand this is
+  // the only sane destination: inactive views are detached from the content tree,
+  // so they are not on screen and nothing was aimed at them.
+  activeDocContents() {
+    const t = this._active();
+    return t && t.view && !t.view.webContents.isDestroyed() ? t.view.webContents : null;
+  }
+
   _emit() {
     // Every change to the tab set funnels through here, which makes it the one
     // place that has to remember the session.
@@ -639,6 +669,68 @@ function classifyDrop(point, sourceKey, rects, pad) {
   // Just past the edge of its own strip: still a reorder. Tearing needs intent.
   if (src && inside(src.rect, px, py)) return { action: "reorder", key: sourceKey };
   return { action: "tear", key: null };
+}
+
+// ---- page drop classification (pure) ---------------------------------------
+
+// What does a PAGE drop at `point` mean? Same shape and spirit as classifyDrop —
+// plain numbers, no Electron, no DOM, unit-tested (test/page-drop.test.js) —
+// but over the DOCUMENT views instead of the tab strips, because a page lands in
+// another document's page column, not in its tab strip.
+//
+//   rects     [{ key, rect, z }] — every visible window's document view, source
+//             included. `z` is the focus-recency stamp; among the windows under
+//             the cursor the HIGHEST z wins, which is how an overlap resolves to
+//             the window the user can actually see there.
+//   sourceKey the window the pages are being dragged from
+//
+// Three outcomes, and the two harmless ones are deliberately identical to
+// "do nothing":
+//   self  — ended inside its own window: the in-column reorder that has shipped
+//           since v0.2.41 owns this gesture, and this feature must never take it
+//           over (BI-57). Main sends nothing at all.
+//   send  — hand the pages to that window.
+//   none  — no target (empty desktop, another app, no cursor): nothing happens.
+//
+// Note the missing `pad`: unlike a tab, a page has nowhere to be "torn out" to,
+// so just-outside-a-window must mean nothing rather than something (P7).
+function classifyPageDrop(point, sourceKey, rects) {
+  const list = Array.isArray(rects) ? rects.filter((t) => t && t.rect) : [];
+  // No usable cursor position → do the harmless thing, exactly as classifyDrop does.
+  if (!point || !Number.isFinite(point.x) || !Number.isFinite(point.y)) return { action: "none", key: null };
+  const inside = (r) =>
+    point.x >= r.x && point.x <= r.x + r.width && point.y >= r.y && point.y <= r.y + r.height;
+  const src = list.find((t) => t.key === sourceKey);
+  if (src && inside(src.rect)) return { action: "self", key: sourceKey };
+  const zOf = (t) => (Number.isFinite(t.z) ? t.z : 0);
+  let best = null;
+  for (const t of list) {
+    if (t.key === sourceKey || !inside(t.rect)) continue;
+    if (!best || zOf(t) > zOf(best)) best = t;
+  }
+  return best ? { action: "send", key: best.key } : { action: "none", key: null };
+}
+
+// A screen point (DIP) expressed in the target document view's own client
+// coordinates, so the target renderer can hand it straight to elementFromPoint.
+// DIP and CSS px are the same number here because nothing in this app ever calls
+// setZoomFactor — the viewer zooms with a CSS transform inside the page instead.
+function docViewLocalPoint(rect, point) {
+  if (!rect || !point || !Number.isFinite(point.x) || !Number.isFinite(point.y)) return null;
+  return { x: Math.round(point.x - rect.x), y: Math.round(point.y - rect.y) };
+}
+
+// Every window that could receive dragged pages right now, with the recency stamp
+// classifyPageDrop needs. Minimised windows are left out: they have a bounds
+// rectangle but nothing visible to aim at.
+function pageDropTargets() {
+  const out = [];
+  for (const tw of tabbedWindows) {
+    if (tw.base.isDestroyed() || tw.base.isMinimized()) continue;
+    const rect = tw.docViewScreenRect();
+    if (rect) out.push({ key: tw, rect, z: tw._focusSeq || 0 });
+  }
+  return out;
 }
 
 // Bounds for a torn-out window: under the cursor, keeping the source window's
@@ -773,6 +865,47 @@ function findDoc(webContents) {
   return null;
 }
 
+// The inverse of findDoc: which tab carries this id, in any window. Used by the
+// "Chuyển trang tới…" menu, whose entries are tab ids.
+function findTabById(id) {
+  for (const tw of tabbedWindows) {
+    const tab = tw.tabs.find((t) => t.id === id);
+    if (tab) return { tw, tab };
+  }
+  return null;
+}
+
+// Every OTHER open tab, as a candidate destination for pages. Unlike a hand-thrown
+// page (which can only land in a visible view) the menu can address an INACTIVE
+// tab too: its renderer is alive and holds its whole document, it is merely
+// detached from the window's content tree.
+//
+// `window` is the window's number as a user would count them (1-based, creation
+// order). `wc` is here for main to talk to and MUST NOT be forwarded to a
+// renderer — a renderer that could name another renderer could read its document
+// (BI-55).
+function pageTargetTabs(exceptWc) {
+  const out = [];
+  let wi = 0;
+  for (const tw of tabbedWindows) {
+    if (tw.base.isDestroyed()) continue;
+    wi++;
+    const isOwn = exceptWc ? tw.tabs.some((t) => t.view && t.view.webContents === exceptWc) : false;
+    for (const t of tw.tabs) {
+      if (!t.view || t.view.webContents.isDestroyed()) continue;
+      if (t.view.webContents === exceptWc) continue;
+      out.push({
+        id: t.id,
+        title: t.title || "document.pdf",
+        window: wi,
+        sameWindow: isOwn,
+        wc: t.view.webContents,
+      });
+    }
+  }
+  return out;
+}
+
 function findByStrip(webContents) {
   for (const tw of tabbedWindows) {
     if (tw.strip && tw.strip.webContents === webContents) return tw;
@@ -859,6 +992,8 @@ module.exports = {
   planOpen,
   findDoc,
   findByStrip,
+  findTabById,
+  pageTargetTabs,
   focusedTabbedWindow,
   allDocContents,
   activeContents,
@@ -866,6 +1001,9 @@ module.exports = {
   windowLabel,
   handleDragEnd,
   classifyDrop,
+  classifyPageDrop,
+  docViewLocalPoint,
+  pageDropTargets,
   snapshotSession,
   restoreSession,
   sanitizeBounds,

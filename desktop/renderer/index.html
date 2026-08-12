@@ -1374,6 +1374,12 @@
     <script src="find-replace.js"></script>
     <script src="compare.js"></script>
     <script src="capture.js"></script>
+    <!-- page-move.js: AFTER app.js (uses the bare globals state / $ / toast /
+         insertBuffersAt / deletePages / thumbGapAt / showThumbGapCue / clearThumbCues /
+         toggleSidebar / toU8 / licBlocked / gateProFeature) and after page-range.js
+         (PageRange.actionSet). It resolves window.Capture lazily inside the menu
+         handler, so its position relative to capture.js does not matter. -->
+    <script src="page-move.js"></script>
     <script src="sign.js"></script>
     <!-- help.js last: it only needs $ from app.js and window.I18N from i18n.js, both of
          which are already up, and nothing else in the renderer depends on window.Help at

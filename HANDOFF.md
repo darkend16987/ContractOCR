@@ -4,7 +4,37 @@
 > [DESIGN.md](DESIGN.md) (kiến trúc), [ROADMAP.md](ROADMAP.md) (tiến độ chi tiết),
 > [SETUP.md](SETUP.md) (dựng môi trường).
 
-_Cập nhật: 2026-08-12 · v0.2.57 đã phát hành (dưới đây) · v0.2.56 là bản trước đó_
+_Cập nhật: 2026-08-12 · v0.2.58 đã phát hành (dưới đây) · v0.2.57 là bản trước đó_
+
+> **v0.2.58 — hộp chữ/mũi tên/ảnh chèn sửa lại được cả trên trang đã xoay + Ảnh→PDF mở
+> ra để chỉnh trước khi lưu.** Bắt nguồn từ report thật: một file bản vẽ A3
+> (`/Rotate 270`) mà sau khi thêm hộp văn bản, bấm Xong, mở lại Chú thích thì **không sửa
+> lại được** — mũi tên/ảnh chèn cũng vậy. Chẩn đoán: **không phải hồi quy** — ba dòng
+> `return false` chặn trang xoay có từ v0.2.35/37/48 (đúng các bản sinh ra từng tính năng
+> sửa-lại-được), `git log -S` xác nhận không commit gần đây nào chạm vào. Đáng nói hơn:
+> chính tính năng **"Xoay trang"** của app cũng ghi `/Rotate`, nên xoay một trang trong
+> app là mất khả năng sửa chú thích trên trang đó, không cảnh báo gì. Xem
+> [docs/SPEC-annot-rotated.md](docs/SPEC-annot-rotated.md) cho toàn bộ phép đo.
+>
+> **Vá bằng cách đặt `/AP` qua `/Matrix` + `/Rect` tính lại** (PDF 32000-1 §12.5.5) thay vì
+> dán cứng thành pixel. Đo bằng ba đường độc lập trước khi ship: (1) chạy đúng hàm đang
+> ship trên chính file người dùng gửi — 4/4 loại chú thích quay lại sửa được, re-bake
+> không phình file; (2) lưới `test:managed`/`test:rotate` mở rộng lên **75 / 124** phép
+> kiểm, có ca canh gác dựng lại đúng lỗi cũ và đòi nó lệch; (3) **render bằng chính pdf.js
+> đang ship** trong Electron thật — ảnh đỏ đặc landing đúng `[40,60,160,150]`, đúng
+> `10.800` pixel (=120×90 khít) ở cả bản 0°, bản xoay và bản dán cứng cũ, nên không chỉ
+> đúng theo lý thuyết mà đúng trên chính bộ render người dùng nhìn thấy. **Trang không
+> xoay ra byte y hệt bản trước** — không ghi `/Matrix` khi góc là 0.
+>
+> **Ảnh → PDF giờ mở kết quả ngay trong app** (chưa lưu, có chấm ●) thay vì bắt Lưu As
+> trước — sắp xếp trang / xoay / chú thích xong mới `Ctrl+S`. `loadBytes()` nay trả về có
+> thay tài liệu thật hay không, để nhánh huỷ giữa chừng vẫn đề nghị lưu bytes vừa convert
+> thay vì để mất trắng.
+>
+> **Một chỗ hở có từ v0.2.35, chưa sửa, ghi lại để không quên:** `/NabuData` lưu hình học
+> theo không gian màn hình **lúc bake**; xoay trang *sau khi* đã bake làm vật thể sống
+> hiển thị lệch chỗ so với overlay khi mở lại — đo được, xem SPEC §11. Cần sửa
+> `serializeManaged`/`deserializeManaged` (đường đi của mọi kind) nên để riêng một bản.
 
 > **v0.2.57 — đợt RÀ SOÁT, không phải đợt tính năng** (**có đụng `api.py` + `sidecar.py`
 > ⇒ BẮT BUỘC rebuild sidecar**). Xuất phát từ một câu hỏi: hai đợt nâng/bỏ trần dung lượng

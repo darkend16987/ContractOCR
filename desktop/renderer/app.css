@@ -471,6 +471,19 @@ body.presenting .sidebar-resizer { display: none; }
 .toast.bad { color: var(--danger); }
 .toast.good { color: var(--ok); }
 .toast.warn { color: var(--warn); }
+/* Optional action on a toast (see toast() in app.js) — one button, inline, never
+   wider than the message it follows. */
+.toast-action {
+  margin-left: 12px;
+  padding: 3px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+  background: var(--bg-2);
+  color: var(--fg);
+  font-size: 12px;
+  cursor: pointer;
+}
+.toast-action:hover { border-color: var(--accent); color: var(--accent); }
 
 .overlay {
   position: fixed; inset: 0;

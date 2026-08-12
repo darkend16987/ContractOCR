@@ -15,10 +15,12 @@ tài liệu này chỉ có giá trị nếu được cập nhật.
 | `desktop/renderer/app.js` | ~4440 | State trung tâm + 12 hàm nút thắt. **Gần như mọi bản phát hành đều đụng.** |
 | `desktop/renderer/editor.js` | ~3180 | Overlay annotation, bake, form. Diff lớn nhất mỗi lần release. |
 | `desktop/renderer/annot-text.js` | ~230 | Bố cục chữ (`layoutTextBox`). Rủi ro **thấp** nhờ lưới `npm run test:text`, nhưng sai ở đây **im lặng**: hộp trên màn hình và PNG đem bake lệch nhau → chữ tràn/xuống dòng khác trong file đã lưu → xem BI-40. |
-| `desktop/renderer/managed-codec.js` | ~275 | Lớp object PDF riêng của chú thích sửa-lại-được. **Hậu quả cao nhất trong repo**: sai là **mất ảnh của người dùng** hoặc phình file âm thầm. Có lưới `npm run test:managed` → xem BI-37, BI-38, BI-14. |
+| `desktop/renderer/managed-codec.js` | ~340 | Lớp object PDF riêng của chú thích sửa-lại-được. **Hậu quả cao nhất trong repo**: sai là **mất ảnh của người dùng** hoặc phình file âm thầm. Từ v0.2.58 chứa thêm số học đặt `/AP` trên trang xoay (`apMatrixFor`/`apRectFor`) — thuần, nằm trong `test:managed` + `test:rotate`. Xem BI-37, BI-38, BI-14, BI-59. |
 | `desktop/renderer/annot-geom.js` | ~420 | Đường mây revision + nhãn mũi tên + `resizeRect` + (v0.2.50) `strokeExtend` (luật Shift của vẽ tay) + `symbolStrokes` (hình ✓/✗) + (v0.2.52) `snapLineEnd` (kéo một đầu mũi tên) và `annotBounds`/`translateAnnot`/`unionBounds`/`fitShift` (số học của copy–paste vật thể). Rủi ro **thấp** nhờ `npm run test:cloud` + `test:geom`; sai ở đây làm mây/dấu lệch chỗ **trong PDF đã lưu** (trên màn hình vẫn đúng), hoặc dán một mục ra **ngoài mép giấy** nơi không tay nắm nào tóm lại được → xem BI-40, BI-42, BI-46. |
-| `desktop/renderer/editor.js` — khối bake (`drawOneAnnot`) | ~200 dòng | Bù xoay trang. Rủi ro **cao và im lặng**: overlay trên màn hình luôn đúng, chỉ **file đã lưu** sai, và **chỉ trên trang có `/Rotate`** — tức đúng loại tài liệu (scan nằm ngang) mà người viết code không mở hằng ngày. Nay có lưới `npm run test:rotate` đi qua **mọi** kind → xem BI-45. |
+| `desktop/renderer/editor.js` — khối bake (`drawOneAnnot`) | ~200 dòng | Bù xoay trang. Rủi ro **cao và im lặng**: overlay trên màn hình luôn đúng, chỉ **file đã lưu** sai, và **chỉ trên trang có `/Rotate`** — tức đúng loại tài liệu (scan nằm ngang, bản vẽ A3) mà người viết code không mở hằng ngày. Nay có lưới `npm run test:rotate` đi qua **mọi** kind → xem BI-45. |
+| `desktop/renderer/editor.js` — ba nhánh `/AP` của `addManagedAnnot` | ~120 dòng | Cùng loại rủi ro im lặng như hàng trên, ở **đường annotation** thay vì đường dán cứng: viewer tự co giãn appearance cho khít `/Rect` (PDF §12.5.5) nên `/Rect` sai không làm con dấu lệch mà làm nó **méo**, và chỉ thấy trên trang xoay. `test:rotate` §5 đo lại đúng cùng một câu hỏi ("rơi vào đâu trên màn hình") bằng cách so với đường dán cứng đang ship, kèm **ca canh gác** → xem BI-59. |
 | `desktop/src/main.js` + `src/tabs.js` | — | Tầng cửa sổ/tab — **hệ con mới nhất, ít va đập thực tế nhất** (ra mắt v0.2.41). Có lưới tự động `npm run test:tabs` cho phần logic thuần. |
+| `desktop/renderer/page-move.js` | ~330 | Chuyển trang giữa hai tài liệu đang mở. Rủi ro **trung bình** nhưng hậu quả **cao nhất về dữ liệu**: nhánh MOVE **xoá trang ở tài liệu nguồn**. Nửa số học có lưới `npm run test:pagedrop`; nửa cử chỉ **máy không test được** (Chromium bỏ qua input tổng hợp trong đường kéo–thả, `TABS-2B-DESIGN.md` §2.2) nên chỉ có test tay + assertion trên source trong cùng lưới đó → xem BI-55, BI-56, BI-57, BI-58. |
 | `desktop/renderer/page-range.js` | ~170 | Số học khoảng trang. Rủi ro **thấp** vì có lưới `npm run test:pages`, nhưng hậu quả sai là **mất trang tài liệu** → xem BI-27. |
 | `desktop/renderer/pan.js` | ~380 | Bàn tay/pan. Rủi ro **trung bình**: nó giành sự kiện chuột **trên cùng phần tử** với `editor.js`/`capture.js`. Nửa logic có lưới `npm run test:pan`; nửa DOM thì không → xem BI-30/31. |
 | `desktop/renderer/find-replace.js` | ~700 | Tìm & Thay thế. Rủi ro **trung bình** nhưng hậu quả **cao và im lặng**: nó **ghi vào chữ gốc** của tài liệu hàng loạt. Nửa số học có lưới `npm run test:find`; nửa DOM chỉ có **assertion trên source** trong cùng lưới đó → xem BI-50, BI-51. |
@@ -1151,6 +1153,98 @@ _Ghi 2026-08-12, từ đợt rà soát hệ quả của việc nâng trần (`do
 
 ---
 
+### BI-55 · Một renderer không bao giờ được biết định danh của renderer khác
+_Ghi 2026-08-12, cùng đợt "kéo trang sang tài liệu khác" (`docs/SPEC-page-drag.md`)._
+
+- **Main là router duy nhất.** `desktop/src/main.js` (`routePages`, `askRenderer`) +
+  `src/tabs.js` (`pageTargetTabs`). Đường đi của một cú chuyển trang là
+  `nguồn → main → đích → main → nguồn`, và `webContents` của đích **không bao giờ** rời khỏi
+  `main.js`. Renderer chỉ được phép nói hai thứ: "có trang ở toạ độ này" (main tự tra cửa sổ
+  nào đang ở đó) hoặc một `tabId` **do chính main phát ra** trong `pages:targets`.
+- **Vì sao là bất biến, không phải sở thích:** mỗi tab là một renderer chạy PDF của người
+  dùng. Cho tab A gọi tên tab B là mở đường cho A **đọc tài liệu của B** — và một PDF độc
+  hại chỉ cần thắng đúng một renderer là đủ. Trả lời của renderer cũng chỉ được nhận từ
+  **đúng webContents đã được hỏi** (`pageReqs` giữ `wc`, `pages:reply` so trước khi resolve).
+- **Vỡ khi:** thêm một channel nhận `docId`/`tabId` do renderer tự khai rồi lấy bytes theo
+  đó · hoặc gửi `wc`/`webContentsId` xuống renderer cho "tiện".
+
+### BI-56 · Chuyển trang = CHÈN, XÁC NHẬN, rồi mới XOÁ — không bao giờ đổi thứ tự
+_Ghi 2026-08-12._
+
+- `desktop/renderer/page-move.js` (`dragEnd` → `const moved = !!shift && res.ok && unchanged(fp)`
+  → `if (moved) await deletePages(indices)`), `answerReceive` (`inserted = state.numPages - before`).
+  Đích chỉ trả `ok: true` khi tài liệu **thật sự dài ra** — không phải khi `insertBuffersAt`
+  trả về, vì hàm đó **return im lặng** khi bị cổng bản quyền chặn hoặc khi không có bytes.
+- **Kịch bản hỏng phải là "trang nhân đôi", không phải "trang biến mất".** Nhân đôi thì thấy
+  được và `Ctrl+Z` được; biến mất là mất việc của người dùng. Mọi timeout, mọi renderer chết
+  giữa đường đều rơi về phía nhân đôi vì nguồn **chưa xoá gì**.
+- **Nửa dễ bỏ sót:** `unchanged(fp)`. Chỉ số trang được đo lúc bắt đầu kéo; nếu tài liệu
+  nguồn đổi trong lúc chuyển (người dùng bấm Ctrl+Z, xoá trang khác…) thì những chỉ số đó
+  **trỏ sang trang khác** — xoá theo là xoá đúng thứ người dùng không hề nhắm tới. Dấu vân
+  tay là `docId + numPages + bytes.length`.
+- **Vỡ khi:** kéo Shift một trang sang cửa sổ khác rồi đóng cửa sổ đích ngay giữa lúc chèn,
+  mà trang ở nguồn vẫn mất · hoặc nút "Xoá khỏi bản gốc" xoá sai trang sau khi đã Ctrl+Z.
+
+### BI-57 · Điểm thả nằm trong cửa sổ NGUỒN ⇒ luôn là đường sắp xếp cũ
+_Ghi 2026-08-12._
+
+- `desktop/src/tabs.js` (`classifyPageDrop`: `if (src && inside(src.rect)) return { action: "self" }`
+  — **trước** vòng quét mọi cửa sổ khác, và **bất chấp** `z`). Đường liên tài liệu chỉ được
+  chen vào khi cú thả **không** rơi vào cửa sổ đã bắt đầu nó.
+- Kéo–thả sắp xếp trang trong cùng tài liệu đã phát hành từ v0.2.41 và là thao tác dùng hằng
+  ngày; tính năng mới **thêm việc** ở `dragstart`/`dragend` chứ không sửa việc cũ. Với cú kéo
+  nội bộ, main trả về `self` và **không có một byte IPC nào** được gửi đi, không cue nào được
+  vẽ ở đâu.
+- Chú ý ca "cửa sổ nguồn bị cửa sổ khác che": vẫn là `self`. Nhường cho `z` ở đây là biến một
+  cú sắp xếp bình thường thành gửi trang sang tài liệu khác. Có test: `npm run test:pagedrop`.
+- **Vỡ khi:** kéo sắp xếp trang trong một cửa sổ đang bị cửa sổ khác chồng lên, mà trang lại
+  bay sang tài liệu kia.
+
+### BI-58 · Vòng đọc con trỏ phải có watchdog, và cue không được sống lâu hơn phiên kéo
+_Ghi 2026-08-12._
+
+- `desktop/src/main.js` (`pageDrag`, `PAGE_DRAG_MAX_MS`, `stopPageDrag`, `endPageHover`).
+  Main **bám con trỏ bằng `setInterval`** trong lúc kéo, vì `event.screenX/screenY` từ trong
+  một `WebContentsView` lệch theo khung cửa sổ (`docs/TABS-2B-DESIGN.md` §2.3) nên toạ độ của
+  renderer không dùng được. Cái giá là một timer — và một timer thì phải có đường chết chắc
+  chắn: `dragend` (đường thường) **và** watchdog 30s (đường `dragend` không bao giờ tới).
+- **`hover-end` bắn SAU khi chèn xong, không phải trước.** Ở `pages:drag-end`, timer bị dừng
+  ngay nhưng cue **để nguyên**, và `stopPageDrag()` nằm trong `finally`. Hạ cue trước khi chèn
+  làm cửa sổ đích nháy — và nếu cột trang của nó vừa được **tự bung** ra để nhận thì nó sập
+  lại rồi mở ra lần nữa.
+- Tự bung cột trang phải **trả lại trạng thái cũ** khi phiên kéo không thả vào đó
+  (`renderer/page-move.js`: `springOpened`, `settleSpring`). Người dùng cố ý thu gọn cột thì
+  một cú kéo đi ngang **không được** đổi bố cục của họ.
+- **Vỡ khi:** kéo trang rồi nhả ngoài màn hình mà CPU vẫn quay (timer sống) · hoặc vạch chèn
+  đứng chết ở cửa sổ đích sau khi phiên kéo đã xong · hoặc cột trang tự bung rồi ở lại dù
+  người dùng chỉ lướt qua.
+
+---
+
+### BI-59 · Trang 0° phải ra **byte y hệt** — `/Matrix` chỉ được ghi khi trang thật sự xoay
+_Ghi 2026-08-12._
+
+- `desktop/renderer/managed-codec.js` (`normAngle`, `apRotatable`, `apMatrixFor`, `apRectFor`) +
+  ba nhánh `/AP` của `addManagedAnnot` (text / arrow / image).
+- Bối cảnh: trước v0.2.58 ba nhánh đó **từ chối** trang có `/Rotate` và rơi xuống dán cứng thành
+  pixel. Dán cứng là **không thể đảo lại** — `importManaged()` không còn gì để đọc, nên hộp văn
+  bản trên mọi bản vẽ (và trên mọi trang người dùng vừa **Xoay trang** trong app) là vĩnh viễn
+  không sửa lại được. Xem `docs/SPEC-annot-rotated.md`.
+- **Luật:** `if (normAngle(angle)) ap.Matrix = apMatrixFor(angle);` — trang 0° **không có key
+  `/Matrix`** nào cả, và `apRectFor(0, w, h, bx, by)` trả đúng `[bx, by, bx+w, by+h]` mà code cũ
+  viết thẳng. Tài liệu không xoay là tuyệt đại đa số; chúng phải lưu ra **cùng dãy byte** như
+  trước khi BI-59 tồn tại. Đừng "gọn hoá" bằng cách ghi luôn matrix đơn vị.
+- **`/Rect` phải đúng bbox của `Matrix × BBox`**, không phải `[bx, by, bx+w, by+h]`. Theo
+  PDF 32000-1 §12.5.5 viewer *co giãn* appearance cho khít `/Rect` — sai một chỗ này thì con dấu
+  không lệch, nó **méo**, và một test chỉ nhìn `/Matrix` sẽ không thấy gì.
+- Góc **không chia hết 90** (`/Rotate 45` — sai chuẩn nhưng có file thật) vẫn phải dán cứng.
+  `apRotatable` là cửa duy nhất; đừng thay bằng `% 360 !== 0`.
+- **Vỡ khi:** tài liệu bình thường (0°) lưu ra khác byte so với bản trước · hoặc con dấu/hộp chữ
+  trên trang xoay bị **méo** (dấu hiệu `/Rect` sai) hoặc **lệch 90°** (dấu hiệu `/Matrix` sai) ·
+  hoặc re-bake trên trang xoay để lại **hai** con dấu.
+
+---
+
 ## 4. Hàm nút thắt (đổi chữ ký = ảnh hưởng diện rộng)
 
 | Hàm | Định nghĩa | Ai gọi |
@@ -1180,11 +1274,14 @@ _Ghi 2026-08-12, từ đợt rà soát hệ quả của việc nâng trần (`do
 | Virtualization / `renderPageCanvas` / `freePageCanvas` | Cuộn nhanh lên-xuống PDF nhiều trang · in · so sánh · copy vùng ảnh (BI-4) · **`m.paintScale` còn được gán sau khi vẽ** (BI-36) |
 | Zoom (`zoomTo`, `applyScaleToDom`, `commitScale`, `wheelZoomFactor`, `renderViewer`) | `cd desktop ; npm run test:geom` · Ctrl+lăn **nhanh liên tục** → trang bám tay, dừng lại ~0.2s là **nét**, không nấc nào bị bỏ · Ctrl+lăn trên A0 nhiều trang → không treo · zoom rồi bôi đen chữ → **vệt chọn đúng chỗ** · Ctrl+F có kết quả rồi zoom → highlight đúng chỗ · zoom **khi đang Chú thích** → hình vẽ/hộp chữ theo đúng tỷ lệ, ô nhập chữ đang mở **không mất** · zoom khi đang “Sửa chữ” → ô span đúng chỗ · Vừa bề ngang / Vừa cả trang / Ctrl+0 · F11 vào/ra (BI-36, BI-22) |
 | Cột trang theo trang đang đọc (`syncThumbFocus`, `nearestScrollDelta`, `.thumb.current`) | `npm run test:geom` · cuộn tài liệu → thumbnail sáng đúng trang & tự trượt vào khung nhìn · **tick chọn vài trang rồi cuộn đi đâu đó → Xoá trang vẫn xoá đúng các trang đã tick** (BI-39, BI-26) · đang kéo sắp xếp trang thì cột **không nhảy** (BI-33) · thu sidebar (F4) rồi cuộn → không lỗi console · F11 → dải trang vẫn sáng đúng trang |
-| Ảnh round-trip (`addManagedAnnot` nhánh image, `managedSrcBytes`, `collectManagedChain`, `freeManagedTrash`, `MANAGED_KINDS`) | `cd desktop ; npm run test:managed` · chèn 1 ảnh → Áp dụng → Lưu → **mở lại** → Chỉnh sửa → ảnh **kéo/đổi cỡ/xoá được**, “Áp nhiều trang” vẫn dùng được · lưu 3–4 lần liên tiếp → **cỡ file không phình** · áp 1 chữ ký cho 20 trang → file ~1 lần cỡ ảnh, không 20 · ảnh trên trang **đã xoay** → vẫn dán chết như trước (đúng) · xoá ảnh round-trip rồi **thêm ô redact trên chính trang đó** → Áp dụng: ảnh **không** quay lại thành pixel, và ảnh còn lại **không nhân đôi** (BI-37, BI-38) |
+| Ảnh round-trip (`addManagedAnnot` nhánh image, `managedSrcBytes`, `collectManagedChain`, `freeManagedTrash`, `MANAGED_KINDS`) | `cd desktop ; npm run test:managed` · chèn 1 ảnh → Áp dụng → Lưu → **mở lại** → Chỉnh sửa → ảnh **kéo/đổi cỡ/xoá được**, “Áp nhiều trang” vẫn dùng được · lưu 3–4 lần liên tiếp → **cỡ file không phình** · áp 1 chữ ký cho 20 trang → file ~1 lần cỡ ảnh, không 20 · ảnh trên trang **đã xoay** → **cũng sửa lại được** kể từ v0.2.58, xem hàng dưới (BI-59) · xoá ảnh round-trip rồi **thêm ô redact trên chính trang đó** → Áp dụng: ảnh **không** quay lại thành pixel, và ảnh còn lại **không nhân đôi** (BI-37, BI-38) |
 | Tay nắm đổi cỡ (`resizeRect`, `RESIZABLE_KINDS`, `.handle.h-*`) | `npm run test:geom` · kéo **cả 4 góc** của ảnh/tô sáng/redact/chữ nhật/elip → góc đối diện **đứng yên** · **giữ Shift** → không méo · Esc giữa lúc kéo → về đúng vị trí+cỡ cũ · Ctrl+Z sau khi đổi cỡ · bấm vào tay nắm rồi **không kéo** → không tạo bước undo rỗng |
 | `editor.js` bake | Chú thích → Xong → sửa lại được · số trang không đổi · comment panel còn đúng (BI-5) |
+| Đặt `/AP` trên trang xoay (`apMatrixFor`, `apRectFor`, `apRotatable`, `normAngle`, ba nhánh `/AP` của `addManagedAnnot`) | `cd desktop ; npm run test:rotate ; npm run test:managed` · `docs/SPEC-annot-rotated.md` §7 lưới tay: với **cả 4 góc** `/Rotate` × {hộp chữ, mũi tên, ảnh, ghi chú} → bake → **Xong** → mở lại Chú thích → **sửa/kéo/xoá được**, không méo, không lệch 90° · re-bake 3 lần → **không** thành hai con dấu, file không phình · mở file đã bake bằng **Foxit + Acrobat + Chrome** → thấy đúng chỗ · và **hồi quy quan trọng nhất**: một tài liệu 0° bake rồi lưu phải ra **byte y hệt** bản trước (BI-59) |
+| Ảnh → PDF (`runImagesToPdf`) và **giá trị trả về của `loadBytes`** | Ảnh→PDF → kết quả **mở ra trong app** (không bắt Lưu trước), có chấm ● · sắp xếp lại trang / xoay / chú thích được · Ctrl+S → hiện hộp thoại **Lưu thành** · đang có tài liệu **bẩn** rồi chạy Ảnh→PDF → chọn **"Ở lại"** thì **vẫn được hỏi nơi lưu** file vừa tạo (không mất công convert) · đóng app khi chưa lưu → **có** cảnh báo |
 | Tầng tab/cửa sổ (`main.js`, `tabs.js`) | Toàn bộ `docs/TABS-TEST-L1.md` (24 mục) |
 | Tách tab / kéo tab (`detachTab`, `adoptTab`, `classifyDrop`, `shell.js` dragend) | `docs/TABS-2B-DESIGN.md` §6.2 (18 mục) · BI-15/16/17 · **mục #1 là hồi quy của tính năng sắp xếp tab** |
+| Chuyển trang giữa 2 tài liệu (`renderer/page-move.js`, `classifyPageDrop`, `docViewScreenRect`, `routePages`, `pages:*`) | `cd desktop ; npm run test:pagedrop` · `docs/SPEC-page-drag.md` §7.1 (22 mục) · BI-55/56/57/58 · **mục #1 và #2 là hồi quy của kéo-sắp-xếp trang và kéo file PDF vào cột trang** — hai thứ đã chạy tốt từ v0.2.41 mà tính năng này gắn thêm việc lên đúng cùng một cử chỉ |
 | Khôi phục phiên (`src/session.js`, `snapshotSession`, `_closing`, `tab:reserved`) | `docs/SESSION-RESTORE.md` §5.3 (14 mục) · BI-18/19/20 · **mục #12 là hồi quy của khôi phục sự cố** |
 | Guard đóng | BI-6: nút X vs menu Thoát vs Ctrl+Q — cả 3 đường |
 | Recovery/autosave | BI-7: mở 2 tab, chỉ tab đầu được hỏi khôi phục |

@@ -81,6 +81,7 @@ const {
   sniffImage, strToBytes, pushPageAnnot, makeMap, serializeManaged,
   managedSrcBytes, managedSrcDataUrl, collectManagedChain, freeManagedTrash,
   stripManagedFromPage, stripManagedAnnots,
+  normAngle, apRotatable, apMatrixFor, apRectFor,
 } = MC;
 // `normTextStyle` is what serializeManaged's text branch normalises through; required
 // here too so the LIFTED addManagedAnnot resolves it the same way the browser does.
@@ -177,12 +178,70 @@ function readManaged(doc) {
     got[0].dict.get(PDFName.of("Rect")).asArray().map((n) => Math.round(n.asNumber())),
     [40, A4.height - 150, 160, A4.height - 60]);
 
-  // ---- 3. a rotated page still flattens (unchanged behaviour) -----------
-  const rot = await PDFDocument.create();
-  const rotPage = rot.addPage([A4.width, A4.height]);
-  rotPage.setRotation(PDFLib.degrees(90));
-  check("rotated page refuses the round-trip and falls back to flatten",
-    await addManagedAnnot(rot, rotPage, imgAnnot(), map, new Map()), false);
+  // ---- 3. a rotated page ROUND-TRIPS too (BI-59) ------------------------
+  // Until BI-59 these kinds answered `false` on any /Rotate page and were flattened
+  // into pixels instead — and flattening is irreversible, so a text box on a rotated
+  // page (every CAD drawing; every page our own "Xoay trang" touched) was permanently
+  // un-editable. The GEOMETRIC half of the fix — "does it land where the flattened
+  // path put it?" — is measured in test:rotate against the shipped flatten path.
+  // What this grid owns is the OBJECT half: /Matrix, /Rect, and the read-back.
+  for (const rot of [90, 180, 270]) {
+    const rd = await PDFDocument.create();
+    const rp = rd.addPage([A4.width, A4.height]);
+    rp.setRotation(PDFLib.degrees(rot));
+    check(`/Rotate ${rot}: the image goes in as a real annotation`,
+      await addManagedAnnot(rd, rp, imgAnnot(), map, new Map()), true);
+    const rBack = await PDFDocument.load(await rd.save());
+    const rGot = readManaged(rBack);
+    check(`/Rotate ${rot}: it reads back as ONE editable image`,
+      [rGot.length, rGot[0] && rGot[0].annot && rGot[0].annot.kind], [1, "image"]);
+    check(`/Rotate ${rot}: overlay geometry survives untouched by the rotation`,
+      [rGot[0].annot.x, rGot[0].annot.y, rGot[0].annot.w, rGot[0].annot.h], [40, 60, 120, 90]);
+    const apRef = rBack.context.lookup(rGot[0].dict.get(PDFName.of("AP"))).get(PDFName.of("N"));
+    const form = rBack.context.lookup(apRef);
+    const fd = form.dict || form;
+    const mtx = fd.get(PDFName.of("Matrix"));
+    check(`/Rotate ${rot}: the appearance carries /Matrix = R(${rot})`,
+      mtx ? mtx.asArray().map((n) => n.asNumber()) : null, apMatrixFor(rot));
+    // /Rect must be exactly the bbox of Matrix × BBox. If it isn't, §12.5.5 makes the
+    // viewer SCALE the appearance to fit — the stamp comes out stretched, and no test
+    // that only looks at /Matrix would notice.
+    const bbox = fd.get(PDFName.of("BBox")).asArray().map((n) => n.asNumber());
+    const rect = rGot[0].dict.get(PDFName.of("Rect")).asArray().map((n) => n.asNumber());
+    check(`/Rotate ${rot}: /BBox stays the UNrotated w×h`, [bbox[2], bbox[3]], [120, 90]);
+    check(`/Rotate ${rot}: /Rect carries the rotated aspect (so the /AP map is 1:1)`,
+      [+(rect[2] - rect[0]).toFixed(4), +(rect[3] - rect[1]).toFixed(4)],
+      rot === 180 ? [120, 90] : [90, 120]);
+    // Without this, a re-bake on a rotated page would leave two stamps.
+    check(`/Rotate ${rot}: a re-bake strips the previous copy`, stripManagedAnnots(rBack), 1);
+  }
+  // The one case that MUST still flatten: not a quarter turn, so there is no matrix
+  // that would place it right. Out of spec, but real files carry it.
+  {
+    const odd = await PDFDocument.create();
+    const oddPage = odd.addPage([A4.width, A4.height]);
+    oddPage.node.set(PDFName.of("Rotate"), PDFLib.PDFNumber.of(45));
+    check("/Rotate 45 (out of spec) still falls back to flatten",
+      await addManagedAnnot(odd, oddPage, imgAnnot(), map, new Map()), false);
+    check("apRotatable agrees, and normalises negative angles",
+      [apRotatable(0), apRotatable(-90), apRotatable(360), apRotatable(45), apRotatable(91)],
+      [true, true, true, false, false]);
+    check("apMatrixFor(-90) is R(270), not R(-90)", apMatrixFor(-90), apMatrixFor(270));
+  }
+  // 0° must be untouched by all of the above — no /Matrix key at all, so an unrotated
+  // document saves the same bytes it did before BI-59 existed.
+  {
+    const flat0 = await PDFDocument.create();
+    const p0 = flat0.addPage([A4.width, A4.height]);
+    await addManagedAnnot(flat0, p0, imgAnnot(), map, new Map());
+    const b0 = await PDFDocument.load(await flat0.save());
+    const g0 = readManaged(b0);
+    const f0 = b0.context.lookup(b0.context.lookup(g0[0].dict.get(PDFName.of("AP"))).get(PDFName.of("N")));
+    check("an UNROTATED page writes NO /Matrix (bytes unchanged from before BI-59)",
+      !!(f0.dict || f0).get(PDFName.of("Matrix")), false);
+    check("… and apRectFor(0) is literally the old inline Rect",
+      apRectFor(0, 120, 90, 40, 60), [40, 60, 160, 150]);
+  }
 
   // ---- 4. re-bake must not grow the file --------------------------------
   ({ doc, page } = await newDoc());
@@ -316,8 +375,9 @@ function readManaged(doc) {
     // NB: .sort() is by UTF-16 code unit, so "strToBytes" (capital T, 0x54) comes
     // BEFORE "stripManagedAnnots" (lowercase i, 0x69). Not a typo.
     ["MANAGED_KINDS", "NABU_DATA", "NABU_IMG", "NABU_KIND", "NABU_SRC", "P_ANNOTS",
+     "apMatrixFor", "apRectFor", "apRotatable",
      "collectManagedChain", "freeManagedTrash", "isManagedKind", "makeMap",
-     "managedSrcBytes", "managedSrcDataUrl", "pageRotate", "pushPageAnnot",
+     "managedSrcBytes", "managedSrcDataUrl", "normAngle", "pageRotate", "pushPageAnnot",
      "serializeManaged", "sniffImage", "strToBytes", "stripManagedAnnots",
      "stripManagedFromPage"]);
   check("the /Nabu* keys are PDFName objects, not strings",

@@ -76,6 +76,20 @@ Chỉ cần **một file duy nhất**:
 >   dưới = chèn phía sau). Thả nhiều file cùng lúc cũng được. Không cần mở hộp thoại chọn vị trí.
 > - Vẫn dùng được nút **Chèn / Ghép** với hộp thoại chọn vị trí như cũ; kéo–thả chỉ là lối tắt.
 
+> 🔀 **Chuyển trang sang một tài liệu khác đang mở:**
+> - **Kéo giữa hai cửa sổ:** mở hai file ở **hai cửa sổ** (`Ctrl+N`, hoặc Cài đặt → mở file mới ở cửa
+>   sổ riêng), đặt cạnh nhau, rồi kéo một trang từ cột trang cửa sổ này sang **khe giữa hai trang** ở
+>   cột trang cửa sổ kia. Cột bên nhận sáng lên đúng khe sẽ chèn vào.
+> - **Mặc định là COPY** — tài liệu gốc **không mất trang**. Giữ `Shift` khi thả để **chuyển** hẳn,
+>   hoặc bấm **Xoá khỏi bản gốc** trên thông báo hiện ra sau khi copy.
+> - Muốn chuyển **nhiều trang**: tick chọn trước, rồi kéo **một trang trong số đó** — cả tập đi cùng.
+> - **Không cần kéo:** chuột phải lên trang → **Chuyển trang này sang tài liệu khác…** → chọn đích.
+>   Đường này còn tới được **tab khác trong cùng cửa sổ** (kéo–thả không làm được, vì tab không hiện
+>   trên màn hình thì không có gì để thả vào). Trang được **nối vào cuối** tài liệu đích.
+> - Cửa sổ đích **đang chú thích dở** hoặc **chưa mở file** thì không nhận trang — Nabu báo lý do ngay
+>   ở **cửa sổ bạn đang kéo**. Cột trang bên nhận đang thu gọn thì **giữ con trỏ trên mép tab của nó
+>   một nhịp**, cột sẽ tự bung; kéo đi mà không thả thì nó thu lại như cũ.
+
 > ⌨️ **Menu & phím tắt** (thanh menu trên cùng: Tập tin · Chỉnh sửa · Trang · Chuyển đổi · Hiển thị · Trợ giúp):
 > - **Ctrl+O** Mở · **Ctrl+S** Lưu · **Ctrl+Shift+S** Lưu thành…
 >   (Ctrl+S ghi đè thẳng vào file đang mở; file kéo–thả/chưa lưu thì hỏi nơi lưu.)
@@ -166,9 +180,11 @@ của Word. Mở bằng `Ctrl+H` hoặc nút **⇄** ở cuối ô *Tìm trong t
 > cho nhiều trang"**.
 > - **Giữ Shift** khi kéo góc → co giãn **đúng tỷ lệ** (không bị méo). Áp dụng cho cả khoanh vùng
 >   chữ nhật/elip, tô sáng và ô che (redact).
-> - Ngoại lệ: trang **đã bị xoay** (PDF có `/Rotate`, thường gặp ở bản scan) thì ảnh vẫn dán chết như
->   trước — giống hộp văn bản và mũi tên trên trang xoay. (Từ **v0.2.52** thì *vị trí và chiều* của
->   mọi hình trên trang xoay đều đúng — trước đó **khoanh mây** bị xoay 90° sau khi Áp dụng.)
+> - **Trang đã xoay: từ v0.2.58 cũng sửa lại được.** Trước đó, trên trang có `/Rotate` — bản scan nằm
+>   ngang, bản vẽ A3, hoặc bất cứ trang nào bạn vừa bấm **Xoay** — thì ảnh, hộp văn bản và mũi tên
+>   đều bị dán chết dù *vị trí và chiều* vẫn đúng. Nay chúng là đối tượng sống ở mọi chiều xoay.
+>   (Từ **v0.2.52** thì vị trí/chiều của mọi hình trên trang xoay đều đúng — trước đó **khoanh mây**
+>   bị xoay 90° sau khi Áp dụng.)
 > - Ảnh chèn ở các bản **trước v0.2.48** đã dán chết rồi thì không lấy lại được thành đối tượng; chỉ
 >   ảnh chèn từ bản này trở đi mới sửa lại được.
 

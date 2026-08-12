@@ -117,6 +117,70 @@
     return degrees(page.getRotation().angle);
   }
 
+  // ---- placing an appearance on a page that carries /Rotate ----------------
+  //
+  // THE PROBLEM these three solve. A managed annot's appearance is a Form XObject
+  // placed by its `/Rect`, which lives in UNROTATED user space — the viewer applies
+  // `/Rotate` to page content and annotations alike, afterwards. So on a rotated page
+  // an appearance written the naive way comes out spun (and in the wrong place), which
+  // is why text / arrow / image used to answer `false` there and fall through to being
+  // flattened into pixels. Flattened is irreversible: nothing is left for
+  // importManaged() to read, so every text box on a rotated page was permanently
+  // un-editable — including on any page the user rotated with our own "Xoay trang".
+  //
+  // THE FIX, and why it needs no new constant. The `/AP` content is
+  // `q w 0 0 h 0 0 cm /NabuImg Do Q`: the unit square scaled to (w,h) in FORM space.
+  // The flattened path emits `translate(bx,by) · R(angle) · scale(w,h)`. Balance the
+  // two and the appearance's own matrix falls out as `/Matrix = R(angle)` with the
+  // translation `(bx, by)` — the anchor `map(a.x, a.y + a.h)` already computes. Then by
+  // PDF 32000-1 §12.5.5 the viewer bounds `Matrix × BBox`, maps that box onto `/Rect`,
+  // and draws through both — so `/Rect` must be exactly that bbox moved to the anchor,
+  // or the viewer would SCALE the appearance to fit and distort it.
+  //
+  // MEASURED, not derived on paper: `npm run test:rotate` bakes the same annot onto
+  // four pages differing only in /Rotate, composes the real CTM out of the content
+  // stream, and checks the annotation lands on the same DISPLAY-space quad as the
+  // flattened path — at 0/90/180/270, with the /AP mapping scale pinned at exactly 1
+  // in both axes. See docs/SPEC-annot-rotated.md §5.
+  //
+  // At 0° `apMatrixFor` is the identity and `apRectFor` returns `[bx, by, bx+w, by+h]`
+  // — byte-for-byte what shipped before this existed. addManagedAnnot writes no
+  // `/Matrix` at all in that case, so unrotated documents (very nearly all of them) are
+  // untouched. Do not "simplify" that guard away. BI-59.
+  function normAngle(angle) {
+    return (((Number(angle) || 0) % 360) + 360) % 360;
+  }
+
+  // Only clean quarter turns get a rotated appearance. /Rotate 45 is out of spec but
+  // real files carry it; those keep flattening rather than being placed wrong.
+  function apRotatable(angle) {
+    return normAngle(angle) % 90 === 0;
+  }
+
+  // R(angle) as a PDF matrix [a b c d e f]: (x,y) → (a·x + c·y + e, b·x + d·y + f).
+  function apMatrixFor(angle) {
+    const a = normAngle(angle);
+    if (a === 90) return [0, 1, -1, 0, 0, 0];
+    if (a === 180) return [-1, 0, 0, -1, 0, 0];
+    if (a === 270) return [0, -1, 1, 0, 0, 0];
+    return [1, 0, 0, 1, 0, 0];
+  }
+
+  // The bbox of `apMatrixFor(angle) × [0,w]×[0,h]`, translated so the appearance's
+  // visual anchor lands on (bx, by) — the same point the flattened path draws from.
+  // Dimensions swap at 90/270, which is exactly right: that is what the viewer will
+  // un-rotate back into a w×h box on screen.
+  function apRectFor(angle, w, h, bx, by) {
+    const m = apMatrixFor(angle);
+    const xs = [];
+    const ys = [];
+    for (const [x, y] of [[0, 0], [w, 0], [w, h], [0, h]]) {
+      xs.push(m[0] * x + m[2] * y + m[4]);
+      ys.push(m[1] * x + m[3] * y + m[5]);
+    }
+    return [bx + Math.min(...xs), by + Math.min(...ys), bx + Math.max(...xs), by + Math.max(...ys)];
+  }
+
   // ---- the /NabuData payload ----------------------------------------------
 
   // Editable payload stored in /NabuData so a re-opened file reconstructs the
@@ -286,6 +350,7 @@
   const _SURFACE = {
     MANAGED_KINDS, NABU_KIND, NABU_DATA, NABU_SRC, NABU_IMG, P_ANNOTS,
     isManagedKind, sniffImage, strToBytes, makeMap, pageRotate,
+    normAngle, apRotatable, apMatrixFor, apRectFor,
     serializeManaged, pushPageAnnot, managedSrcBytes, managedSrcDataUrl,
     collectManagedChain, freeManagedTrash, stripManagedFromPage, stripManagedAnnots,
   };

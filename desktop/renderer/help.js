@@ -227,10 +227,37 @@
             T("**Đánh số trang…** — xem trước ngay trên trang, và `Ctrl+Z` hoàn tác được trước khi Lưu.", "**Add page numbers…** — previewed right on the page, and `Ctrl+Z` undoes it before you save."),
           ],
         },
+        { h: T("Chuyển trang sang tài liệu khác", "Moving pages to another document") },
+        {
+          ul: [
+            T(
+              "**Kéo–thả giữa hai cửa sổ:** mở hai file ở **hai cửa sổ** (`Ctrl+N`, hoặc Cài đặt → mở file mới ở cửa sổ riêng), đặt cạnh nhau, rồi kéo một trang từ cột trang của cửa sổ này sang **khe giữa hai trang** ở cột trang của cửa sổ kia. Cột trang bên nhận sáng lên đúng khe sẽ chèn vào.",
+              "**Drag between two windows:** open both files in **two windows** (`Ctrl+N`, or Settings → open new files in their own window), put them side by side, then drag a page from one window's page column onto the **gap between two pages** in the other's. The receiving column lights up the exact gap it will drop into."
+            ),
+            T(
+              "**Mặc định là COPY** — tài liệu gốc **không mất trang**. Giữ `Shift` khi thả để **chuyển** hẳn, hoặc bấm **Xoá khỏi bản gốc** trên thông báo hiện ra sau khi copy.",
+              "**Copy is the default** — the source document **keeps its pages**. Hold `Shift` as you drop to **move** them instead, or click **Remove from the original** on the message that appears after a copy."
+            ),
+            T(
+              "Kéo **nhiều trang**: tick chọn các trang trước, rồi kéo **một trang trong số đó** — cả tập được chuyển.",
+              "To move **several pages**: tick them first, then drag **any one of them** — the whole set travels."
+            ),
+            T(
+              "**Không cần kéo:** chuột phải lên trang → **Chuyển trang này sang tài liệu khác…** rồi chọn tài liệu đích. Đường này còn tới được **tab khác trong cùng cửa sổ** — thứ mà kéo–thả không làm được, vì tab không hiện trên màn hình thì không có gì để thả vào. Trang được **nối vào cuối** tài liệu đích.",
+              "**No drag needed:** right-click a page → **Move this page to another document…** and pick the destination. This route also reaches **another tab in the same window** — which dragging cannot, because a tab that is not on screen is nothing to aim at. The pages are **appended at the end** of the destination."
+            ),
+          ],
+        },
         {
           note: T(
             "**Hai mẹo kéo–thả ở cột trang:**\n· **Sắp xếp:** kéo một trang thả lên trang khác để đổi vị trí.\n· **Chèn bằng kéo–thả:** kéo file `.pdf` từ Windows thả vào **khe giữa hai trang** — trang được chèn ngay chỗ đó (thả nửa trên = chèn phía trước, nửa dưới = phía sau). Thả nhiều file một lúc cũng được, khỏi mở hộp thoại.",
             "**Two drag-and-drop tricks in the page list:**\n· **Reorder:** drag a page onto another page to move it.\n· **Insert by drop:** drag a `.pdf` from Windows onto the **gap between two pages** — it is inserted right there (dropping on the upper half inserts before the page, the lower half after). Several files at once works too, with no dialog."
+          ),
+        },
+        {
+          note: T(
+            "Cửa sổ đích **đang chú thích dở** hoặc **chưa mở file** thì không nhận trang — cấu trúc trang đang bị đóng băng. Nabu nói rõ lý do ở **cửa sổ bạn đang kéo**, chứ không phải ở cửa sổ bên kia. Nếu cột trang bên nhận đang thu gọn, **giữ con trỏ trên mép tab của nó một nhịp** là cột tự bung ra; kéo đi mà không thả thì nó thu lại như cũ.",
+            "A destination that is **mid-annotation** or has **no document open** will not take pages — its page structure is frozen. Nabu says why in **the window you are dragging from**, not in the other one. If the receiving page column is collapsed, **rest the cursor on its edge tab for a moment** and it springs open; drag away without dropping and it closes again."
           ),
         },
       ],
@@ -343,8 +370,8 @@
               "**Flattened** — **clouds, rectangles / ellipses, highlights, freehand, ✓ / ✗, redactions, dimensions**. Once you press **Xong** they become part of the page and **cannot be selected again**. If you want to copy them, **copy before applying**."
             ),
             T(
-              "**Ngoại lệ:** trang **đã bị xoay** (PDF có `/Rotate`, thường gặp ở bản scan) thì cả 4 loại đối tượng sống cũng bị dán chết. Vị trí và chiều vẫn đúng, chỉ là không sửa lại được.",
-              "**Exception:** on a **rotated** page (a PDF with `/Rotate`, common in scans) even those four live kinds get flattened. Position and orientation are still correct — they just aren't re-editable."
+              "**Trang đã xoay cũng sửa lại được (từ v0.2.58).** Trước đó, trên trang có `/Rotate` — bản scan nằm ngang, bản vẽ A3, hoặc bất cứ trang nào bạn vừa bấm **Xoay** — cả 4 loại đối tượng sống đều bị dán chết. Nay chúng vẫn là đối tượng sống ở mọi chiều xoay.",
+              "**Rotated pages are editable too (from v0.2.58).** Before that, on a page with `/Rotate` — a landscape scan, an A3 drawing, or any page you had just hit **Xoay** on — all four live kinds got flattened. Now they stay live at every rotation."
             ),
           ],
         },
@@ -581,7 +608,10 @@
               "**Export to Office (Word / Excel / CSV)** — Excel / CSV keep tables row-for-row and column-for-column; Word keeps the full text with its tables. Only for PDFs with **real text**; run **OCR văn bản** on a scan first."
             ),
             T("**Trang PDF → ảnh** — mỗi trang thành một ảnh, gói trong một `.zip`.", "**PDF pages → images** — one image per page, delivered as a `.zip`."),
-            T("**Ảnh → PDF** — chọn nhiều ảnh để gộp thành một PDF, theo đúng thứ tự chọn.", "**Images → PDF** — pick several images and combine them into one PDF, in the order you selected them."),
+            T(
+              "**Ảnh → PDF** — chọn nhiều ảnh để gộp thành một PDF, theo đúng thứ tự chọn. Kết quả **mở ra ngay trong app** (chưa lưu, có chấm ●) nên bạn sắp xếp lại thứ tự trang, xoay, chú thích rồi mới `Ctrl+S` chọn nơi lưu.",
+              "**Images → PDF** — pick several images and combine them into one PDF, in the order you selected them. The result **opens right here** (unsaved, marked ●), so you can reorder pages, rotate and annotate before pressing `Ctrl+S` to choose where it goes."
+            ),
             T("**Xuất ảnh trong PDF** — lấy ra những ảnh nhúng sẵn trong tài liệu.", "**Export images in PDF** — pull out the images already embedded in the document."),
           ],
         },

@@ -459,6 +459,43 @@
     "Xoá các trang đang chọn": "Delete the selected pages",
     "Xoay trái 90° (trang đang chọn)": "Rotate left 90° (selected pages)",
     "Xoay phải 90° (trang đang chọn)": "Rotate right 90° (selected pages)",
+
+    // --- moving pages between two open documents (renderer/page-move.js) ---
+    "Chuyển trang này sang tài liệu khác…": "Move this page to another document…",
+    "Chuyển các trang đang chọn sang tài liệu khác…": "Move the selected pages to another document…",
+    "Copy {n} trang tới (nối vào cuối)": "Copy {n} page(s) to (appended at the end)",
+    "Không có tài liệu nào khác đang mở": "No other document is open",
+    "Cửa sổ {w} · ": "Window {w} · ",
+    "Đang chuẩn bị trang…": "Preparing pages…",
+    "Đã copy {n} trang{where}.": "Copied {n} page(s){where}.",
+    "Đã chuyển {n} trang{where}.": "Moved {n} page(s){where}.",
+    "Đã nhận {n} trang từ {from}.": "Received {n} page(s) from {from}.",
+    "Xoá khỏi bản gốc": "Remove from the original",
+    "Tài liệu đã thay đổi — không xoá trang gốc nữa.":
+      "The document changed — the original pages were kept.",
+    // Refusals. Worded from the SOURCE window's point of view, because that is where
+    // the hand that started the transfer is looking (SPEC-page-drag.md §4.1b).
+    "Tài liệu đích chưa mở file nào.": "The destination has no document open.",
+    "Tài liệu đích đang chú thích dở.": "The destination is in the middle of annotating.",
+    "Tài liệu đích đang sửa chữ dở.": "The destination is in the middle of editing text.",
+    "Thả vào cột trang (danh sách trang bên trái) của cửa sổ đích.":
+      "Drop onto the destination's page column (the page list on the left).",
+    "Tài liệu đích đang bận — thử lại sau.": "The destination is busy — try again.",
+    "Không tìm thấy tài liệu đích.": "Destination document not found.",
+    "Đó chính là tài liệu này.": "That is this document.",
+    "Không có trang nào để chuyển.": "No pages to move.",
+    "Đang chú thích / sửa chữ dở — bấm Xong trước khi chuyển trang.":
+      "An annotation / text edit is still open — press Xong before moving pages.",
+    "Không bóc được trang ra khỏi tài liệu này.": "Could not lift the pages out of this document.",
+    "Tài liệu đích không chèn được trang.": "The destination could not insert the pages.",
+    "Không chuyển được trang sang tài liệu đích.": "Could not move the pages to the destination.",
+    // Short forms — these sit inside a menu label, where a sentence does not fit.
+    "chưa mở file": "no document",
+    "đang chú thích": "annotating",
+    "đang sửa chữ": "editing text",
+    "cần bản quyền": "licence needed",
+    "đang bận": "busy",
+    "không nhận được": "cannot accept",
     // These five are the CURRENT Trang ▾ labels. The dictionary still carried the
     // pre-overhaul wording (and "Xóa" where the markup says "Xoá"), so the menu was
     // silently untranslated; the new toolbar tooltips reuse the same strings.

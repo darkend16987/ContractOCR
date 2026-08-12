@@ -2303,8 +2303,12 @@
   async function addManagedAnnot(doc, page, a, map, share) {
     const ctx = doc.context;
     const dataHex = PDFHexString.fromText(JSON.stringify(serializeManaged(a)));
+    // A page carrying /Rotate needs the appearance placed through /Matrix + a
+    // re-derived /Rect (managed-codec.js apMatrixFor/apRectFor). Anything that is not
+    // a clean quarter turn still falls through to flattening. BI-59.
+    const angle = page.getRotation().angle;
     if (a.kind === "image") {
-      if (page.getRotation().angle % 360 !== 0) return false; // deferred: rotated image keeps flattening
+      if (!apRotatable(angle)) return false; // /Rotate 45 & friends keep flattening
       const bytes = dataUrlToBytes(a.dataUrl);
       const fmt = a.fmt || sniffImage(bytes);
       if (!fmt) return false; // unknown format — flatten (drawOneAnnot sniffs again)
@@ -2331,15 +2335,17 @@
         if (share) share.set(a.dataUrl, { imgRef: imgRef, srcRef: srcRef });
       }
       const [bx, by] = map(a.x, a.y + a.h); // lower-left, the same anchor the flattened path uses
-      const apDict = ctx.obj({
+      const ap = {
         Type: "XObject", Subtype: "Form", FormType: 1,
         BBox: [0, 0, a.w, a.h],
         Resources: { XObject: { NabuImg: imgRef } },
-      });
-      const apStream = PDFRawStream.of(apDict, strToBytes(`q ${f(a.w)} 0 0 ${f(a.h)} 0 0 cm /NabuImg Do Q`));
+      };
+      // No /Matrix at all on an unrotated page: identical bytes to before BI-59.
+      if (normAngle(angle)) ap.Matrix = apMatrixFor(angle);
+      const apStream = PDFRawStream.of(ctx.obj(ap), strToBytes(`q ${f(a.w)} 0 0 ${f(a.h)} 0 0 cm /NabuImg Do Q`));
       const annot = ctx.obj({
         Type: "Annot", Subtype: "Stamp", F: 4,
-        Rect: [bx, by, bx + a.w, by + a.h],
+        Rect: apRectFor(angle, a.w, a.h, bx, by),
         AP: { N: ctx.register(apStream) },
       });
       annot.set(NABU_KIND, PDFName.of("image"));
@@ -2349,23 +2355,24 @@
       return true;
     }
     if (a.kind === "text") {
-      if (page.getRotation().angle % 360 !== 0) return false; // deferred: rotated text keeps flattening
+      if (!apRotatable(angle)) return false; // /Rotate 45 & friends keep flattening
       // Pass the whole annot as the style so alignment / spacing / lists / scale /
       // opacity all bake in (normTextStyle picks the fields it needs).
       const { bytes, wPt, hPt } = renderTextPng(a.text, a.fontSize, a.color, a);
       const img = await doc.embedPng(bytes);
       const padPt = a.fontSize * 0.15;
       const [bx, by] = map(a.x - padPt, a.y - padPt + hPt); // lower-left, matches flattened path
-      const apDict = ctx.obj({
+      const ap = {
         Type: "XObject", Subtype: "Form", FormType: 1,
         BBox: [0, 0, wPt, hPt],
         Resources: { XObject: { NabuImg: img.ref } },
-      });
-      const apStream = PDFRawStream.of(apDict, strToBytes(`q ${f(wPt)} 0 0 ${f(hPt)} 0 0 cm /NabuImg Do Q`));
+      };
+      if (normAngle(angle)) ap.Matrix = apMatrixFor(angle);
+      const apStream = PDFRawStream.of(ctx.obj(ap), strToBytes(`q ${f(wPt)} 0 0 ${f(hPt)} 0 0 cm /NabuImg Do Q`));
       const apRef = ctx.register(apStream);
       const annot = ctx.obj({
         Type: "Annot", Subtype: "Stamp", F: 4,
-        Rect: [bx, by, bx + wPt, by + hPt],
+        Rect: apRectFor(angle, wPt, hPt, bx, by),
         AP: { N: apRef },
       });
       annot.set(NABU_KIND, PDFName.of("text"));
@@ -2374,20 +2381,21 @@
       return true;
     }
     if (a.kind === "arrow") {
-      if (page.getRotation().angle % 360 !== 0) return false; // deferred: rotated arrow keeps flattening
+      if (!apRotatable(angle)) return false; // /Rotate 45 & friends keep flattening
       const { bytes, wPt, hPt, ox, oy } = renderArrowPng(a);
       const img = await doc.embedPng(bytes);
       const [bx, by] = map(ox, oy + hPt); // overlay top-left → PDF lower-left, like text
-      const apDict = ctx.obj({
+      const ap = {
         Type: "XObject", Subtype: "Form", FormType: 1,
         BBox: [0, 0, wPt, hPt],
         Resources: { XObject: { NabuImg: img.ref } },
-      });
-      const apStream = PDFRawStream.of(apDict, strToBytes(`q ${f(wPt)} 0 0 ${f(hPt)} 0 0 cm /NabuImg Do Q`));
+      };
+      if (normAngle(angle)) ap.Matrix = apMatrixFor(angle);
+      const apStream = PDFRawStream.of(ctx.obj(ap), strToBytes(`q ${f(wPt)} 0 0 ${f(hPt)} 0 0 cm /NabuImg Do Q`));
       const apRef = ctx.register(apStream);
       const annot = ctx.obj({
         Type: "Annot", Subtype: "Stamp", F: 4,
-        Rect: [bx, by, bx + wPt, by + hPt],
+        Rect: apRectFor(angle, wPt, hPt, bx, by),
         AP: { N: apRef },
       });
       annot.set(NABU_KIND, PDFName.of("arrow"));

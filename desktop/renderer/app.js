@@ -55,13 +55,31 @@ function sidecarFetch(path, opts = {}) {
 // ---- small UI helpers ----------------------------------------------------
 
 let toastTimer;
-function toast(msg, kind = "") {
+function toast(msg, kind = "", action = null) {
   const t = $("toast");
   t.textContent = msg;
   t.className = "toast " + kind;
+  // Optional single action. Added for the cross-document page copy, whose toast
+  // offers "Xoá khỏi bản gốc" — the one-click route into a move for a user who
+  // never learned the Shift modifier (docs/SPEC-page-drag.md §9.2). Rebuilt from
+  // scratch on every call (textContent above wiped the previous one, so there is no
+  // stale handler to leak) and given a longer life, because 3.6s is not enough to
+  // notice a button and reach it.
+  if (action && action.label && typeof action.onClick === "function") {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "toast-action";
+    btn.textContent = action.label;
+    btn.addEventListener("click", () => {
+      clearTimeout(toastTimer);
+      t.hidden = true;
+      action.onClick();
+    });
+    t.appendChild(btn);
+  }
   t.hidden = false;
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => (t.hidden = true), 3600);
+  toastTimer = setTimeout(() => (t.hidden = true), action ? 9000 : 3600);
 }
 function showOverlay(msg) {
   $("overlay-msg").textContent = msg || "Đang xử lý…";
@@ -439,11 +457,16 @@ function fileCrumb(name, fullPath) {
 
 // ---- loading + rendering -------------------------------------------------
 
+// Returns TRUE only when the document was really replaced. Every long-standing caller
+// ignores it (opening a file has nowhere to fall back to), but a caller that GENERATED
+// the bytes it is handing over does: if the user chooses "Ở lại" below, or the render
+// fails, those bytes are the only copy in existence and dropping them on the floor
+// throws away the work. See runImagesToPdf.
 async function loadBytes(bytes, name, fullPath) {
   // Replacing an unsaved document would silently drop its changes — ask first.
   // (First load / recovery restore are clean, so this never fires there.)
   if (docHasUnsavedChanges() && !(await uiConfirm("Tài liệu hiện tại có thay đổi chưa lưu. Bỏ các thay đổi đó và mở tài liệu khác?", { okText: "Bỏ & mở", cancelText: "Ở lại" }))) {
-    return;
+    return false;
   }
   state.bytes = toU8(bytes);
   if (name) state.name = name;
@@ -466,16 +489,17 @@ async function loadBytes(bytes, name, fullPath) {
   } catch (err) {
     if (err && err.code === "NEEDS_PASSWORD") {
       const decrypted = await unlockEncrypted(state.bytes);
-      if (!decrypted) return; // user cancelled or unlock failed (already toasted)
+      if (!decrypted) return false; // user cancelled or unlock failed (already toasted)
       state.bytes = decrypted;
       await renderAll();
     } else {
-      return; // renderAll already toasted the failure
+      return false; // renderAll already toasted the failure
     }
   }
   updateComments(); // refresh the comments badge/panel for the new document
   updateStatusBar();
   toast("Đã mở: " + state.name, "good");
+  return true;
 }
 
 // Decrypt a password-protected PDF into plaintext bytes the rest of the app can
@@ -1442,15 +1466,25 @@ function wireThumb(div) {
     e.dataTransfer.effectAllowed = "move";
     // Mark as an internal move so the window file-drop handler ignores it.
     e.dataTransfer.setData("application/x-thumb", String(i));
+    // Offer these pages to the OTHER windows too. This changes nothing about the
+    // drag itself — main answers a drop that lands back inside this window with
+    // silence, so the reorder below is untouched (docs/SPEC-page-drag.md, BI-57).
+    if (window.PageMove) window.PageMove.dragStart(i);
   });
   // dragend fires after drop, and ALSO when the drag is abandoned outside the strip —
   // which is the only place `state.dragSrc` gets cleaned up in that case. Leaving it
   // set would make the next hover over any thumbnail draw reorder cues for a drag that
   // ended long ago.
-  div.addEventListener("dragend", () => {
+  div.addEventListener("dragend", (e) => {
     div.classList.remove("dragging");
     state.dragSrc = null;
     clearThumbCues();
+    // Where the drop actually landed is main's to answer: screen coordinates from
+    // inside a WebContentsView are off by the window frame (TABS-2B-DESIGN §2.3).
+    // Not awaited — this cleanup must stay synchronous. Shift = move, read here at
+    // the drop rather than at the grab, so the user can still change their mind
+    // mid-drag.
+    if (window.PageMove) window.PageMove.dragEnd(!!(e && e.shiftKey));
   });
   // Drop targets: internal reorder (state.dragSrc set) OR an external PDF file
   // dragged from the OS. Both resolve to a gap between two pages and both show the
@@ -1557,6 +1591,20 @@ function openThumbMenu(e, i) {
       onClick: () => extractSelected(),
     },
     { label: tr("Tách thành nhiều file…"), onClick: () => openSplit() },
+    // The keyboard-and-mouse route into the cross-document page move. It exists
+    // because the drag gesture cannot reach another TAB — only the active tab's view
+    // is on screen — and because a menu is testable where a drag is not
+    // (docs/SPEC-page-drag.md §4).
+    ...(window.PageMove
+      ? [
+          {
+            label: many
+              ? tr("Chuyển các trang đang chọn sang tài liệu khác…")
+              : tr("Chuyển trang này sang tài liệu khác…"),
+            onClick: () => window.PageMove.openSendMenu(e.clientX, e.clientY, i),
+          },
+        ]
+      : []),
     { separator: true },
     {
       label: many ? tr("Xoá các trang đang chọn") : tr("Xoá trang này"),
@@ -3408,8 +3456,24 @@ async function runImagesToPdf() {
       return; // keep the picked images so the user can just retry
     }
     const bytes = b64ToU8(data.data_b64);
-    const r = await window.desktop.savePdf(bytes, "images-to-pdf.pdf");
-    if (r.saved) toast(`Đã tạo PDF ${data.pages} trang từ ảnh: ` + r.path, "good");
+    const name = `anh-${data.pages}-trang.pdf`;
+    // Open the result instead of forcing Save As first, so the pages can be reordered /
+    // rotated / annotated before anything touches disk. `state.path` stays null, which
+    // is all the save path needs: saveDoc() finds no path and falls through to
+    // saveAsDoc() on its own, so Ctrl+S still asks where to put it.
+    if (await loadBytes(bytes, name, null)) {
+      // loadBytes marks a freshly loaded document CLEAN. For one that has never been
+      // saved, "clean" means closing the app discards it without a word — and unlike a
+      // file that was opened, there is nothing on disk to reopen. markDirty() buys the
+      // ● indicator, autosave and crash recovery for it.
+      markDirty();
+      toast(`Đã tạo PDF ${data.pages} trang từ ảnh — sắp xếp/chỉnh rồi Ctrl+S để lưu.`, "good");
+    } else {
+      // The user chose to keep the document they already had. These bytes exist nowhere
+      // else, so offer to write them out rather than silently lose the conversion.
+      const r = await window.desktop.savePdf(bytes, name);
+      if (r.saved) toast(`Đã tạo PDF ${data.pages} trang từ ảnh: ` + r.path, "good");
+    }
     // Done with them — a photo batch is hundreds of MB to sit on until the
     // dialog is next opened (which is the only other place this is reset).
     i2pImages = [];
