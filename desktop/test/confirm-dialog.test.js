@@ -94,6 +94,54 @@ check("choosing it clears EVERY orphan, not just the offered one",
 check("a failed delete is reported instead of silently re-prompting next launch",
   /Không xoá được \$\{failed\} bản khôi phục/.test(APP), true);
 
+// ---- 3b. the multi-PDF drop prompt (second user of the third choice) ------
+//
+// Dropping several PDFs on the window asks "Mở từng file" / "Gộp thành một file" / Hủy.
+// Three outcomes is exactly why it uses the third button rather than a plain yes/no:
+// with two buttons, Esc would have to mean one of the two ACTIONS and would fire it by
+// accident on a drag the user changed their mind about.
+const dropAt = APP.indexOf('const pdfs = [...e.dataTransfer.files]');
+check("the window drop handler collects the dropped PDFs", dropAt >= 0, true);
+const dropBlock = APP.slice(dropAt, dropAt + 2000);
+// THE regression this pins: the handler used to keep `.find()`'s first match and throw
+// the rest away, so dropping 5 files opened 1 and looked broken for the other 4.
+check("it FILTERS all of them rather than .find()ing one",
+  /\.filter\(\(x\) => x\.name\.toLowerCase\(\)\.endsWith\("\.pdf"\)\)/.test(dropBlock), true);
+check("a single file skips the dialog entirely",
+  /if \(pdfs\.length === 1\) \{[\s\S]{0,120}?openDroppedPdfs\(pdfs\)/.test(dropBlock), true);
+check("the ordinary reading of a drop is the DEFAULT (Enter/OK)",
+  /okText: "Mở từng file"/.test(dropBlock), true);
+check("merging is the deliberate third choice, not the default",
+  /thirdText: "Gộp thành một file"/.test(dropBlock), true);
+check("… and it is dispatched off the \"third\" sentinel",
+  /choice === "third"\) await combineDroppedPdfs\(pdfs\)/.test(dropBlock), true);
+// Esc / ✕ / backdrop all resolve false. Nothing may be wired to that: a cancelled drag
+// must leave the document exactly as it was.
+check("cancel (false) does nothing at all",
+  /if \(choice === true\)[\s\S]{0,140}?else if \(choice === "third"\)[\s\S]{0,80}?\}\);/.test(dropBlock), true);
+
+// Opening dropped files must go through main so tab-vs-window follows the preference and
+// an open document is never displaced (BI-8, BI-35). Reading the bytes into THIS tab is
+// the fallback for when no path is available, and it has to SAY so.
+check("known paths are routed through main's openPaths",
+  /if \(paths\.every\(Boolean\)\) \{[\s\S]{0,200}?openPaths\(paths, !state\.bytes\)/.test(APP), true);
+check("an empty tab takes the first file instead of being left blank",
+  /openPaths\(paths, !state\.bytes\)/.test(APP), true);
+check("the path-less fallback tells the user the rest were left out",
+  /Chỉ mở được[\s\S]{0,120}?không lấy được đường dẫn/.test(APP), true);
+check("the path lookup prefers webUtils and keeps file.path as a fallback",
+  /pathForFile\(f\)\)[\s\S]{0,200}?return p \|\| str\(f && f\.path\);/.test(APP), true);
+// A path is about to cross into main. Accepting anything merely truthy would forward a
+// wrong-shaped value as a filename; only a non-empty string may pass.
+check("droppedPath returns a non-empty STRING or null, not anything truthy",
+  /const str = \(v\) => \(typeof v === "string" && v \? v : null\);/.test(APP), true);
+check("preload exposes pathForFile", /pathForFile: \(file\) =>/.test(
+  fs.readFileSync(path.join(__dirname, "..", "src", "preload.js"), "utf8")), true);
+// Both pre-fill routes must share ONE function, or "skip a password-protected file" and
+// friends drift between the Explorer route and the drop route.
+check("Explorer and drop both pre-fill through openCombinePrefilled",
+  (APP.match(/openCombinePrefilled\(/g) || []).length >= 3, true);
+
 // ---- 4. i18n (BI-10) ------------------------------------------------------
 // Label and visibility are both per-call, so the language switcher must never capture
 // this node into its registry.

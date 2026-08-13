@@ -3544,6 +3544,18 @@ function openCombine() {
 async function addCombinePdfs() {
   const files = await window.desktop.openPdf({ multi: true });
   if (!files || !files.length) return;
+  await addCombineEntries(files);
+}
+
+// The one place a file becomes a row in the combine list. Shared by the manual
+// picker above and by Explorer's "Gộp bằng Nabu PDF" batch (combineFromShell), so
+// there is a single rule for what gets in: a file we cannot page-count is a file we
+// cannot merge, and it is dropped HERE with a toast rather than blowing up inside
+// runCombine() halfway through a merge.
+//
+// `files` items are { name, data } — the shape both window.desktop.openPdf and
+// main's combine:prefill hand over.
+async function addCombineEntries(files) {
   for (const f of files) {
     const bytes = toU8(f.data);
     let pages = 0;
@@ -3557,6 +3569,42 @@ async function addCombinePdfs() {
     combineList.push({ name: f.name, bytes, pages });
   }
   renderCombineList();
+}
+
+// Open the combine dialog ALREADY FILLED IN. Two callers, one behaviour:
+//   · Explorer's "Gộp bằng Nabu PDF" — main opened this tab for the batch and pushed
+//     the bytes over (see sendCombineToView + src/shell-combine.js for why the shell
+//     makes us collect them one process at a time);
+//   · dropping several PDFs onto the window and choosing "Gộp thành một file".
+//
+// Reads the files BEFORE showing the dialog, so the user never sees an empty list
+// filling itself in. Nothing is merged here — this only pre-fills the list the user
+// then confirms or reorders. That confirmation step is not politeness: on the Explorer
+// route the order files arrive in is NOT the order they were clicked, so merging
+// straight away would silently produce a wrong document.
+//
+// `files` items are { name, data }. `dropped` is how many a cap removed upstream (0 on
+// the drop route, which has no cap — same as the manual "Thêm file PDF…" picker).
+async function openCombinePrefilled(files, dropped) {
+  if (!files || !files.length) return;
+  dropped = dropped | 0;
+  combineList = [];
+  showOverlay("Đang đọc file…");
+  try {
+    await addCombineEntries(files);
+  } finally {
+    hideOverlay();
+  }
+  if (!combineList.length) {
+    toast("Không đọc được file nào trong số đã chọn.", "bad");
+    return;
+  }
+  $("combine-modal").hidden = false;
+  // Say what was left out. A cap that trims in silence reads as "this is everything
+  // you selected", which is exactly the wrong impression when it isn't.
+  if (dropped > 0) {
+    toast(`Chỉ nhận ${combineList.length} file đầu — bỏ ${dropped} file vượt giới hạn mỗi lượt gộp.`, "bad");
+  }
 }
 
 function renderCombineList() {
@@ -3741,6 +3789,13 @@ async function openSettings() {
     document.documentElement.getAttribute("data-theme") === "light" ? "light" : "dark";
   if ($("set-lang") && window.I18N) $("set-lang").value = window.I18N.getLang();
   if ($("set-breadcrumb")) $("set-breadcrumb").checked = breadcrumbEnabled();
+  // The annotation default colour is owned by editor.js (it holds the storage key and
+  // the hex validation) — read it back rather than keeping a second copy here. Guarded
+  // because editor.js is a separate classic script: no guard is the BI-14 failure mode.
+  const annotColor = $("set-annot-color");
+  if (annotColor && window.Editor && window.Editor.getDefaultColor) {
+    annotColor.value = window.Editor.getDefaultColor();
+  }
   // "Reopen last session" lives in main (it has to be readable before any
   // renderer exists), so read it back rather than assuming a default.
   const restoreBox = $("set-restore-session");
@@ -4510,6 +4565,21 @@ if ($("set-lang")) {
 if ($("set-breadcrumb")) {
   $("set-breadcrumb").onchange = (e) => setBreadcrumbEnabled(e.target.checked);
 }
+// Default annotation colour. Owned by editor.js on both sides (read + write), so there
+// is exactly one storage key and one hex validator in the app.
+//
+// `onchange`, not `oninput` like the edit bar's own picker: that one recolours the
+// selected object on every step so it has to be live, whereas this one only changes what
+// the NEXT object will be — there is nothing on screen to preview, and `oninput` would
+// mean a localStorage write per mouse-move in the OS colour dialog. The input settles on
+// whatever the setter actually stored, so a rejected value can't leave it showing
+// something untrue.
+if ($("set-annot-color")) {
+  $("set-annot-color").onchange = (e) => {
+    if (!window.Editor || !window.Editor.setDefaultColor) return;
+    e.target.value = window.Editor.setDefaultColor(e.target.value);
+  };
+}
 // "Mở file mới trong" — persisted by main, which is also the side that acts on
 // it: this renderer only asks to open a path, main decides tab vs window (see
 // tabs:open-paths / openPathInApp). Settle the select on what main stored, so a
@@ -4873,26 +4943,109 @@ window.addEventListener("drop", async (e) => {
   clearDropCue();
   if (!e.dataTransfer || ![...e.dataTransfer.types].includes("Files")) return;
   e.preventDefault();
-  const f = [...e.dataTransfer.files].find((x) => x.name.toLowerCase().endsWith(".pdf"));
-  if (f) {
-    // Electron exposes the dropped file's real path via file.path. If this tab
-    // already holds a document, open the drop as a NEW tab (never clobber the
-    // current one); if the tab is empty, or the path is unavailable (secured
-    // build), load it here.
-    if (f.path && state.bytes) {
-      await window.desktop.openPaths([f.path], false);
-    } else {
-      const buf = await f.arrayBuffer();
-      await loadBytes(new Uint8Array(buf), f.name, f.path || null);
-    }
+  // ALL the PDFs, in the order the OS handed them over — not just the first one. A
+  // multi-file drop used to silently keep `.find()`'s first match and discard the rest,
+  // which looked like "the drop didn't work" for every file but one.
+  const pdfs = [...e.dataTransfer.files].filter((x) => x.name.toLowerCase().endsWith(".pdf"));
+  if (!pdfs.length) return;
+
+  if (pdfs.length === 1) {
+    await openDroppedPdfs(pdfs);
+    return;
   }
+  // Several files: ask, because the two things the user could mean are very different
+  // and neither is guessable. Enter/OK is the ordinary reading of a drop onto a viewer
+  // ("open these"); merging is the deliberate choice, so it costs its own click — the
+  // same convention uiConfirm's third button is used for elsewhere. Esc does nothing,
+  // which is why this is not two buttons: with a plain yes/no, Esc would have to mean
+  // one of the two actions and would fire it by accident.
+  const choice = await uiConfirm(
+    `Đã kéo vào ${pdfs.length} file PDF. Mở từng file thành từng tab, hay gộp cả ${pdfs.length} file thành một file?`,
+    {
+      title: "Kéo nhiều file PDF",
+      okText: "Mở từng file",
+      thirdText: "Gộp thành một file",
+      cancelText: "Hủy",
+    }
+  );
+  if (choice === true) await openDroppedPdfs(pdfs);
+  else if (choice === "third") await combineDroppedPdfs(pdfs);
 });
+
+// The real path of a dropped File, or null. `webUtils.getPathForFile` (preload) is the
+// supported route from Electron 32 on; `file.path` is the older augmentation kept as a
+// fallback so this works whichever one the running Electron still provides.
+// A non-empty STRING or null — never merely "truthy". Whatever comes back here is about
+// to be handed to main as a file path, and `typeof` is the only thing standing between a
+// wrong-shaped value and an openPaths call full of junk.
+function droppedPath(f) {
+  const str = (v) => (typeof v === "string" && v ? v : null);
+  let p = null;
+  try {
+    if (window.desktop.pathForFile) p = str(window.desktop.pathForFile(f));
+  } catch (_) {
+    p = null;
+  }
+  return p || str(f && f.path);
+}
+
+// Open dropped PDFs as documents. Routed through main whenever the paths are known, so
+// tab-vs-window follows "Mở file mới trong" and an already-open document is never
+// displaced (BI-8, BI-35). `fillCurrent` lets an EMPTY tab take the first file instead
+// of being left blank beside a new one.
+async function openDroppedPdfs(pdfs) {
+  const paths = pdfs.map(droppedPath);
+  if (paths.every(Boolean)) {
+    await window.desktop.openPaths(paths, !state.bytes);
+    return;
+  }
+  // No usable paths (a File not backed by disk, or the API withdrawn): we can only load
+  // bytes into THIS tab, so honour the first file and say what happened rather than
+  // dropping the rest without a word.
+  const first = pdfs[0];
+  const buf = await first.arrayBuffer();
+  await loadBytes(new Uint8Array(buf), first.name, null);
+  if (pdfs.length > 1) {
+    toast(`Chỉ mở được "${first.name}" — không lấy được đường dẫn của các file còn lại.`, "bad");
+  }
+}
+
+// Merge dropped PDFs: fill the combine dialog in DROP ORDER.
+//
+// This route keeps the order the OS handed the files over in, which the Explorer
+// right-click route cannot (there, each file arrives in its own process with no index —
+// see src/shell-combine.js). The dialog still lets the order be changed; it is pre-filled
+// with a more useful guess here, not merged without asking.
+async function combineDroppedPdfs(pdfs) {
+  showOverlay("Đang đọc file…");
+  let files;
+  try {
+    files = await Promise.all(
+      pdfs.map(async (f) => ({ name: f.name, data: new Uint8Array(await f.arrayBuffer()) }))
+    );
+  } catch (err) {
+    hideOverlay();
+    toast("Không đọc được file đã kéo vào: " + err.message, "bad");
+    return;
+  }
+  hideOverlay(); // openCombinePrefilled puts its own overlay up while it counts pages
+  await openCombinePrefilled(files, 0);
+}
 
 // "Open with Nabu PDF" / double-click a .pdf / drag onto the app icon: the main
 // process opens a window and pushes the file here once the renderer is ready.
 if (window.desktop.onOpenFile) {
   window.desktop.onOpenFile((file) => {
     if (file && file.data) loadBytes(toU8(file.data), file.name, file.path || null);
+  });
+}
+
+// Explorer right-click on several PDFs → "Gộp bằng Nabu PDF". Main gives the batch a
+// tab of its own and pushes it here; this tab holds no document, so the pre-filled
+// dialog can never displace something the user was reading.
+if (window.desktop.onCombinePrefill) {
+  window.desktop.onCombinePrefill((payload) => {
+    openCombinePrefilled((payload && payload.files) || [], payload && payload.dropped);
   });
 }
 

@@ -4,7 +4,61 @@
 > [DESIGN.md](DESIGN.md) (kiến trúc), [ROADMAP.md](ROADMAP.md) (tiến độ chi tiết),
 > [SETUP.md](SETUP.md) (dựng môi trường).
 
-_Cập nhật: 2026-08-12 · v0.2.59 đã phát hành (dưới đây) · v0.2.58 là bản trước đó_
+_Cập nhật: 2026-08-13 · v0.2.60 đã phát hành (dưới đây) · v0.2.59 là bản trước đó_
+
+> **v0.2.60 — màu chú thích mặc định đổi được + gộp nhiều PDF từ Explorer/kéo–thả.**
+> Hai tính năng theo yêu cầu, cộng một lỗi có thật lộ ra khi làm tính năng thứ hai.
+>
+> **1. Màu mặc định của chú thích đổi từ vàng `#ffd54a` sang đỏ `#d32f2f`, và đổi được
+> ở Cài đặt.** Trước đây `ed.color` là hằng số cứng, không có nơi nào để đổi lâu dài —
+> đổi bằng ô Màu trên thanh chỉ có hiệu lực tới lần mở app kế tiếp. Nay:
+> - `colorSlotFor()` (đã có từ trước cho ✓/✗) mở rộng thành một `Map` — nguồn sự thật
+>   duy nhất cho "kind nào lấy màu ở slot nào". **9 kind** theo màu chung mới (hộp văn
+>   bản, mũi tên, mây, mây vẽ tay, chữ nhật, tròn, bút vẽ, ghi chú, đo); **4 kind giữ
+>   màu riêng vì màu của chúng là NGHĨA**: ✓ xanh (đúng), ✗ đỏ (sai), tô sáng vàng
+>   (đỏ + `multiply 0.4` ra vệt hồng), che thông tin đen.
+> - Lưu ở `localStorage` phía renderer (`nabu-annot-color`), theo đúng khuôn
+>   `nabu-breadcrumb` — không phải `prefs.js` của main, vì chỉ renderer cần giá trị này.
+> - Đổi màu ở Cài đặt **không** sơn lại vật thể đã vẽ (mặc định cho vật thể **mới**, như
+>   `ed.fontSize`); ô Màu trên thanh vẫn hoạt động như cũ và **không** ghi vào Cài đặt.
+> - Hai fallback `#ffd54a` trong `deserializeManaged()` (đọc file cũ không có `color`)
+>   **giữ nguyên** — đó là hằng số của định dạng file, đổi là làm file đã lưu đổi màu
+>   khi mở lại. Có ca test canh gác chặn việc này.
+> - Lưới mới `npm run test:defaults` (49 ca) — BI-61.
+>
+> **2. Gộp nhiều PDF: chuột phải trong Explorer + kéo–thả vào cửa sổ.** Tái dùng 90%
+> hộp thoại "Gộp file" đã có sẵn (không cần mở file trước) — chỉ thêm đường điền sẵn.
+> - **Registry verb** "Gộp bằng Nabu PDF" cho `.pdf` (`build/installer.nsh`, ghi lúc
+>   cài bằng `customInstall`, xoá lúc gỡ bằng `customUnInstall`). Sự thật của shell:
+>   verb command-line được gọi **một lần cho mỗi file** chọn, không phải một lần cho cả
+>   loạt — `%1` chỉ có một đường dẫn. `MultiSelectModel=Player` bắt buộc (thiếu thì
+>   Explorer ẩn mục menu khi chọn >15 file). Bộ gom N-tiến-trình-thành-một-batch tái
+>   dùng chính `requestSingleInstanceLock`/`second-instance` đã có trong app — dồn ra
+>   module thuần `createCombineBucket` (factory nhận `exists`/`isReady`/`onBatch`) để
+>   test được bằng node, vì `electron .` **không chạy được** ở máy dev này (đã đo
+>   baseline). ⚠️ **Windows 11**: đây là verb registry cổ điển nên nằm trong "Hiện thêm
+>   tùy chọn" (Shift+F10), không phải menu ngắn — menu ngắn chỉ nhận `IExplorerCommand`
+>   qua sparse MSIX **đã ký**, mà build đang không ký (`SIGNING.md`).
+> - **Kéo–thả nhiều PDF vào cửa sổ**: hỏi "Mở từng file" hay "Gộp thành một file" qua
+>   nút thứ ba của `uiConfirm` (đã có sẵn cho lời mời khôi phục ở v0.2.59) — ba lựa
+>   chọn vì `Esc` phải là "không làm gì cả", không thể mang nghĩa một trong hai hành
+>   động. Giữ đúng **thứ tự đã kéo** (đường registry phải sắp theo tên vì shell không
+>   cho biết thứ tự).
+> - **Phát hiện phụ khi làm việc này — lỗi có thật, không phải hồi quy của bản này:**
+>   handler `drop` cũ dùng `.find()` nên **kéo nhiều file chỉ mở được file đầu, các file
+>   sau im lặng biến mất**. Và nó gác bằng `if (f.path && ...)`, mà **`File.path` đã bị
+>   Electron 33 bỏ** (đo được: `typeof f.path === "undefined"`, dù typings `.d.ts` vẫn
+>   khai nó — đừng tin typings, phải đo). Nhánh "mở tab mới" từng là code chết; mọi lần
+>   kéo–thả rơi xuống `loadBytes` = **thay tài liệu đang mở**, không lỗi không cảnh báo.
+>   Sửa bằng `webUtils.getPathForFile` (đã đo: dùng được trong preload `sandbox: true`),
+>   giữ `f.path` làm fallback. Xem BI-63.
+> - Lưới mới `npm run test:combine` (77 ca, gồm đối chiếu `installer.nsh` ↔ JS) +
+>   `npm run test:confirm` mở rộng lên 35 ca.
+>
+> **Chưa test được ở máy dev** (không lái được `electron .` thật ở đây — đã đo baseline
+> cũng không chạy): khoá registry thật, nhãn verb tiếng Việt không mojibake, đường
+> `second-instance` thật, ca đua khoá lúc app chưa chạy. Phải test tay trên bản đã cài —
+> danh sách đầy đủ ở `docs/REGRESSION-GUARD.md` §5 + BI-62/BI-63.
 
 > **v0.2.59 — đợt SỬA LỖI theo report người dùng.** Ba thứ, hai trong số đó là bug đã
 > nằm im nhiều bản.

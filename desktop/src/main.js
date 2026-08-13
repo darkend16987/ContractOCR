@@ -11,6 +11,7 @@ const { initAutoUpdate } = require("./updater");
 const { initLicense } = require("./license");
 const { initSigning } = require("./signing");
 const Tabs = require("./tabs");
+const ShellCombine = require("./shell-combine");
 
 // Each document opens as a TAB inside a TabbedWindow (BaseWindow + one
 // WebContentsView per doc — see src/tabs.js). Every tab is a full, independent
@@ -160,8 +161,87 @@ function sendFileToView(webContents, filePath) {
   }
 }
 
+// Read a batch of PDFs off disk and hand them to a renderer to PRE-FILL the
+// "Gộp nhiều PDF" dialog. Same shape as sendFileToView (one message, bytes over
+// the binary structured-clone path, never base64-in-JSON — BI-49), but it opens
+// a dialog instead of a document: nothing is merged until the user confirms.
+//
+// Unreadable entries are skipped rather than aborting the batch — one locked file
+// out of eight must not cost the other seven. The renderer reports what it could
+// not parse (password-protected files) the same way the manual picker does.
+function sendCombineToView(webContents, filePaths, dropped) {
+  try {
+    if (!webContents || webContents.isDestroyed()) return;
+    const files = [];
+    for (const p of Array.isArray(filePaths) ? filePaths : []) {
+      try {
+        if (!ShellCombine.isPdfPath(p)) continue;
+        if (!fs.existsSync(p) || !fs.statSync(p).isFile()) continue;
+        files.push({ path: p, name: path.basename(p), data: fs.readFileSync(p) });
+      } catch (_) {
+        /* skip this one, keep the batch */
+      }
+    }
+    if (!files.length) return;
+    webContents.send("combine:prefill", { files, dropped: dropped | 0 });
+  } catch (_) {
+    /* ignore — the tab is still a usable empty tab */
+  }
+}
+
+// True once Tabs.configure() + Prefs.configure() have run, i.e. once it is safe to
+// open a window. The bucket waits on this instead of crashing when the tail of a
+// cold-start selection arrives mid-boot.
+let combineReady = false;
+
+// Explorer's "Gộp bằng Nabu PDF" drips ONE path per process (see
+// src/shell-combine.js for why, and for the accumulation policy itself — it lives
+// there so it can be tested without a running Electron).
+//
+// One bucket, not one per selection: a user cannot right-click two different
+// selections inside the same second, and pretending otherwise would need an
+// identity the shell never gives us.
+const combineBucket = ShellCombine.createCombineBucket({
+  isReady: () => combineReady,
+  resolvePath: (p) => path.resolve(p),
+  exists: (p) => {
+    try {
+      return fs.existsSync(p) && fs.statSync(p).isFile();
+    } catch (_) {
+      return false;
+    }
+  },
+  onBatch: (list, dropped) => openCombineBatch(list, dropped),
+});
+
+// Open the pre-filled combine dialog in a tab of its OWN.
+//
+// Never the current tab: runCombine() finishes by loading the merged result into
+// the tab it ran in, so reusing a tab that already holds a document would put the
+// user in front of a "discard your unsaved changes?" question they did not ask
+// for. A fresh tab also means the document they were reading is still there when
+// they are done (BI-8's spirit: arriving work never displaces open work).
+//
+// Honours "Mở file mới trong" for tab-vs-window like every other arriving-file
+// path does (BI-35) — this is a fourth such path and skipping it is exactly how
+// that invariant gets broken.
+function openCombineBatch(paths, dropped) {
+  const tw = Tabs.focusedTabbedWindow();
+  if (tw && Prefs.getOpenIn() === "tab") {
+    tw.createTab({ combinePaths: paths, combineDropped: dropped });
+    tw.focus();
+  } else {
+    Tabs.createTabbedWindow(null, { combinePaths: paths, combineDropped: dropped });
+  }
+}
+
 // Pull the first existing *.pdf path out of a process argv list. Windows passes
 // the file to "Open with" as a bare argument. Skips flags and the app path.
+//
+// NOTE: this also matches the path in a `--nabu-combine "x.pdf"` argv, because the
+// flag is skipped as a switch and the path is not. Callers MUST therefore ask
+// ShellCombine.combinePathFromArgv() FIRST — otherwise a combine invocation just
+// opens the file (see second-instance and the launch path below).
 function pdfPathFromArgv(argv) {
   if (!Array.isArray(argv)) return null;
   for (const a of argv.slice(1)) {
@@ -449,6 +529,17 @@ if (!app.requestSingleInstanceLock()) {
   // funnelled here instead of starting a new process. Open the file in a NEW
   // window if one was passed; otherwise just surface an existing window.
   app.on("second-instance", (_e, argv) => {
+    // Explorer's "Gộp bằng Nabu PDF" lands here once PER SELECTED FILE — this is
+    // the accumulator the shell forces on us (src/shell-combine.js). Drip into
+    // the bucket and return; nothing opens until the drip stops.
+    //
+    // MUST be asked before pdfPathFromArgv: that function also finds the path in a
+    // combine argv, so the other order would open each file instead of merging.
+    const combinePath = ShellCombine.combinePathFromArgv(argv);
+    if (combinePath) {
+      combineBucket.add(combinePath);
+      return;
+    }
     const filePath = pdfPathFromArgv(argv);
     if (filePath) {
       openPathInApp(filePath);
@@ -494,6 +585,7 @@ if (!app.requestSingleInstanceLock()) {
       hardenNav,
       attachContextMenu,
       sendFileToView,
+      sendCombineToView,
       isQuitting: () => appQuitting,
       onAllClosed: () => {
         if (process.platform !== "darwin") app.quit();
@@ -509,17 +601,34 @@ if (!app.requestSingleInstanceLock()) {
     // Must come before the first window is created below: the launch path can
     // already be routing a file handed over by Explorer.
     Prefs.configure({ file: path.join(app.getPath("userData"), "prefs.json") });
+    combineReady = true; // windows can be opened from here on (combineBucket.flush)
 
     buildMenu(menuLang);
+    // Launched by Explorer's "Gộp bằng Nabu PDF"? Asked BEFORE the open-file path
+    // for the same reason as in second-instance: pdfPathFromArgv would happily
+    // treat this argv as "open one PDF".
+    //
+    // Nothing is created here on purpose. This process holds only the FIRST file of
+    // the selection; the rest are still arriving through second-instance. The
+    // bucket's flush opens exactly one tab/window once they stop coming — creating
+    // a window now would leave a stray empty one beside it.
+    //
+    // The previous session is deliberately NOT restored, matching the double-click
+    // rule right below: the user asked to merge these files, not to be handed back
+    // everything they had open last time.
+    const launchCombine = ShellCombine.combinePathFromArgv(process.argv);
+    if (launchCombine) combineBucket.add(launchCombine);
     // Open a file passed on the command line (Windows "Open with") or stashed by
     // a pre-ready macOS open-file event; otherwise reopen the previous session.
-    const launchFile = pendingOpenPath || pdfPathFromArgv(process.argv);
+    const launchFile = launchCombine ? null : pendingOpenPath || pdfPathFromArgv(process.argv);
     pendingOpenPath = null;
     if (launchFile) {
       // Launched by double-clicking a PDF: open just that file. Dragging the
       // whole previous session along would be a surprise, not a service.
       Tabs.createTabbedWindow(launchFile);
-    } else {
+    } else if (!launchCombine) {
+      // `!launchCombine` is what keeps a combine launch from ALSO restoring the
+      // previous session behind the merge dialog. The bucket owns that launch.
       const restored = Session.isEnabled() ? Tabs.restoreSession(Session.previousWindows()) : 0;
       if (!restored) {
         Tabs.createTabbedWindow();

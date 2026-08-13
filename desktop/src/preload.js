@@ -1,6 +1,6 @@
 "use strict";
 
-const { contextBridge, ipcRenderer } = require("electron");
+const { contextBridge, ipcRenderer, webUtils } = require("electron");
 
 // Safe, minimal surface exposed to the renderer. No Node, no fs — just the few
 // main-process capabilities the PDF UI needs.
@@ -130,6 +130,15 @@ contextBridge.exposeInMainWorld("desktop", {
     ipcRenderer.on("file:open", handler);
     return () => ipcRenderer.removeListener("file:open", handler);
   },
+  // A BATCH was handed to this tab by Explorer's "Gộp bằng Nabu PDF" verb: pre-fill
+  // the merge dialog, do not open anything. cb receives
+  // { files: [{ path, name, data: Uint8Array }], dropped }, where `dropped` is how
+  // many the batch cap removed so the dialog can say so out loud.
+  onCombinePrefill: (cb) => {
+    const handler = (_e, payload) => cb(payload);
+    ipcRenderer.on("combine:prefill", handler);
+    return () => ipcRenderer.removeListener("combine:prefill", handler);
+  },
 
   // --- moving pages between documents (docs/SPEC-page-drag.md) ---
   // This tab never names another tab: it either throws pages at a screen position
@@ -193,6 +202,24 @@ contextBridge.exposeInMainWorld("desktop", {
   writeClipboardImage: (bytes) => ipcRenderer.invoke("clipboard:write-image", bytes),
   // Read an image off the OS clipboard as a PNG data URL, or null if none.
   readClipboardImage: () => ipcRenderer.invoke("clipboard:read-image"),
+
+  // The real filesystem path of a dropped File, or null.
+  //
+  // `webUtils.getPathForFile()` is the supported way to do this from Electron 32 on;
+  // Electron's own typings say it "superseded the previous augmentation to the File
+  // object with the `path` property". The renderer keeps a `file.path` fallback so it
+  // works either way and cannot regress if one of them goes away.
+  //
+  // Why the path matters at all: with it, dropping a PDF onto a tab that already holds
+  // a document opens a NEW tab through main's routing (BI-8 / BI-35). Without it the
+  // renderer can only load the bytes into THIS tab, i.e. displace what is open.
+  pathForFile: (file) => {
+    try {
+      return webUtils.getPathForFile(file) || null;
+    } catch (_) {
+      return null; // not a real on-disk File, or the API is unavailable
+    }
+  },
 
   // --- native file dialogs ---
   // Returns [{ path, name, data: Uint8Array }, ...] (empty if cancelled).

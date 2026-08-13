@@ -82,3 +82,8 @@ nsis:
   uninstallerIcon: build/icon.ico
   installerHeaderIcon: build/icon.ico
   shortcutName: Nabu PDF
+  # Registers the Explorer "Gộp bằng Nabu PDF" shortcut-menu verb on install and
+  # removes it on uninstall. build/installer.nsh is also electron-builder's default
+  # location for this, but it is named here so the file is discoverable from the
+  # config rather than only by knowing the convention.
+  include: build/installer.nsh

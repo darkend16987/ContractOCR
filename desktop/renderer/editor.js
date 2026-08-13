@@ -60,6 +60,29 @@
   // The ✓ / ✗ stamps. Grouped because six places have to treat them alike, and an
   // inline `||` chain in each is how those places drift apart (see RESIZABLE_KINDS).
   const SYMBOL_KINDS = new Set(["check", "cross"]);
+  // Which remembered default colour a tool/kind draws with. Four kinds keep their OWN
+  // slot because their colour carries meaning rather than preference: ✓ = đúng (green),
+  // ✗ = sai (red), tô sáng = highlighter yellow, che thông tin = black. Every other kind
+  // shares `ed.color` — the slot Cài đặt → Màu chú thích mặc định writes.
+  //
+  // A Map, not the ternary chain this used to be: four exceptions threaded through a
+  // chain, read from four call sites (the shape + symbol create paths, setTool, and the
+  // #ed-color handler), is exactly how those call sites drift apart. A Map also has no
+  // prototype keys, so an unexpected `k` can only ever fall through to "color".
+  //
+  // Declared UP HERE with the other kind classifiers, not next to colorSlotFor down in
+  // the palette section: `colorSlotFor` is a hoisted function declaration but this Map
+  // is a `const`, so a call from anything that runs at IIFE-init time would hit its TDZ
+  // and blank the app. Nothing calls it at init today — this keeps it that way.
+  const COLOR_SLOTS = new Map([
+    ["check", "checkColor"],
+    ["cross", "crossColor"],
+    ["highlight", "highlightColor"],
+    ["redact", "redactColor"],
+  ]);
+  function colorSlotFor(k) {
+    return COLOR_SLOTS.get(k) || "color";
+  }
   // MANAGED_KINDS / isManagedKind / the /Nabu* keys / sniffImage / strToBytes /
   // makeMap / pageRotate / serializeManaged / pushPageAnnot / managedSrcBytes /
   // managedSrcDataUrl / collectManagedChain / freeManagedTrash /
@@ -70,13 +93,52 @@
   // ed.seq) and `addManagedAnnot` (+ its `f`; calls the canvas rasterisers) stayed.
   // See BI-14 + BI-37/38 + §2.
 
+  // ---- default annotation colour (Cài đặt → Màu chú thích mặc định) --------
+  //
+  // RED, not the yellow this used to be: the shared slot below is what a text box, an
+  // arrow, a cloud and a rectangle all draw with, and yellow on white paper is very
+  // nearly invisible — a review mark nobody can see is worse than no mark. Tô sáng and
+  // ✓/✗ keep their own slots (see `ed` and colorSlotFor), so this change does not turn
+  // the highlighter pink or make a tick mean "sai".
+  //
+  // Stored renderer-side (localStorage) like the theme and the path bar, NOT in main's
+  // prefs.json: prefs.js exists for decisions main has to make with no window open
+  // (BI-35). Only a renderer with the overlay open ever reads this one.
+  //
+  // THREE literals have to agree: this constant, `#ed-color`'s markup value and
+  // `#set-annot-color`'s — the first is the running default, the other two are what the
+  // user sees for the split second before JS writes them. `npm run test:defaults` fails
+  // if they drift.
+  const DEFAULT_ANNOT_COLOR = "#d32f2f";
+  const ANNOT_COLOR_KEY = "nabu-annot-color";
+  const HEX6 = /^#[0-9a-fA-F]{6}$/;
+
+  // Validated on the way OUT of storage, which a human may have edited and which an
+  // older/newer build may have written: junk falls back to the default rather than
+  // reaching an `<input type="color">` (which would silently show #000000 instead).
+  function savedAnnotColor() {
+    try {
+      const v = localStorage.getItem(ANNOT_COLOR_KEY);
+      return HEX6.test(v || "") ? v.toLowerCase() : DEFAULT_ANNOT_COLOR;
+    } catch (_) {
+      return DEFAULT_ANNOT_COLOR; // unreadable storage must not cost the drawing tools
+    }
+  }
+
   const ed = {
     active: false,
     tool: "select",
-    color: "#ffd54a", // highlight / draw / new-text colour
+    // The shared default for every kind that draws with the one "Màu" control:
+    // text, arrow, cloud, cloudpen, box, ellipse, draw, note, dim.
+    color: savedAnnotColor(),
     redactColor: "#000000", // redaction fill colour (separate from `color`)
+    // Tô sáng keeps the highlighter yellow even though the shared default above is now
+    // red: `.an-highlight` is `mix-blend-mode: multiply` at 0.4 (app.css), so red comes
+    // out as a pink wash over the words — which reads as "something is wrong with this
+    // line" rather than "look here". Own slot, same "Màu" control (colorSlotFor).
+    highlightColor: "#ffd54a", // tô sáng — highlighter yellow
     // The ✓ / ✗ stamps remember their own colour, like redactColor does: they mean
-    // "đúng" and "sai", so inheriting the highlighter's yellow would make every new
+    // "đúng" and "sai", so inheriting the shared default would make every new
     // tick meaningless until the user recoloured it by hand. Same "Màu" control —
     // it just shows whichever default belongs to the current tool (colorSlotFor).
     checkColor: "#2e7d32", // ✓ — green
@@ -1248,7 +1310,10 @@
     }
 
     if (ed.tool === "highlight" || ed.tool === "redact" || ed.tool === "box" || ed.tool === "ellipse" || ed.tool === "cloud") {
-      const col = ed.tool === "redact" ? ed.redactColor : ed.color;
+      // One lookup for all five tools in this branch: highlight and redact both keep
+      // their own remembered colour now, and spelling either of them out here again is
+      // how this line and colorSlotFor would end up disagreeing.
+      const col = ed[colorSlotFor(ed.tool)];
       const a = { id: ed.seq++, kind: ed.tool, x: p.x, y: p.y, w: 1, h: 1, color: col, width: ed.penWidth };
       if (ed.tool === "box" || ed.tool === "ellipse" || ed.tool === "cloud") {
         a.fill = effFill();
@@ -3127,13 +3192,6 @@
     updateFmtPanel();
   }
 
-  // Which remembered default colour a tool/kind uses. The ✓ and ✗ keep their own
-  // (green / red) while sharing the one "Màu" control — see ed.checkColor. Anything
-  // else falls back to the shared `ed.color`, which is the historical behaviour.
-  function colorSlotFor(k) {
-    return k === "check" ? "checkColor" : k === "cross" ? "crossColor" : "color";
-  }
-
   function setTool(tool) {
     // Leaving the cloud-pen tool abandons a polygon still being clicked out.
     if (ed._poly && tool !== "cloudpen") {
@@ -3146,8 +3204,9 @@
     }
     ed.tool = tool;
     document.querySelectorAll("#ed-tools .tool").forEach((b) => b.classList.toggle("active", b.dataset.tool === tool));
-    // Show the colour this tool actually draws with, or picking ✓ would display
-    // the highlighter's yellow while stamping green.
+    // Show the colour this tool actually draws with, or picking ✓ would display the
+    // shared default while stamping green — and picking Tô sáng would show red while
+    // laying down yellow.
     const cpick = $("ed-color");
     if (cpick) cpick.value = ed[colorSlotFor(tool)];
     syncCtlVisibility(tool);
@@ -3157,6 +3216,33 @@
     // load-bearing: the cloud-pen's in-progress line and the measure scale below would
     // otherwise stay behind after switching tools.
     setEdStatus(tool === "measure" ? measureStatus() : "");
+  }
+
+  // Cài đặt → Màu chú thích mặc định. Persists the shared slot and applies it to THIS
+  // session immediately, so the user sees the effect with the dialog still open (same
+  // rule as the path-bar checkbox in app.js).
+  //
+  // Deliberately does NOT touch annotations already on the page: this is the colour new
+  // objects get, exactly like ed.fontSize and ed.penWidth. Repainting a document's marks
+  // because a preference changed would be an edit the user never asked for — and one
+  // that would need its own undo step to take back.
+  //
+  // Returns the colour actually in force, so the caller's `<input>` settles on the stored
+  // value rather than showing something untrue when the input was junk (same contract as
+  // main's setOpenIn).
+  function setDefaultColor(hex) {
+    if (!HEX6.test(hex || "")) return ed.color;
+    ed.color = String(hex).toLowerCase();
+    try {
+      localStorage.setItem(ANNOT_COLOR_KEY, ed.color);
+    } catch (_) {
+      /* the change still holds for this session, it just won't be remembered */
+    }
+    // Keep the edit bar honest if it is open: the picker shows whichever slot the
+    // current tool draws with, which may or may not be the one just changed.
+    const cpick = $("ed-color");
+    if (cpick) cpick.value = ed[colorSlotFor(ed.tool)];
+    return ed.color;
   }
 
   // The one writer for #ed-hint. Deliberately NOT a place for instructions — those
@@ -3433,8 +3519,12 @@
     const hit = ed.sel != null ? findAnnot(ed.sel) : null;
     // The remembered default follows what the picker is actually showing: the
     // SELECTED annotation's kind when there is one (under Select, recolouring a ✗
-    // must update the ✗ default, not the shared highlight/draw colour), else the
-    // active tool's. For every pre-existing kind this still resolves to ed.color.
+    // must update the ✗ default, not the shared draw colour), else the active tool's.
+    // Anything without its own slot in COLOR_SLOTS lands on ed.color.
+    //
+    // This deliberately does NOT write the Cài đặt preference to disk: recolouring one
+    // arrow mid-review is "this arrow", not "every arrow from now on". Only the Settings
+    // picker persists (see setDefaultColor).
     ed[colorSlotFor(hit ? hit.a.kind : ed.tool)] = v;
     // Recolour EVERY selected object, not just the primary: with a Ctrl+click group,
     // changing the colour of one of them and silently leaving the rest is the kind of
@@ -3836,5 +3926,9 @@
     redo: edRedo,
     getComments, // Comments panel data source while editing
     focusNote, // Comments panel → jump to + select a note
+    // Cài đặt → Màu chú thích mặc định. The preference is READ and WRITTEN only here, so
+    // app.js never grows a second copy of the storage key or the hex validation.
+    getDefaultColor: () => ed.color,
+    setDefaultColor,
   };
 })();

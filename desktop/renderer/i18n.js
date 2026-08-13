@@ -565,6 +565,10 @@
     "Sáng": "Light",
     "Ngôn ngữ": "Language",
     "Ngôn ngữ giao diện": "Interface language",
+    "Màu chú thích mặc định": "Default annotation colour",
+    "Màu của vật thể mới khi Chú thích: hộp văn bản, mũi tên, mây, chữ nhật, tròn, bút vẽ, ghi chú, đo · dấu ✓ ✗, Tô sáng và Màu che giữ màu riêng · vật thể đã vẽ không đổi":
+      "The colour new annotation objects get: text box, arrow, cloud, rectangle, ellipse, pen, note, measure · the ✓ ✗ stamps, Highlight and Redact keep their own colours · objects already drawn are left alone",
+    "Màu mặc định cho chú thích mới": "Default colour for new annotations",
     "Hiện đường dẫn file": "Show file path",
     "Dải đường dẫn ngay dưới thanh công cụ — tắt đi để trang rộng thêm":
       "The path strip under the toolbar — turn it off to give the page more room",

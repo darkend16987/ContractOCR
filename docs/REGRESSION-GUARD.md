@@ -29,6 +29,8 @@ tài liệu này chỉ có giá trị nếu được cập nhật.
 | ~~`editor.js` — ảnh round-trip~~ → `managed-codec.js` (v0.2.49) | ~180 dòng | Ghi/đọc/giải phóng object PDF riêng. Sai ở đây **mất ảnh của người dùng** hoặc phình file âm thầm. Có lưới `npm run test:managed` → xem BI-37, BI-38. |
 | `desktop/renderer/app.css` — khối `@media print` + `app.js` `buildPrintPages` | ~50 dòng | Bố cục **tờ giấy**. Rủi ro **cao và im lặng**: sai ở đây không có lỗi, không có cảnh báo — chỉ là máy in nhả gấp đôi số tờ, hoặc mất phần dưới trang, và **chỉ trên khổ giấy mà người viết code không dùng** (A3/Letter). Nửa số học có lưới `npm run test:print`; nửa CSS chỉ probe `printToPDF` **đếm tờ** mới thấy → xem BI-43, BI-44. |
 | `desktop/src/prefs.js` | ~80 | Tuỳ chọn phía main. Rủi ro thấp; nằm trong lưới `npm run test:tabs`. |
+| `desktop/src/shell-combine.js` | ~200 | Verb “Gộp bằng Nabu PDF” của Explorer. Rủi ro **thấp** nhờ lưới `npm run test:combine` (thuần: parse argv, dedupe/sắp thứ tự, chính sách gom). Cái **không** có lưới là hai đầu OS: khoá registry do `build/installer.nsh` ghi, và đường `second-instance` thật — cả hai cần bản **đã cài**. Sai ở đây không mất dữ liệu; nó mất **im lặng** (mục menu chạy app không có cờ ⇒ thành “Open with”) → xem BI-62. |
+| `desktop/build/installer.nsh` | ~20 | Khoá registry của verb. Không chạy lúc dev, **chỉ** chạy lúc cài ⇒ sai thì không ai biết cho tới khi có người cài thật. Ba thứ dễ sai: thiếu `MultiSelectModel=Player` (chọn >15 file là mục menu mất), thiếu **BOM UTF-8** (nhãn tiếng Việt thành mojibake), thiếu `customUnInstall` (gỡ app xong còn mục menu chết). Có ca đối chiếu với JS trong `test:combine` → xem BI-62. |
 | `api.py` + `src/pdf/*.py` | — | Có lưới test tự động (`run_tests.py`) → rủi ro thấp hơn renderer. |
 
 > Renderer gần như **không có** test tự động. Ngoại lệ là **năm** file được **cố ý tách
@@ -1274,6 +1276,135 @@ _Ghi 2026-08-12._
 - Lưới: `npm run test:managed` §3b (cơ chế, đo thật) + §3c (hai cổng, assertion trên source —
   `exit()`/`bakePending()` cần DOM nên không đo trực tiếp được).
 
+### BI-61 · Màu chú thích: `colorSlotFor` là nguồn sự thật DUY NHẤT, và bốn màu có NGHĨA không được gộp
+_Ghi 2026-08-13._
+
+- `desktop/renderer/editor.js`: `DEFAULT_ANNOT_COLOR`, `savedAnnotColor()`, `COLOR_SLOTS`,
+  `colorSlotFor()`, `setDefaultColor()`, khối `ed`; `renderer/app.js` `#set-annot-color`;
+  `index.html` `#ed-color` + `#set-annot-color`.
+- Mặc định dùng chung đổi **vàng `#ffd54a` → đỏ `#d32f2f`** ở v0.2.60 vì hộp văn bản / mũi
+  tên màu vàng trên giấy trắng gần như vô hình.
+- **BỐN kind giữ ô màu riêng vì màu của chúng là NGHĨA, không phải sở thích:**
+  `check` xanh (= đúng), `cross` đỏ (= sai), `highlight` vàng highlighter
+  (`mix-blend-mode: multiply` 0.4 ⇒ đỏ thành vệt hồng), `redact` đen. Gộp chúng vào một
+  màu “cho đơn giản” là làm dấu ✓ mang nghĩa **sai** và ô che thôi không còn đen.
+- **Luật:** `COLOR_SLOTS` là một **Map** khai ở đầu IIFE cùng `SYMBOL_KINDS`. Mọi nhánh phục
+  vụ **nhiều kind** (màu phụ thuộc `ed.tool`) **phải** đi qua `ed[colorSlotFor(ed.tool)]` —
+  đừng viết lại một ternary `ed.tool === "redact" ? ed.redactColor : ed.color` tại chỗ gọi,
+  đó đúng là cái đã bị xoá và đúng cách các chỗ gọi lệch nhau.
+  - Nhánh chỉ tạo **một** kind mà kind đó **không** có slot riêng (arrow, dim, draw,
+    cloudpen, text, note) đọc `ed.color` trực tiếp là **đúng** và đang làm vậy — 7 chỗ.
+    ⚠️ Nhưng nếu sau này cấp slot riêng cho một trong số đó (ví dụ `note`), **phải** đổi
+    chỗ tạo nó sang `colorSlotFor`, nếu không nó sẽ im lặng vẽ bằng màu chung.
+  - Map **không phải** object literal: `COLOR_SLOTS["constructor"]` trên object literal trả
+    về hàm của prototype (truthy) ⇒ `ed[hàm]` = `undefined` ⇒ vật thể màu đen im lặng.
+  - Khai ở **đầu** file, không cạnh `colorSlotFor`: `colorSlotFor` là function declaration
+    (hoisted) nhưng Map là `const`; một lời gọi lúc IIFE-init sẽ đụng **TDZ** ⇒ app trắng.
+- **`|| "#ffd54a"` trong `deserializeManaged()` (2 chỗ: arrow + note) là hằng số của ĐỊNH
+  DẠNG FILE, không phải preference.** Trỏ chúng sang mặc định mới = mọi file đã lưu đổi màu
+  khi mở lại. Có ca canh gác trong lưới.
+- Preference nằm ở **localStorage phía renderer** (`nabu-annot-color`), **không** phải
+  `prefs.js`: `prefs.js` tồn tại cho quyết định main phải ra khi **chưa có cửa sổ nào**
+  (BI-35); màu chú thích thì chỉ renderer đọc. Đọc/ghi **chỉ** ở `editor.js` và phơi qua
+  `window.Editor.getDefaultColor/setDefaultColor` — `app.js` không được giữ bản sao thứ hai
+  của key hay của regex kiểm hex.
+- **Ba literal phải bằng nhau:** `DEFAULT_ANNOT_COLOR`, `value=` của `#ed-color`, `value=`
+  của `#set-annot-color`.
+- Đổi màu ở Cài đặt **không** sơn lại vật thể đã vẽ (đó là mặc định cho vật thể **mới**, y
+  như `ed.fontSize`), còn ô **Màu** trên thanh **không** ghi vào preference.
+- **Vỡ khi:** dấu ✓ ra đỏ · bút tô sáng ra hồng · ô che ra đỏ · vật thể mới ra **đen** (slot
+  sai tên) · đổi màu ở Cài đặt rồi khởi động lại thì mất · mở file cũ thấy mũi tên đổi màu.
+- Lưới: `npm run test:defaults` (45 ca — 3 literal, validate storage, 4 slot có nghĩa,
+  ca canh gác `constructor`/`__proto__`, và 2 fallback `#ffd54a` của import).
+
+### BI-62 · Verb “Gộp bằng Nabu PDF”: Explorer gọi app MỘT LẦN MỖI FILE — nhánh combine phải hỏi TRƯỚC, và batch phải mở tab RIÊNG
+_Ghi 2026-08-13._
+
+- `desktop/src/shell-combine.js` (thuần, có lưới) + `main.js` (`combineBucket`,
+  `openCombineBatch`, `sendCombineToView`, `combineReady`) + `tabs.js` (`createTab`
+  `combinePaths`) + `preload.js` (`onCombinePrefill`) + `renderer/app.js`
+  (`combineFromShell`, `addCombineEntries`) + `build/installer.nsh`.
+- **Sự thật của shell, phải nhớ trước khi sửa:** verb kiểu command-line được gọi **một lần
+  cho mỗi file** được chọn, `%1` chỉ có một đường dẫn. `MultiSelectModel` **không** gộp lại;
+  nó chỉ quyết định mục menu có hiện hay không:
+
+  | Kiểu verb | `Document` | `Player` |
+  |---|---|---|
+  | legacy (command line) | 15 mục | **100 mục** |
+  | COM (DropTarget) | 15 mục | không trần |
+
+  ⇒ `Player` là **bắt buộc** (thiếu nó thì chọn 16 file là mục menu **biến mất**), và 100 là
+  trần của OS. Nhận cả loạt trong **một** tiến trình cần COM `IDropTarget` — Electron không
+  làm được mà không có helper native, **đã cố ý không làm**.
+- **Bộ gom mà shell buộc phải có thì repo đã có sẵn:** `requestSingleInstanceLock` +
+  `second-instance`. Tiến trình 2..N chuyển argv về tiến trình đầu rồi thoát. Không cần thêm
+  binary nào (app khác phải ship hẳn một exe phụ cho việc này).
+- **Luật 1 — THỨ TỰ HỎI.** `pdfPathFromArgv()` **cũng** tìm thấy đường dẫn trong argv của
+  một lần gọi combine (cờ bị bỏ qua vì bắt đầu bằng `-`, đường dẫn thì không). Nên
+  `ShellCombine.combinePathFromArgv()` phải được hỏi **TRƯỚC** ở **cả hai** lối vào argv
+  (`second-instance` và đường khởi động). Sai thứ tự = chuột phải Gộp lại thành **mở file**.
+- **Luật 2 — TAB RIÊNG.** `runCombine()` kết thúc bằng `loadBytes()`, tức là **thay tài
+  liệu của tab nó chạy trong đó**. Dùng lại tab đang có tài liệu sẽ dựng lên câu hỏi “bỏ
+  thay đổi chưa lưu?” mà người dùng không gây ra. Batch luôn mở **tab của riêng nó**, và vẫn
+  hỏi `Prefs.getOpenIn()` cho tab-hay-cửa-sổ — đây là **đường mở tài liệu thứ tư**, bỏ sót
+  nó là phá BI-35.
+- **Luật 3 — KHÔNG GỘP IM LẶNG.** `%1` không mang chỉ số và N tiến trình tới theo thứ tự OS
+  xếp lịch, nên **thứ tự click không sống sót**. Sắp theo tên **tự nhiên** (2 trước 10) rồi
+  **luôn** mở hộp thoại để người dùng xác nhận/sắp lại. Gộp thẳng theo thứ tự tuỳ ý tạo ra
+  tài liệu sai mà không ai phát hiện.
+- **Luật 4 — CỜ VÀ KHOÁ REGISTRY SỐNG Ở HAI FILE.** `--nabu-combine` + subkey có trong cả
+  `shell-combine.js` lẫn `build/installer.nsh`, và **không có gì lúc build đối chiếu**. Lệch
+  = mục menu chạy app **không có cờ** ⇒ app coi là “Open with” ⇒ tính năng mất im lặng. Lưới
+  đối chiếu hai file; đừng xoá ca đó.
+- **Luật 5 — `SHCTX`, không hard-code HKCU/HKLM.** NSIS phân giải `SHCTX` theo chế độ cài mà
+  electron-builder đã đặt, nên bản per-user ghi HKCU còn bản per-machine (đã nâng quyền) ghi
+  HKLM. Hard-code HKCU = đăng ký verb cho **tài khoản admin** khi người khác nâng quyền hộ.
+- `installer.nsh` phải là **UTF-8 CÓ BOM** (nhãn verb là tiếng Việt; NSIS 3 cần BOM). Thiếu
+  BOM = mục menu ra mojibake. Có ca test đọc 3 byte đầu.
+- `customUnInstall` **phải** `DeleteRegKey`, không thì gỡ app xong còn mục menu trỏ vào exe
+  đã bị xoá.
+- Trần một lượt là **60 file** (`MAX_BATCH`) vì mỗi file được đọc thành bytes rồi đẩy qua
+  IPC. Phần bị cắt **phải được nói ra** (`dropped` → toast), không bao giờ cắt im lặng.
+- **Windows 11:** đây là verb registry legacy nên nó nằm trong **“Hiện thêm tùy chọn”**
+  (Shift+F10), **không** ở menu ngắn. Menu ngắn chỉ nhận `IExplorerCommand` đăng ký qua sparse
+  MSIX **đã ký**, mà bản build đang **không ký** (`SIGNING.md`). Đã ghi trong Hướng dẫn để
+  không bị báo là “thiếu tính năng”.
+- **Vỡ khi:** double-click **một** file PDF lại mở hộp thoại Gộp · chuột phải Gộp lại **mở
+  từng file** · chọn 5 file ra **hai** hộp thoại (cửa sổ gom quá ngắn) · batch **đè** lên tài
+  liệu đang đọc · chọn 16 file thì mục menu mất (thiếu `Player`) · gỡ app xong menu vẫn còn.
+- Lưới: `npm run test:combine` (77 ca — parse argv gồm ca canh gác “Open with phải ra
+  null”, dedupe/sắp thứ tự/trần, chính sách gom của `createCombineBucket` gồm cửa
+  chờ-app-sẵn-sàng, đối chiếu `.nsh` ↔ JS, và assertion thứ tự hỏi trên source `main.js`).
+  ⚠️ **Chưa có lưới cho:** verb thật trong registry và đường `second-instance` thật — cả hai
+  cần bản **đã đóng gói + đã cài**. Xem §5 để biết phải test tay những gì.
+
+### BI-63 · `File.path` ĐÃ CHẾT ở Electron 33 — đường dẫn file kéo–thả phải qua `webUtils.getPathForFile`
+_Ghi 2026-08-13. **Đo được, không suy luận.**_
+
+- `desktop/src/preload.js` `pathForFile` + `renderer/app.js` `droppedPath()`.
+- **Số đo:** trong renderer của Electron 33.4.11, `typeof f.path` của một `File` là
+  **`"undefined"`**. Nghĩa là chốt `if (f.path && state.bytes)` trong handler `drop` (có từ
+  trước, viết cho Electron ≤31) **là code chết** — mọi lần kéo–thả đều rơi xuống nhánh
+  `loadBytes`, tức là **nạp vào chính tab đang mở** thay vì mở tab mới như BI-8/BI-35 quy
+  định. Không lỗi, không cảnh báo; chỉ là tài liệu đang đọc bị thay.
+- Typings của Electron 33 **vẫn còn** khai `interface File { path: string }`, nên đọc
+  `.d.ts` sẽ tưởng nó còn sống. Đừng tin typings ở điểm này — đo bằng probe.
+- **Luật:** đường dẫn của file kéo vào lấy qua `webUtils.getPathForFile(file)` (gọi trong
+  **preload**, phơi ra thành `window.desktop.pathForFile`), giữ `f.path` làm fallback để
+  không phụ thuộc vào một API duy nhất.
+  - **Đã đo:** `webUtils` **dùng được** trong preload có `sandbox: true` +
+    `contextIsolation: true` (đúng cấu hình `src/tabs.js`): `typeof webUtils === "object"`,
+    `getPathForFile` là `function`.
+  - Với `File` dựng bằng JS (không có file thật trên đĩa) nó trả **chuỗi rỗng** `""` —
+    đúng như tài liệu. Nên `droppedPath()` phải nhận **chuỗi không rỗng**, chứ không phải
+    "bất kỳ giá trị truthy": `""` là falsy nên lọt, nhưng một giá trị sai hình dạng khác
+    sẽ được chuyển thẳng sang main làm tên file.
+- **Vỡ khi:** kéo một PDF vào tab **đã có** tài liệu mà nó **thay** tài liệu đó thay vì mở
+  tab mới · kéo nhiều file rồi chọn “Mở từng file” mà chỉ mở được một file kèm toast
+  “không lấy được đường dẫn”.
+- Lưới: `npm run test:confirm` §3b (assertion trên source). Đường OS thật (kéo từ Explorer
+  vào để lấy đường dẫn **thật**) **không** probe được — phải test tay.
+
 ---
 
 ## 4. Hàm nút thắt (đổi chữ ký = ảnh hưởng diện rộng)
@@ -1343,6 +1474,9 @@ _Ghi 2026-08-12._
 | Dấu ✓ / ✗ (`SYMBOL_KINDS`, `symbolStrokes`, `colorSlotFor`, `drag.type === "symbol"`) | `npm run test:cloud` · **bấm** một cái → ra dấu cỡ mặc định, **kéo** → ra đúng cỡ đã kéo · bấm sát mép phải-dưới trang → dấu vẫn **nằm trọn trong trang** · chọn rồi kéo 4 góc, giữ Shift giữ tỷ lệ · đổi "Nét" → dấu đậm/mảnh theo · đổi màu ✗ rồi chuyển sang bút Tô sáng → **màu tô sáng không bị đổi theo** · phím K/J đổi công cụ, nhưng đang gõ trong ô số thì **không** · Xong → mở lại file: dấu **đúng chỗ, đúng màu**, kể cả trên trang **đã xoay** (BI-42) |
 | Thêm nút vào `#ed-tools` hay control vào palette | BI-41: thu cửa sổ về 1366px rồi 1024px, lần lượt chọn **mọi** công cụ → nút "Xong"/"Hủy bỏ" luôn thấy được, thanh **không** phình cao che trang · và BI-9 + BI-10 |
 | Tuỳ chọn “Mở file mới trong” (`prefs.js`, `planOpen`, `tabs:open-paths`, `openPathInApp`) | `cd desktop ; npm run test:tabs` · với **cả hai** giá trị, thử **cả ba** đường: nút Mở · kéo–thả PDF vào tab đang có tài liệu · double-click file trong Explorer — kết quả phải **giống nhau** · chọn 3 file cùng lúc + “Cửa sổ mới” → **một** cửa sổ 3 tab · tab trắng + “Cửa sổ mới” → nạp vào chính tab trắng đó · đổi tuỳ chọn rồi khởi động lại app → vẫn nhớ · xoá `%APPDATA%/Nabu PDF/prefs.json` → về “Tab mới” (BI-35, BI-8) |
+| Màu chú thích mặc định (`DEFAULT_ANNOT_COLOR`, `savedAnnotColor`, `COLOR_SLOTS`, `colorSlotFor`, `setDefaultColor`, `#set-annot-color`) | `cd desktop ; npm run test:defaults` · xoá key `nabu-annot-color` → vẽ **cả 10** loại dùng màu chung (hộp văn bản, mũi tên, mây, mây vẽ tay, chữ nhật, tròn, bút vẽ, ghi chú, đo) → **tất cả đỏ** · **✓ vẫn xanh, ✗ vẫn đỏ, Tô sáng vẫn vàng, Màu che vẫn đen, Nền vẫn trắng** · Cài đặt đổi màu **khi hộp thoại còn mở** → vật thể mới theo màu mới, **vật thể cũ không đổi** · ô **Màu** trên thanh đổi màu vật thể đang chọn nhưng **không** ghi vào Cài đặt · Ctrl+click 3 mục rồi đổi màu → **cả 3** đổi · khởi động lại app → vẫn nhớ · Áp dụng + Lưu + mở lại → màu trong file đúng · mở file **đã lưu từ bản ≤0.2.59** có mũi tên/ghi chú round-trip → màu **giữ nguyên** · đổi VI↔EN → hàng Cài đặt dịch đúng, ô màu không bị reset (BI-61, BI-10) |
+| Kéo–thả nhiều PDF vào cửa sổ (`drop` ở `app.js`, `openDroppedPdfs`, `combineDroppedPdfs`, `droppedPath`, `pathForFile`) | `cd desktop ; npm run test:confirm` · kéo **1** file → mở luôn, **không** hỏi gì · kéo **3** file → hộp thoại 3 lựa chọn; **Enter** = Mở từng file, nút **Gộp thành một file**, **Esc = không làm gì cả** (tài liệu đang đọc phải còn y nguyên) · chọn Gộp → danh sách đúng **thứ tự đã kéo** (không phải thứ tự tên) · chọn Mở từng file khi tab **đã có** tài liệu → ra **tab mới**, tài liệu cũ không bị thay (đây là ca canh gác BI-63: `File.path` đã chết, nếu `webUtils` không chạy thì nó sẽ **đè** tài liệu đang mở) · tab **trắng** + kéo 3 file → file đầu vào chính tab trắng đó · kéo file **không phải PDF** → không hỏi, không làm gì · kéo PDF vào **dải thumbnail** → vẫn là đường **chèn trang** cũ, **không** ra hộp thoại này (BI-63, BI-8, BI-35, BI-26) |
+| Verb Explorer “Gộp bằng Nabu PDF” (`shell-combine.js`, `combineBucket`, `openCombineBatch`, `sendCombineToView`, `createTab combinePaths`, `combineFromShell`, `installer.nsh`) | `cd desktop ; npm run test:combine` · **phần còn lại CHỈ test được trên bản ĐÃ ĐÓNG GÓI + ĐÃ CÀI** (dev không đăng ký verb, và `electron .` không dựng được verb): `reg query "HKCU\Software\Classes\SystemFileAssociations\.pdf\shell\NabuCombine" /s` thấy đủ `MUIVerb` (tiếng Việt đúng, không mojibake) + `MultiSelectModel=Player` + `command` · **app đang mở với tài liệu BẨN** → chọn 3 PDF → Gộp → tab **mới**, tài liệu cũ **còn nguyên, vẫn bẩn, không bị hỏi câu nào** · **app CHƯA chạy** → chọn 5 PDF → Gộp → **một** hộp thoại **đủ 5 mục**, lặp **≥10 lần** (đây là ca đua khoá single-instance, xem BI-62) · 20 file · tên tiếng Việt có dấu · đường dẫn có dấu cách · ổ mạng UNC · file có mật khẩu lẫn trong loạt → bị bỏ kèm toast, loạt còn lại vẫn gộp · chọn **1** file → hộp thoại 1 mục, “Gộp & lưu” mờ, “Thêm file PDF…” dùng được · sắp lại thứ tự → Gộp & lưu → mở kết quả kiểm **đúng thứ tự + đủ trang** · huỷ hộp thoại Lưu → kết quả vẫn mở, Ctrl+S lưu được · **double-click MỘT file PDF vẫn mở tài liệu, KHÔNG ra hộp thoại Gộp** (ca canh gác thứ tự hỏi) · gỡ app → khoá registry mất hẳn · Win11: mục nằm trong **“Hiện thêm tùy chọn”** (BI-62, BI-35, BI-8) |
 | Chọn font ở `/edit-text` hay `src/pdf/fonts.py` | `test_edit_text_font.py` **và** `test_edit_text_rounds.py` · mở 1 hoá đơn Times New Roman thật, sửa 1 dòng với “Giữ nguyên” → **không** đổi sang DejaVu, **không** ra □ (BI-21) |
 | Toàn màn hình (`setPresentation`, `_layout`, `.presenting`) | `npm run test:tabs` (10 ca cuối) · F11 vào/ra · Esc ra · thoát bằng nút cửa sổ → thanh công cụ phải quay lại · chuyển tab khi đang toàn màn hình · thử bật lúc đang Chú thích (phải từ chối) — BI-22 |
 | `pan.js` hay bất kỳ listener chuột nào trên `#viewer` | `cd desktop ; npm run test:pan` (57 ca) · bật Bàn tay → kéo trang chạy, **không** bôi đen chữ · tắt Bàn tay → bôi đen chữ lại được · giữ Space kéo rồi thả → về đúng công cụ cũ · kéo chuột giữa lúc **đang Chú thích** → trang chạy, **không** vẽ ra hình · lúc **đang Copy ảnh** → trang chạy, **không** ra khung marquee · bấm vào ghi chú (note marker) khi Bàn tay bật → popup vẫn mở (BI-30, BI-31) |
@@ -1397,6 +1531,18 @@ _Ghi 2026-08-12._
    **mọi khoá `tr()` có trong từ điển i18n**, `fr-status` nằm trong `SKIP_IDS`,
    `btn-find-replace` nằm trong `GATED_BTNS`, và `pushUndo` đứng **trước** phép gán
    `state.bytes` — BI-3, BI-9, BI-10).
+2l. `cd desktop ; npm run test:defaults` → phải `N pass, 0 fail`
+   (màu chú thích mặc định — BI-61. Giữ **ba** literal `#d32f2f` bằng nhau, chặn việc gộp
+   4 màu có nghĩa `✓/✗/tô sáng/che`, và canh gác 2 fallback `#ffd54a` của
+   `deserializeManaged` — đổi chúng là làm **file đã lưu** đổi màu khi mở lại).
+2m. `cd desktop ; npm run test:combine` → phải `N pass, 0 fail`
+   (verb Explorer “Gộp bằng Nabu PDF” — BI-62. Có ca canh gác “argv của Open with phải
+   trả `null`”, chính sách gom của `createCombineBucket`, và **đối chiếu
+   `build/installer.nsh` ↔ `src/shell-combine.js`** vì cờ/khoá registry sống ở hai file
+   mà build không kiểm.
+   ⚠️ Lưới này **không** chứng minh verb chạy: khoá registry chỉ được ghi lúc **cài**.
+   Sau khi đóng gói phải test tay theo §5 — tối thiểu là `reg query` thấy đủ 3 value, và
+   **double-click một file PDF vẫn mở tài liệu** chứ không ra hộp thoại Gộp).
 3. `node --check` mọi file JS đã sửa (renderer **không** có test tự động).
 3b. Nếu đụng `editor.js` / `app.js` / bất kỳ file nào được `<script>` nạp: **probe boot**
    — chạy `index.html` thật bằng Electron của dự án (`BrowserWindow({show:false})`),

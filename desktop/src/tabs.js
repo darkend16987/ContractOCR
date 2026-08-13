@@ -230,7 +230,14 @@ class TabbedWindow {
   //               uses this: opening ten 100MB documents at launch would blow out
   //               memory for tabs the user may never look at (docs/PERF-MEMORY.md).
   //   background  don't steal focus from the current tab.
-  createTab({ openPath, deferred = false, background = false } = {}) {
+  //
+  //   combinePaths  a batch handed over by Explorer's "Gộp bằng Nabu PDF" verb.
+  //                 Mutually exclusive with openPath: this tab opens the merge
+  //                 dialog PRE-FILLED with those files and holds no document of
+  //                 its own until the user confirms the merge. combineDropped is
+  //                 how many the batch cap removed, so the dialog can say so
+  //                 rather than quietly showing a short list.
+  createTab({ openPath, combinePaths, combineDropped = 0, deferred = false, background = false } = {}) {
     const id = ++_seq;
     const view = new WebContentsView({
       webPreferences: {
@@ -245,18 +252,21 @@ class TabbedWindow {
     deps.attachContextMenu(wc);
     bindTabKeys(wc);
     wc.loadFile(path.join(deps.RENDERER, "index.html"));
-    if (openPath) {
+    if (openPath || combinePaths) {
       wc.once("did-finish-load", () => {
         // This tab is spoken for. Tell the renderer so it declines to host the
         // crash-recovery prompt — that belongs to a genuinely empty tab, and
         // without this a slow-loading document races it (renderer/app.js
-        // checkRecovery fires on a 1.2s timer).
+        // checkRecovery fires on a 1.2s timer). A combine tab is spoken for too:
+        // it is about to put a modal on screen, which a recovery prompt would
+        // land behind.
         try {
           wc.send("tab:reserved");
         } catch (_) {
           /* renderer gone */
         }
-        if (!deferred) deps.sendFileToView(wc, openPath);
+        if (combinePaths) deps.sendCombineToView(wc, combinePaths, combineDropped);
+        else if (!deferred) deps.sendFileToView(wc, openPath);
       });
     }
 
@@ -937,9 +947,13 @@ function activeContents() {
   return t && !t.view.webContents.isDestroyed() ? t.view.webContents : null;
 }
 
-function createTabbedWindow(openPath) {
+// `opts` carries the non-openPath ways a brand-new window can be spoken for —
+// today just an Explorer combine batch. Passed through verbatim to createTab so
+// this wrapper never has to know what they mean.
+function createTabbedWindow(openPath, opts) {
   const tw = new TabbedWindow();
-  tw.createTab(openPath ? { openPath } : {});
+  if (openPath) tw.createTab({ openPath });
+  else tw.createTab(opts || {});
   return tw;
 }
 

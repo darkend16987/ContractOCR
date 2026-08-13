@@ -36,6 +36,32 @@ Chỉ cần **một file duy nhất**:
 3. Chạy từ Start Menu / shortcut desktop. Gỡ qua **Settings → Apps** như phần mềm thường.
 4. Các bản sau app **tự tải và tự cập nhật**, không phải làm lại bước 1–3.
 
+> **Gộp nhiều PDF ngay từ Explorer (từ v0.2.60):** trình cài đặt thêm một mục vào **menu chuột phải**
+> của file PDF. Chọn nhiều file PDF trong Explorer → **chuột phải** → **Gộp bằng Nabu PDF** → app mở
+> hộp thoại **đã điền sẵn** các file đó; kiểm/sắp lại thứ tự rồi bấm **Gộp & lưu**.
+>
+> - ⚠️ **Trên Windows 11 mục này nằm trong "Hiện thêm tùy chọn"** (hoặc bấm `Shift+F10` thay vì chuột
+>   phải). Menu chuột phải ngắn của Win11 chỉ nhận tiện ích đã **ký số**, mà app đang chưa ký (xem
+>   mục 3.1) — nên đây là giới hạn của Windows, không phải lỗi.
+> - App **không gộp ngay**: nó luôn hiện danh sách để bạn xác nhận, vì Windows không cho biết bạn đã
+>   click các file theo thứ tự nào. Danh sách được **sắp theo tên** (`1, 2, 10` — không phải `1, 10, 2`)
+>   và kéo–thả sắp lại được.
+> - Đang mở dở tài liệu khác cũng không sao: batch mở trong **tab mới**, tài liệu đang đọc không bị đụng.
+> - Giới hạn: Windows **ẩn** mục menu nếu chọn quá **100** file; app nhận tối đa **60** file mỗi lượt và
+>   báo rõ nếu phải bỏ bớt. File có mật khẩu bị bỏ qua kèm thông báo, các file còn lại vẫn gộp.
+> - Không dùng menu này thì vẫn có nút **Gộp file** trong app như trước.
+> - Gỡ app sẽ xoá mục menu này khỏi máy.
+
+> **Hoặc kéo thẳng vào cửa sổ (từ v0.2.60):** chọn vài file PDF trong Explorer rồi **kéo thả vào cửa
+> sổ Nabu** → app hỏi **Mở từng file** hay **Gộp thành một file**.
+>
+> - Cách này **giữ đúng thứ tự bạn vừa kéo** — hơn đường chuột phải, vì Windows không cho biết thứ tự
+>   khi gọi qua menu. Vẫn kéo–thả sắp lại được trong hộp thoại.
+> - `Enter` = Mở từng file · `Esc` = **không làm gì cả** (tài liệu đang mở không bị đụng).
+> - Kéo **một** file thì mở luôn như trước, không hỏi gì.
+> - Lưu ý: kéo vào **dải trang** bên trái vẫn là **chèn trang vào tài liệu đang mở** như cũ — muốn gộp
+>   thì thả vào **vùng xem** chính giữa.
+
 ---
 
 ## 3. Lưu ý quan trọng lần chạy đầu trên máy mới
@@ -203,6 +229,17 @@ của Word. Mở bằng `Ctrl+H` hoặc nút **⇄** ở cuối ô *Tìm trong t
 > trỏ, rê chuột để chỉnh hướng và độ dài. **Thả Shift ra là vẽ tay tiếp** từ đúng đầu mút đó, nên một nét
 > có thể vừa có đoạn thẳng vừa có đoạn nguệch ngoạc. Tiện để gạch chân một dòng hợp đồng hay kẻ một đường
 > dẫn thẳng mà không phải đổi công cụ.
+
+> **Màu mặc định của chú thích là ĐỎ (từ v0.2.60):** hộp văn bản, mũi tên, khoanh mây, chữ nhật, tròn,
+> vẽ tay, ghi chú và đoạn đo đều lấy màu này cho vật thể **mới**. Đổi ở **Cài đặt → Màu chú thích mặc
+> định** — app nhớ lựa chọn cho các lần sau.
+> - Trước v0.2.60 màu này là **vàng**, mà chữ vàng trên giấy trắng gần như không đọc được — đó là lý do
+>   đổi sang đỏ.
+> - **Bốn thứ giữ màu riêng** vì màu của chúng có nghĩa: dấu **✓ xanh** (đúng), dấu **✗ đỏ** (sai),
+>   **Tô sáng vàng** (bút highlight), **Màu che đen**. Đổi màu mặc định **không** đụng tới chúng.
+> - Đổi màu ở Cài đặt chỉ áp cho vật thể **vẽ tiếp sau đó** — **vật thể đã vẽ không tự đổi màu**. Muốn
+>   đổi cái đã vẽ thì chọn nó rồi dùng ô **Màu** trên thanh chú thích (ô đó **không** ghi vào Cài đặt).
+> - File đã lưu từ bản cũ mở lại vẫn **giữ nguyên màu cũ** của nó.
 
 > **Dấu ✓ và ✗:** hai công cụ riêng trên thanh chú thích (phím `K` cho ✓, `J` cho ✗) — chỉ là **ký hiệu**,
 > không kèm ô vuông, nên tích thẳng vào ô checkbox có sẵn trong hợp đồng được.

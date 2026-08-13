@@ -283,7 +283,10 @@
         <button class="tool" data-tool="measure" title="Đo &amp; ghi kích thước (dim) — hiệu chuẩn 1 đoạn rồi tự ghi các đoạn khác (phím M)"><svg class="ic"><use href="#ic-ruler"/></svg></button>
       </div>
       <div class="sep"></div>
-      <label class="ctl" data-ctl="color" title="Màu (tô sáng / chữ / nét vẽ)">Màu <input type="color" id="ed-color" value="#ffd54a" /></label>
+      <!-- value= is only what shows for the split second before setTool() writes the
+           slot the current tool actually draws with. It must stay equal to
+           DEFAULT_ANNOT_COLOR in editor.js — `npm run test:defaults` fails if it drifts. -->
+      <label class="ctl" data-ctl="color" title="Màu (tô sáng / chữ / nét vẽ)">Màu <input type="color" id="ed-color" value="#d32f2f" /></label>
       <label class="ctl" data-ctl="redact" title="Màu che thông tin">Màu che <input type="color" id="ed-redact-color" value="#000000" /></label>
       <label class="ctl" data-ctl="font" title="Font chữ">Font
         <select id="ed-font">
@@ -1113,6 +1116,16 @@
             <option value="vi">Tiếng Việt</option>
             <option value="en">English</option>
           </select>
+        </div>
+
+        <hr class="set-div" />
+        <div class="set-row-between">
+          <div>
+            <b>Màu chú thích mặc định</b>
+            <p class="cmp-note" style="margin:2px 0 0">Màu của vật thể mới khi Chú thích: hộp văn bản, mũi tên, mây, chữ nhật, tròn, bút vẽ, ghi chú, đo · dấu ✓ ✗, Tô sáng và Màu che giữ màu riêng · vật thể đã vẽ không đổi</p>
+          </div>
+          <!-- value= must stay equal to DEFAULT_ANNOT_COLOR in editor.js (test:defaults). -->
+          <input type="color" id="set-annot-color" value="#d32f2f" title="Màu mặc định cho chú thích mới" />
         </div>
 
         <hr class="set-div" />

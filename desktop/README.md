@@ -38,6 +38,20 @@ npm run build    # tạo NabuPDF-<ver>-x64.exe (NSIS) — không còn build bả
 # 3) Test bản cài đặt trên MÁY WINDOWS SẠCH (không cài Python).
 ```
 
+> **Trình cài đặt có ghi registry.** `build/installer.nsh` (khai trong `nsis.include`) thêm
+> verb chuột phải **"Gộp bằng Nabu PDF"** cho file `.pdf` lúc cài và **xoá** lúc gỡ. Nó
+> **không** chạy ở dev, nên `npm start` sẽ không có verb — chỉ bản đã cài mới có. Sau khi cài,
+> kiểm bằng:
+>
+> ```
+> reg query "HKCU\Software\Classes\SystemFileAssociations\.pdf\shell\NabuCombine" /s
+> ```
+>
+> Phải thấy `MUIVerb` (tiếng Việt đúng, **không** mojibake — nếu sai thì `installer.nsh` mất
+> BOM UTF-8), `MultiSelectModel=Player`, và `command` trỏ đúng exe. Nửa runtime nằm ở
+> `src/shell-combine.js`; lưới là `npm run test:combine`. Ràng buộc đầy đủ: `docs/REGRESSION-GUARD.md`
+> **BI-62**.
+
 ## Lưu ý
 
 - Lần chạy đầu sidecar tải model weights (VietOCR/Paddle) về cache → cần internet 1 lần.

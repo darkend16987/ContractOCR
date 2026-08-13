@@ -212,6 +212,18 @@
             ),
           ],
         },
+        {
+          note: T(
+            "**Kéo nhiều file vào cửa sổ:** kéo vài file PDF từ Explorer thả vào cửa sổ Nabu → app hỏi **Mở từng file** hay **Gộp thành một file**. Chọn Gộp thì hộp thoại gộp mở ra đã điền sẵn, **đúng thứ tự bạn vừa kéo**. `Esc` là không làm gì cả. Kéo **một** file thì mở luôn như trước, không hỏi. (Kéo vào **dải trang** bên trái vẫn là **chèn trang** như cũ, không phải gộp.)",
+            "**Drag several files onto the window:** drag a few PDFs from Explorer onto the Nabu window and it asks **Mở từng file** (open each) or **Gộp thành một file** (combine). Choose combine and the dialog opens pre-filled, **in the order you dragged them**. `Esc` does nothing. Dragging a single file just opens it, with no question. (Dropping onto the **page strip** on the left still means **insert pages**, not combine.)"
+          ),
+        },
+        {
+          note: T(
+            "**Gộp ngay từ Explorer:** chọn nhiều file PDF trong Explorer → chuột phải → **Gộp bằng Nabu PDF** → hộp thoại gộp mở ra **đã điền sẵn** các file đó, trong một **tab mới** nên tài liệu đang đọc không bị đụng. Trên **Windows 11** mục này nằm trong **Hiện thêm tùy chọn** (hoặc bấm Shift+F10) — menu ngắn của Win11 chỉ nhận tiện ích đã ký số. Danh sách được sắp **theo tên** vì Windows không cho biết bạn đã chọn theo thứ tự nào, nên hãy kiểm lại thứ tự trước khi bấm **Gộp & lưu**. Windows ẩn mục menu nếu chọn quá 100 file; app nhận tối đa 60 file mỗi lượt và báo nếu phải bỏ bớt.",
+            "**Combine straight from Explorer:** select several PDFs in Explorer, right-click, and choose **Gộp bằng Nabu PDF** — the combine dialog opens **already filled in** with those files, in a **new tab**, so whatever you were reading is untouched. On **Windows 11** the item lives under **Show more options** (or press Shift+F10): the short Win11 menu only accepts code-signed shell extensions. The list is ordered **by filename**, because Windows does not tell us the order you clicked them in — so check the order before pressing **Gộp & lưu**. Windows hides the menu item above 100 selected files; the app takes at most 60 per batch and says so when it has to drop any."
+          ),
+        },
         { h: T("Tách", "Splitting") },
         {
           ul: [
@@ -354,6 +366,12 @@
             T("**Watermark** — đóng dấu mờ lên **mọi trang**: nội dung, cỡ chữ, góc, độ mờ, màu.", "**Watermark** — stamp a faint mark on **every page**: text, size, angle, opacity, colour."),
             T("**Điền form** — điền các trường biểu mẫu có sẵn trong PDF. Tick **Khóa giá trị sau khi điền (flatten)** nếu muốn giá trị không sửa được nữa.", "**Fill form** — fill the PDF's existing form fields. Tick **flatten** if the values should no longer be editable."),
           ],
+        },
+        {
+          note: T(
+            "**Màu mặc định là ĐỎ.** Hộp văn bản, mũi tên, mây, chữ nhật, tròn, bút vẽ, ghi chú và đoạn đo đều lấy màu này cho vật thể **mới** — đổi ở **Cài đặt → Màu chú thích mặc định**. Bốn thứ giữ màu riêng vì màu của chúng có nghĩa: dấu ✓ xanh (đúng), dấu ✗ đỏ (sai), **Tô sáng** vàng, **Màu che** đen. Còn ô **Màu** trên thanh công cụ chỉ ảnh hưởng vật thể đang chọn và những vật thể vẽ tiếp trong phiên này, **không** ghi vào Cài đặt.",
+            "**The default colour is RED.** Text boxes, arrows, clouds, rectangles, ellipses, freehand, notes and dimensions all take it for **new** objects — change it under **Cài đặt → Màu chú thích mặc định** (Settings). Four things keep their own colour because their colour carries meaning: ✓ green (correct), ✗ red (wrong), **Tô sáng** highlighter yellow, **Màu che** black. The **Màu** picker on the toolbar only affects the selected object and what you draw next in this session — it does **not** write the setting."
+          ),
         },
 
         { h: T("Cái gì sửa lại được sau khi Lưu?", "What stays editable after saving?") },
