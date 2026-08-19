@@ -19,7 +19,7 @@
 | Đọc span text + bbox/font/size/color/origin/flags | `POST /text-spans` → `TextSpansResponse` | [api.py](../api.py) `text_spans` (~1530) |
 | Xoá glyph cũ + vẽ text mới **đúng chỗ, đúng font** (redact + `insert_text` trên baseline gốc; nhúng DejaVu VN-safe + font hệ thống theo tên family) | `POST /edit-text` → `EditTextResponse` (`TextEdit` list) | [api.py](../api.py) `edit_text` (~1625) |
 | Gọi Gemini, ép trả JSON | `GeminiAgent._generate(prompt, system_instruction)` (`response_mime_type=application/json`) | [src/agents/gemini_agent.py](../src/agents/gemini_agent.py) (~85) |
-| Key + model | `get_gemini_key()`, `GEMINI_MODEL` (mặc định `gemini-3.1-flash-lite`) | [src/utils/config.py](../src/utils/config.py) |
+| Key + model | `get_gemini_key()`, `GEMINI_MODEL` (mặc định `gemini-3.5-flash-lite`) | [src/utils/config.py](../src/utils/config.py) |
 | Fetch sidecar có token + overlay/undo/preview UI | renderer đã có (`sidecarFetch`, `pushUndo`, pattern của **Đánh số trang**) | [desktop/renderer/app.js](../desktop/renderer/app.js) |
 
 **Ý tưởng lõi**: translate = chèn Gemini vào giữa `text-spans` → `edit-text`. KHÔNG viết engine render mới.

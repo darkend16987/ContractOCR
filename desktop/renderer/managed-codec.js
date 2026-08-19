@@ -5,11 +5,19 @@
  * annotations. Lifted out of editor.js at v0.2.49; every body was verified
  * byte-identical to v0.2.48's editor.js before the move.
  *
- * WHAT A MANAGED ANNOT IS. Text boxes, comment notes, arrows and inserted images
- * are written as REAL PDF annotations (so Foxit/Acrobat show them) that ALSO carry
- * a private `/NabuData` payload, plus — for images — a `/NabuSrc` stream holding the
- * ORIGINAL image file bytes. Re-opening the file reads those back and rebuilds live,
- * editable overlay objects instead of finding flattened pixels.
+ * WHAT A MANAGED ANNOT IS. Text boxes, comment notes, arrows, inserted images and —
+ * since v0.2.61 — rectangles, ovals and revision clouds are written as REAL PDF annotations (so
+ * Foxit/Acrobat show them) that ALSO carry a private `/NabuData` payload, plus — for
+ * images — a `/NabuSrc` stream holding the ORIGINAL image file bytes. Re-opening the
+ * file reads those back and rebuilds live, editable overlay objects instead of finding
+ * flattened pixels.
+ *
+ * TWO FLAVOURS OF APPEARANCE, and the difference is worth knowing before editing here:
+ * text / arrow / image carry a RASTER `/AP` (a PNG), because their ink is Vietnamese
+ * glyphs or the user's own photo. box / ellipse / cloud / cloudpen carry a VECTOR `/AP`
+ * built from pdf-lib's own operator generators — see shapeAppearance(). The vector ones own
+ * no image and no `/NabuSrc`, so the two invariants below are about the raster half of the
+ * family.
  *
  * WHY IT LIVES IN ITS OWN FILE (docs/REGRESSION-GUARD.md §1, BI-37 / BI-38). This is
  * the highest-consequence code in the editor: a mistake here does not look like a bug,
@@ -56,7 +64,12 @@
     (typeof window !== "undefined" && window.PDFLib) ||
     (typeof require === "function" ? require("pdf-lib") : null);
   if (!_PDFLib) throw new Error("managed-codec: pdf-lib unavailable (load vendor/pdf-lib.min.js first)");
-  const { PDFName, PDFRawStream, PDFDict, degrees } = _PDFLib;
+  // `drawRectangle` / `drawEllipse` here are pdf-lib's low-level OPERATOR GENERATORS
+  // (they return PDFOperator[]), not the PDFPage methods of the same name — the very
+  // functions `page.drawRectangle` calls once it has resolved its own options. Taking
+  // them by the same route as PDFName keeps them inside this IIFE, so BI-14's collision
+  // trap does not apply: nothing of theirs reaches the shared classic-script scope.
+  const { PDFName, PDFRawStream, PDFDict, degrees, drawRectangle, drawEllipse, drawSvgPath } = _PDFLib;
 
   // `pushB64Chunks` (wire.js) and `normTextStyle` (annot-text.js) are bare names in the
   // shared classic-script scope; in node they come from their modules. Resolved lazily
@@ -70,11 +83,38 @@
     if (typeof normTextStyle === "function") return normTextStyle(a);
     return require("./annot-text.js").normTextStyle(a);
   }
+  // Same lazy shape for annot-geom.js's cloud geometry — loaded before this file in the
+  // browser (index.html), require()d here under node. shapeAppearance() calls these
+  // rather than re-deriving a scallop: the overlay <svg>, the flattened bake and the
+  // round-trip appearance must all be the SAME path string, or a re-opened cloud comes
+  // back a slightly different shape than the one the user drew.
+  function _cloudPath(w, h, bump) {
+    if (typeof cloudPath === "function") return cloudPath(w, h, bump);
+    return require("./annot-geom.js").cloudPath(w, h, bump);
+  }
+  function _cloudPathPoly(pts, bump) {
+    if (typeof cloudPathPoly === "function") return cloudPathPoly(pts, bump);
+    return require("./annot-geom.js").cloudPathPoly(pts, bump);
+  }
+  function _bumpOf(a) {
+    if (typeof bumpOf === "function") return bumpOf(a);
+    return require("./annot-geom.js").bumpOf(a);
+  }
 
   // ---- the private keys ----------------------------------------------------
 
   // Kinds that round-trip as real annotations rather than being flattened to pixels.
-  const MANAGED_KINDS = new Set(["text", "note", "image", "arrow"]);
+  //
+  // `box` / `ellipse` / `cloud` / `cloudpen` joined at v0.2.61 and they are the members
+  // whose appearance is VECTOR rather than a rasterised PNG — see shapeAppearance()
+  // below for why that is the cheap option here and not for text/arrow.
+  const MANAGED_KINDS = new Set(["text", "note", "image", "arrow", "box", "ellipse", "cloud", "cloudpen"]);
+  // The vector half of the family, as one name: four kinds that share ONE branch in
+  // shapeAppearance, ONE branch in addManagedAnnot and ONE branch in deserializeManaged.
+  // Named because "is this kind vector?" is asked in three files, and an inline `||`
+  // chain in each is how those three drift apart (same argument as RESIZABLE_KINDS).
+  const VECTOR_KINDS = new Set(["box", "ellipse", "cloud", "cloudpen"]);
+  function isVectorKind(k) { return VECTOR_KINDS.has(k); }
   const NABU_KIND = PDFName.of("NabuKind");
   const NABU_DATA = PDFName.of("NabuData");
   // Private carrier for an image's ORIGINAL file bytes — see addManagedAnnot's
@@ -181,6 +221,109 @@
     return [bx + Math.min(...xs), by + Math.min(...ys), bx + Math.max(...xs), by + Math.max(...ys)];
   }
 
+  // ---- vector appearances (box / ellipse) ---------------------------------
+  //
+  // WHY THESE TWO ARE NOT RASTERISED. text and arrow put a PNG in their `/AP` because
+  // their ink is Vietnamese glyphs, and embedding a font that renders "Nghiệm thu" is a
+  // problem we deliberately do not have. A rectangle and an oval have no such excuse:
+  // pdf-lib EXPORTS the very operator generators `page.drawRectangle` / `page.drawEllipse`
+  // call internally, so the appearance can be the SAME path the flattened writer emits —
+  // just inside a Form XObject instead of the page content stream. That buys three things
+  // a canvas could not: it stays sharp at any zoom and on paper, it costs a few dozen
+  // bytes instead of a supersampled bitmap, and — because the geometry comes from the
+  // same function — the round-trip cannot drift away from `drawOneAnnot`'s output.
+  //
+  // `stroke` / `fill` are pdf-lib rgb() objects, NOT hex: hexRgb lives in editor.js and
+  // this file stays free of it, the same way it stays free of the canvas rasterisers.
+  // `fill` null means stroke-only, which is the common case.
+  //
+  // THE PADDING IS LOAD-BEARING. A `/AP` form CLIPS to its `/BBox`, and half of a stroke
+  // sits outside the path it follows — at a mitred rectangle corner, √2 halves. Size the
+  // BBox to w×h and the user's border comes back shaved on all four sides. One full
+  // stroke width covers the mitre with room to spare; the extra margin is transparent,
+  // so being generous costs nothing and being exact costs a bug report.
+  //
+  // Fill opacity travels in an ExtGState that is written DIRECT (inline in /Resources),
+  // never as a registered indirect object. That is not a style choice: collectManagedChain
+  // frees `/NabuSrc`, `/NabuImg` and the form itself, and an indirect ExtGState would be a
+  // fourth object nobody frees — a slow leak on every re-bake, which is exactly the class
+  // of bug BI-38 exists to prevent. A direct dict dies with the form that holds it.
+  //
+  // ROTATION IS NOT THIS FUNCTION'S JOB, and that is the single most important line here.
+  // The flattened writer must pass `rotate: pageRotate(page)` to drawSvgPath, because it
+  // hands pdf-lib a LOCAL coordinate system and lets it place that system in user space —
+  // forgetting it is exactly how khoanh mây came out spun on every rotated page until
+  // v0.2.52 (BI-45). Inside a Form XObject the local system IS the form's own space, which
+  // is display-upright by construction, and `/Matrix = R(angle)` on the form does the
+  // turning. So everything below draws at `degrees(0)`, always. Passing the page angle in
+  // here would rotate it TWICE.
+  //
+  // RETURNS `ox` / `oy` — the OVERLAY coordinates of the form's bottom-left corner — so the
+  // caller maps one point and never has to know which kind's padding rule applied. That is
+  // deliberate: `pad` means different things to a box (half a mitred stroke) and to a cloud
+  // (a whole scallop bump PLUS the stroke), and a caller re-deriving the anchor per kind is
+  // four chances to be off by one stroke width. Returns null for a degenerate freehand
+  // cloud (<3 distinct points), which means "flatten this one" — cloudPathPoly says the
+  // same thing to drawOneAnnot, so both writers agree to draw nothing.
+  function shapeAppearance(a, stroke, fill, fillOpacity) {
+    const lw = Math.max(0.1, +a.width || 2);
+    const useGs = !!fill && fillOpacity != null && fillOpacity < 1;
+    const common = {
+      borderWidth: lw,
+      borderColor: stroke,
+      color: fill || undefined, // undefined ⇒ pdf-lib emits `S` (stroke) instead of `B`
+      rotate: degrees(0), // see ROTATION note above — never the page angle
+    };
+    if (useGs) common.graphicsState = "NabuGS"; // emits `/NabuGS gs`
+    const out = (ops, wPt, hPt, left, top) => ({
+      ops: ops.map(String).join("\n"),
+      wPt, hPt, pad: lw,
+      ox: left,
+      oy: top + hPt, // overlay y grows DOWN, so the form's bottom edge is top + height
+      // `ca` only — the flattened path passes pdf-lib just `opacity`, which is fill
+      // alpha; stroke alpha (`CA`) is a knob the editor does not expose, and inventing
+      // one here would make the bake disagree with the overlay.
+      resources: useGs ? { ExtGState: { NabuGS: { Type: "ExtGState", ca: fillOpacity } } } : null,
+    });
+
+    // -- revision clouds: ONE SVG path, y-DOWN, local 0-origin -----------------
+    // annot-geom already shifts the path by its own `pad` so the scallops stay ≥ 0 —
+    // the same string the overlay <svg> uses. All this adds is room for the STROKE,
+    // which sits outside the bulges and would otherwise be clipped by /BBox.
+    if (a.kind === "cloud" || a.kind === "cloudpen") {
+      const g = a.kind === "cloud"
+        ? _cloudPath(a.w, a.h, _bumpOf(a))
+        : _cloudPathPoly(a.pts, _bumpOf(a));
+      if (!g) return null; // degenerate polygon — caller falls through to flatten
+      // Overlay position of the path's local (0,0): the same anchor drawOneAnnot maps.
+      const gx = (a.kind === "cloud" ? a.x : g.minX) - g.pad;
+      const gy = (a.kind === "cloud" ? a.y : g.minY) - g.pad;
+      const wPt = g.W + 2 * lw;
+      const hPt = g.H + 2 * lw;
+      // drawSvgPath emits translate(x,y) · R · scale(1,-1), so its anchor is the path
+      // box's TOP-left, not its bottom-left. Inside the form that point is (lw, hPt-lw).
+      const ops = drawSvgPath(g.d, Object.assign({}, common, { x: lw, y: hPt - lw }));
+      return out(ops, wPt, hPt, gx - lw, gy - lw);
+    }
+
+    // -- rectangles and ovals --------------------------------------------------
+    const w = Math.max(0, +a.w || 0);
+    const h = Math.max(0, +a.h || 0);
+    const wPt = w + 2 * lw;
+    const hPt = h + 2 * lw;
+    // xSkew / ySkew are REQUIRED by drawRectangle in pdf-lib 1.17.1 — it reads `.type`
+    // off each without a guard and throws on a missing one. drawEllipse does not take
+    // them at all, and drawSvgPath ignores them. Measured, not assumed.
+    const boxCommon = Object.assign({}, common, { xSkew: degrees(0), ySkew: degrees(0) });
+    const ops =
+      a.kind === "ellipse"
+        ? drawEllipse(Object.assign({}, common, {
+            x: lw + w / 2, y: lw + h / 2, xScale: w / 2, yScale: h / 2,
+          }))
+        : drawRectangle(Object.assign({}, boxCommon, { x: lw, y: lw, width: w, height: h }));
+    return out(ops, wPt, hPt, a.x - lw, a.y - lw);
+  }
+
   // ---- the /NabuData payload ----------------------------------------------
 
   // Editable payload stored in /NabuData so a re-opened file reconstructs the
@@ -202,6 +345,31 @@
                color: a.color, width: a.width || 2,
                label: a.label || "", labelEnd: a.labelEnd === "tail" ? "tail" : "head",
                labelSize: a.labelSize || 14 };
+    }
+    // Boxes and ovals: geometry + the four style knobs the edit bar exposes for them.
+    // No appearance data at all travels here — shapeAppearance() rebuilds the vector
+    // path from these numbers on every bake, so there is nothing that could go stale.
+    // `fill` is written ONLY when there is one: an absent key reads back as "no fill",
+    // which is what a file written before this existed must also mean.
+    if (isVectorKind(a.kind)) {
+      const o = { k: a.kind, color: a.color, width: a.width || 2 };
+      if (a.kind === "cloudpen") {
+        // The polygon's own vertices, at full precision. They are the ONLY record of the
+        // shape (the scallops are re-derived from them), and a cloudpen is a handful of
+        // clicked corners — not a freehand scribble — so there is nothing to thin out.
+        o.pts = (a.pts || []).map((p) => ({ x: p.x, y: p.y }));
+      } else {
+        o.x = a.x; o.y = a.y; o.w = a.w; o.h = a.h;
+      }
+      // Written RESOLVED, not as `a.bump`: a cloud drawn before the size control existed
+      // carries no `bump` at all and renders at the historical default, so pinning what
+      // was actually drawn is what keeps it looking the same after a round-trip.
+      if (a.kind === "cloud" || a.kind === "cloudpen") o.bump = _bumpOf(a);
+      if (a.fill && a.fill !== "none") {
+        o.fill = a.fill;
+        o.fillOpacity = a.fillOpacity != null ? a.fillOpacity : 1;
+      }
+      return o;
     }
     // Geometry only — the pixels travel in the /NabuSrc stream, not in here.
     if (a.kind === "image") {
@@ -348,9 +516,9 @@
   // v0.2.45 trap (Object.assign copies a getter's VALUE, freezing it) needs a getter,
   // and this surface has none. Do not add one without revisiting this.
   const _SURFACE = {
-    MANAGED_KINDS, NABU_KIND, NABU_DATA, NABU_SRC, NABU_IMG, P_ANNOTS,
-    isManagedKind, sniffImage, strToBytes, makeMap, pageRotate,
-    normAngle, apRotatable, apMatrixFor, apRectFor,
+    MANAGED_KINDS, VECTOR_KINDS, NABU_KIND, NABU_DATA, NABU_SRC, NABU_IMG, P_ANNOTS,
+    isManagedKind, isVectorKind, sniffImage, strToBytes, makeMap, pageRotate,
+    normAngle, apRotatable, apMatrixFor, apRectFor, shapeAppearance,
     serializeManaged, pushPageAnnot, managedSrcBytes, managedSrcDataUrl,
     collectManagedChain, freeManagedTrash, stripManagedFromPage, stripManagedAnnots,
   };

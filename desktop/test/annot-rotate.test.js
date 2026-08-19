@@ -105,7 +105,7 @@ const {
 } = require("../renderer/annot-geom.js");
 const {
   makeMap, pageRotate, sniffImage, strToBytes, serializeManaged, pushPageAnnot,
-  normAngle, apRotatable, apMatrixFor, apRectFor,
+  normAngle, apRotatable, apMatrixFor, apRectFor, shapeAppearance, isVectorKind,
   NABU_KIND, NABU_DATA, NABU_SRC,
 } = require("../renderer/managed-codec.js");
 const { normTextStyle } = require("../renderer/annot-text.js");
@@ -155,7 +155,14 @@ const apply = (m, x, y) => [m[0] * x + m[2] * y + m[4], m[1] * x + m[3] * y + m[
 // the path operators are read in the CTM current at that moment. `re` contributes its
 // four corners. Text/XObject operators are ignored — no kind driven here emits them.
 function inkUserPoints(page) {
-  const ops = page.contentStream ? page.contentStream.operators.map(String) : [];
+  return pathPoints(page.contentStream ? page.contentStream.operators.map(String) : []);
+}
+
+// The walk itself, over a list of operator LINES. Split out at v0.2.61 so section 6 can
+// point it at the content stream INSIDE an /AP form — a vector appearance keeps its ink
+// there, where both readers above are blind to it (one reads the page, the other only
+// sees the unit square of a `Do`).
+function pathPoints(ops) {
   const out = [];
   let ctm = [1, 0, 0, 1, 0, 0];
   const stack = [];
@@ -216,16 +223,38 @@ function apUserQuad(rect, m, w, h) {
   const sx = tw ? (rect[2] - rect[0]) / tw : 1;
   const sy = th ? (rect[3] - rect[1]) / th : 1;
   const A = [sx, 0, 0, sy, rect[0] - tx * sx, rect[1] - ty * sy];
-  return { quad: pts.map(([x, y]) => apply(A, x, y)), scale: [+sx.toFixed(6), +sy.toFixed(6)] };
+  // `A` is returned as well as the quad: a VECTOR appearance needs it to place its own
+  // path points, not just the corners of its BBox (section 6).
+  return { quad: pts.map(([x, y]) => apply(A, x, y)), scale: [+sx.toFixed(6), +sy.toFixed(6)], A };
 }
+
+// Every point a VECTOR /AP actually paints, in USER space. Hoisted to module scope at
+// v0.2.61 so both the rotation grid and the ORIENTATION grid (section 7) can read it.
+function apInkUser(doc, dict) {
+  const rect = dict.get(PDFName.of("Rect")).asArray().map((n) => n.asNumber());
+  const form = doc.context.lookup(
+    doc.context.lookup(dict.get(PDFName.of("AP"))).get(PDFName.of("N")));
+  const fd = form.dict || form;
+  const mObj = fd.get(PDFName.of("Matrix"));
+  const m = mObj ? mObj.asArray().map((n) => n.asNumber()) : [1, 0, 0, 1, 0, 0];
+  const bb = fd.get(PDFName.of("BBox")).asArray().map((n) => n.asNumber());
+  const { A, scale } = apUserQuad(rect, m, bb[2] - bb[0], bb[3] - bb[1]);
+  const lines = Buffer.from(form.contents).toString("latin1").split(/\r?\n/);
+  return { pts: pathPoints(lines).map(([x, y]) => apply(A, ...apply(m, x, y))), scale };
+}
+
 
 // One page at a given /Rotate, plus the pdf.js scale-1 viewport for it — the exact
 // pair the bake path uses (`state.pdf.getPage(i+1).getViewport({scale:1})`).
 const PAGE_W = 400;
 const PAGE_H = 620; // deliberately non-square: a w/h mix-up cannot cancel out
-async function makePage(rot) {
+// `w`/`h` default to the portrait pair above. Section 7 passes a LANDSCAPE mediabox:
+// "landscape" is two different things in a PDF — a wide /MediaBox, or a tall one carrying
+// /Rotate 90 — and only the second was ever covered here. Real drawing sets contain both,
+// often in the SAME file.
+async function makePage(rot, w, h) {
   const doc = await PDFDocument.create();
-  const page = doc.addPage([PAGE_W, PAGE_H]);
+  const page = doc.addPage([w || PAGE_W, h || PAGE_H]);
   page.setRotation(degrees(rot));
   const pdf = await pdfjs.getDocument({ data: await doc.save(), useSystemFonts: false }).promise;
   const vp1 = (await pdf.getPage(1)).getViewport({ scale: 1 });
@@ -245,8 +274,8 @@ function toDisplaySet(pts, vp1) {
 
 // Bake `a` onto a fresh page rotated by `rot`, then report where the ink ended up in
 // display space — the space the annotation was authored in.
-async function displayInk(a, rot) {
-  const { doc, page, vp1 } = await makePage(rot);
+async function displayInk(a, rot, w, h) {
+  const { doc, page, vp1 } = await makePage(rot, w, h);
   await drawOneAnnot(doc, page, a, makeMap(vp1, "orig"));
   return toDisplaySet(inkUserPoints(page), vp1);
 }
@@ -281,6 +310,25 @@ const KINDS = [
   { name: "arrow", a: { kind: "arrow", x1: 40, y1: 50, x2: 180, y2: 130, color: "#000000", width: 2 } },
   // Same for dim: line + two perpendicular end ticks, no measured text.
   { name: "dim", a: { kind: "dim", x1: 40, y1: 50, x2: 180, y2: 130, color: "#000000", width: 2, text: "" } },
+];
+
+// The VECTOR kinds, as one list: section 6 drives them at four /Rotate angles on a
+// portrait page, section 7 drives the same list on a LANDSCAPE one. One list, so a kind
+// cannot be covered by one grid and missed by the other.
+const VECTOR_SHAPES = [
+  { name: "box", a: { id: 1, kind: "box", x: 40, y: 60, w: 120, h: 30, color: "#d32f2f", width: 2 } },
+  { name: "box+fill", a: { id: 2, kind: "box", x: 40, y: 60, w: 120, h: 30, color: "#d32f2f", width: 3, fill: "#ffeb3b", fillOpacity: 0.4 } },
+  { name: "ellipse", a: { id: 3, kind: "ellipse", x: 40, y: 60, w: 120, h: 30, color: "#1565c0", width: 2 } },
+  // A thick border is where an off-by-one-pad lands furthest from the truth.
+  { name: "box thick", a: { id: 4, kind: "box", x: 90, y: 140, w: 60, h: 200, color: "#000000", width: 8 } },
+  // The two revision clouds. They are the reason section 6 reads the form's own content
+  // stream: a cloud's /AP is a scalloped PATH, and its BBox is padded by a whole scallop
+  // bump PLUS the stroke — bound the form and you have measured the padding, not the ink.
+  { name: "cloud", a: { id: 11, kind: "cloud", x: 60, y: 90, w: 140, h: 80, color: "#d32f2f", width: 2, bump: 12 } },
+  { name: "cloud+fill", a: { id: 12, kind: "cloud", x: 60, y: 90, w: 140, h: 80, color: "#d32f2f", width: 3, bump: 12, fill: "#ffffff", fillOpacity: 1 } },
+  { name: "cloud small bump", a: { id: 13, kind: "cloud", x: 30, y: 40, w: 90, h: 60, color: "#d32f2f", width: 2, bump: 6 } },
+  { name: "cloudpen", a: { id: 14, kind: "cloudpen", color: "#d32f2f", width: 2, bump: 10, closed: true,
+      pts: [{ x: 50, y: 50 }, { x: 160, y: 70 }, { x: 140, y: 170 }, { x: 45, y: 140 }] } },
 ];
 
 (async () => {
@@ -439,6 +487,242 @@ const KINDS = [
     check("apRotatable / normAngle normalise the way the writer assumes",
       [apRotatable(-90), apRotatable(450), apRotatable(45), normAngle(-90), normAngle(360)],
       [true, true, false, 270, 0]);
+  }
+
+  // ---- 6. box / ellipse: a VECTOR /AP lands on the flattened path (v0.2.61) -----
+  //
+  // Section 5's question, for the appearance flavour it cannot see. A managed image's
+  // /AP is one `Do` of a unit square, so bounding the form IS bounding the ink. A
+  // managed box or oval keeps its ink as a PATH inside the form — bound the form and
+  // you have measured the padding, not the border. So this section reads the FORM'S OWN
+  // content stream with the same operator walk section 1 uses on the page, then pushes
+  // every point through /Matrix and the §12.5.5 map onto /Rect, exactly as a viewer
+  // would. Reference is the SHIPPED flatten path for the same annot at 0°, which
+  // section 1 has already pinned to where the user drew it.
+  //
+  // WHY IT IS WORTH THE READER. The padding is the trap. The /AP form is sized w+2·pad
+  // by h+2·pad and draws the shape at (pad, pad) inside it — so anchor, BBox and Rect
+  // all have to agree about `pad` or the shape lands one stroke width off. That error is
+  // 2–4 pt: invisible in a screenshot, wrong in the file, and completely undetectable by
+  // a test that only compares /Rect against a formula built from the same `pad`.
+  {
+    const SHAPES = VECTOR_SHAPES;
+
+    for (const { name, a } of SHAPES) {
+      const flatRef = await displayInk(a, 0); // the shipped writer, section 1's subject
+      check(`${name}: the flatten reference emits ink`, flatRef.length > 0, true);
+      for (const rot of [0, 90, 180, 270]) {
+        const { doc, page, vp1 } = await makePage(rot);
+        const wrote = await addManagedAnnot(doc, page, a, makeMap(vp1, "orig"), new Map());
+        check(`${name}: /Rotate ${rot} is written as a real annotation`, wrote, true);
+        const dict = doc.context.lookup(page.node.Annots().get(0));
+        const { pts, scale } = apInkUser(doc, dict);
+        check(`${name}: /Rotate ${rot} the /AP ink lands on the flattened path`,
+          toDisplaySet(pts, vp1), flatRef);
+        // A scale other than 1 means /Rect disagrees with Matrix×BBox and the viewer is
+        // stretching the appearance — the shape would still be "near enough" in a
+        // screenshot while being the wrong size in the file.
+        check(`${name}: /Rotate ${rot} the /AP mapping has no scaling (no stretch)`, scale, [1, 1]);
+      }
+    }
+
+    // ---- GUARD: prove section 6 can still FAIL ---------------------------------
+    // Two independent ways to get this wrong, each re-created by hand. Without them a
+    // green section 6 would prove only that the reader runs.
+    {
+      const a = { id: 5, kind: "box", x: 40, y: 60, w: 120, h: 30, color: "#d32f2f", width: 6 };
+      const flatRef = await displayInk(a, 0);
+
+      // (i) the pre-BI-59 mistake: no /Matrix, /Rect built the naive way. Right at 0°,
+      //     wrong at every quarter turn.
+      const naive = async (rot) => {
+        const { vp1 } = await makePage(rot);
+        const sh = shapeAppearance(a, hexRgb(a.color), null, 1);
+        const [bx, by] = makeMap(vp1, "orig")(a.x - sh.pad, a.y + a.h + sh.pad);
+        const I = [1, 0, 0, 1, 0, 0];
+        const { A } = apUserQuad([bx, by, bx + sh.wPt, by + sh.hPt], I, sh.wPt, sh.hPt);
+        return toDisplaySet(pathPoints(sh.ops.split("\n")).map(([x, y]) => apply(A, x, y)), vp1);
+      };
+      check("guard: a matrix-less /AP is RIGHT at 0° (so the guard isn't measuring noise)",
+        JSON.stringify(await naive(0)), JSON.stringify(flatRef));
+      for (const rot of [90, 180, 270]) {
+        check(`guard: a matrix-less /AP is wrong at ${rot}° (section 6 is sensitive)`,
+          JSON.stringify(await naive(rot)) !== JSON.stringify(flatRef), true);
+      }
+
+      // (ii) the padding mistake, and it is the one a future edit is most likely to make:
+      //      anchor the form at the shape's own corner instead of the PADDED corner. The
+      //      shape then sits one stroke width up and to the left — 6 pt here — at EVERY
+      //      rotation, including 0°, which is why (i) alone would not catch it.
+      const unpadded = async (rot) => {
+        const { vp1 } = await makePage(rot);
+        const sh = shapeAppearance(a, hexRgb(a.color), null, 1);
+        const [bx, by] = makeMap(vp1, "orig")(a.x, a.y + a.h); // <- the mistake: no pad
+        const m = apMatrixFor(rot);
+        const { A } = apUserQuad(apRectFor(rot, sh.wPt, sh.hPt, bx, by), m, sh.wPt, sh.hPt);
+        return toDisplaySet(
+          pathPoints(sh.ops.split("\n")).map(([x, y]) => apply(A, ...apply(m, x, y))), vp1);
+      };
+      for (const rot of [0, 90, 180, 270]) {
+        check(`guard: forgetting the pad in the anchor is wrong at ${rot}° too`,
+          JSON.stringify(await unpadded(rot)) !== JSON.stringify(flatRef), true);
+      }
+    }
+
+    // Not a quarter turn ⇒ no matrix places it right ⇒ it must keep flattening, which is
+    // exactly the behaviour every box and oval had before this feature existed.
+    {
+      const odd = await makePage(0);
+      odd.page.node.set(PDFName.of("Rotate"), PDFLib.PDFNumber.of(45));
+      const a = { id: 6, kind: "ellipse", x: 40, y: 60, w: 120, h: 30, color: "#1565c0", width: 2 };
+      check("a shape on an out-of-spec /Rotate 45 still falls back to flatten",
+        await addManagedAnnot(odd.doc, odd.page, a, makeMap(odd.vp1, "orig"), new Map()), false);
+    }
+  }
+
+  // ---- 7. ORIENTATION: a LANDSCAPE mediabox, and one document holding both ------
+  //
+  // "Landscape" is TWO different things in a PDF, and only one of them was covered here.
+  // Sections 1/5/6 rotate a TALL /MediaBox — the scanned-portrait-turned-sideways case.
+  // A CAD sheet is the other kind: a genuinely WIDE /MediaBox, usually at /Rotate 0. They
+  // exercise different arithmetic (a wide box changes vp1.width/height outright; a rotated
+  // one SWAPS them inside convertToPdfPoint), and real drawing sets contain both — often a
+  // wide plan sheet bound together with portrait notes in the same file.
+  //
+  // The bug class this section owns is therefore NOT "rotation is wrong" — sections 1/5/6
+  // already own that. It is **"the bake used one page's viewport for a different page"**,
+  // which is invisible in a single-orientation document and throws the ink clean off the
+  // paper in a mixed one. `bakeInPlace` and `bakeWithRedaction` both re-fetch `vp1` INSIDE
+  // their page loop; part (b) is what makes that a measured requirement instead of a habit.
+  {
+    const LAND_W = 620;
+    const LAND_H = 400; // the portrait pair, swapped — same two numbers, so a mix-up shows
+
+    // -- (a) every vector kind on a WIDE mediabox, at all four rotations ----------
+    for (const { name, a } of VECTOR_SHAPES) {
+      const flatRef = await displayInk(a, 0, LAND_W, LAND_H);
+      check(`landscape ${name}: the flatten reference emits ink`, flatRef.length > 0, true);
+      for (const rot of [0, 90, 180, 270]) {
+        check(`landscape ${name}: /Rotate ${rot} flatten still agrees with 0°`,
+          await displayInk(a, rot, LAND_W, LAND_H), flatRef);
+        const { doc, page, vp1 } = await makePage(rot, LAND_W, LAND_H);
+        check(`landscape ${name}: /Rotate ${rot} written as a real annotation`,
+          await addManagedAnnot(doc, page, a, makeMap(vp1, "orig"), new Map()), true);
+        const { pts, scale } = apInkUser(doc, doc.context.lookup(page.node.Annots().get(0)));
+        check(`landscape ${name}: /Rotate ${rot} the /AP ink lands on the flattened path`,
+          toDisplaySet(pts, vp1), flatRef);
+        check(`landscape ${name}: /Rotate ${rot} the /AP mapping has no scaling`, scale, [1, 1]);
+      }
+    }
+
+    // -- (b) ONE document, four pages, both orientations, three /Rotate values -----
+    // Baked in a single pass over the pages, the way bakeInPlace does it.
+    const MIXED = [
+      { label: "p0 portrait 0°",    w: PAGE_W, h: PAGE_H, rot: 0 },
+      { label: "p1 landscape 0°",   w: LAND_W, h: LAND_H, rot: 0 },
+      { label: "p2 portrait 90°",   w: PAGE_W, h: PAGE_H, rot: 90 },
+      { label: "p3 landscape 270°", w: LAND_W, h: LAND_H, rot: 270 },
+    ];
+    async function makeMixedDoc() {
+      const doc = await PDFDocument.create();
+      for (const m of MIXED) doc.addPage([m.w, m.h]).setRotation(degrees(m.rot));
+      const pdf = await pdfjs.getDocument({ data: await doc.save(), useSystemFonts: false }).promise;
+      const vps = [];
+      for (let i = 0; i < MIXED.length; i++) vps.push((await pdf.getPage(i + 1)).getViewport({ scale: 1 }));
+      return { doc, pages: doc.getPages(), vps };
+    }
+
+    for (const { name, a } of VECTOR_SHAPES) {
+      // Each page's OWN single-page answer, measured the way section 6 measures.
+      const refs = [];
+      for (const m of MIXED) refs.push(await displayInk(a, m.rot, m.w, m.h));
+
+      const { doc, pages, vps } = await makeMixedDoc();
+      for (let i = 0; i < MIXED.length; i++) {
+        // vp1 re-fetched PER PAGE — the line the guard below deletes.
+        await addManagedAnnot(doc, pages[i], a, makeMap(vps[i], "orig"), new Map());
+      }
+      for (let i = 0; i < MIXED.length; i++) {
+        const arr = pages[i].node.Annots();
+        check(`mixed ${name}: ${MIXED[i].label} got exactly one annotation`,
+          arr ? arr.size() : 0, 1);
+        const { pts, scale } = apInkUser(doc, doc.context.lookup(arr.get(0)));
+        check(`mixed ${name}: ${MIXED[i].label} lands where a single-page bake put it`,
+          toDisplaySet(pts, vps[i]), refs[i]);
+        check(`mixed ${name}: ${MIXED[i].label} /AP mapping has no scaling`, scale, [1, 1]);
+        // The user-facing worry in plain terms: applying edits must not turn the page.
+        // A page that came out spun after "Áp dụng" is the symptom everyone reports, and
+        // it can happen two ways — the ink rotates (above) or the PAGE does (here).
+        check(`mixed ${name}: ${MIXED[i].label} keeps its own /Rotate after baking`,
+          pages[i].getRotation().angle, MIXED[i].rot);
+        check(`mixed ${name}: ${MIXED[i].label} keeps its own size after baking`,
+          [Math.round(pages[i].getWidth()), Math.round(pages[i].getHeight())],
+          [MIXED[i].w, MIXED[i].h]);
+      }
+    }
+
+    // -- (c) the REDACTION page: rotation is flattened AWAY, not applied twice ----
+    // bakeWithRedaction does not copy a redacted page — it rasterises it and builds a
+    // NEW one: `out.addPage([vp1.width, vp1.height])` with no /Rotate, then maps ink
+    // through makeMap(vp1, "image"). That is the most dangerous shape this feature can
+    // take, because the PNG is already in DISPLAY orientation: apply the page rotation on
+    // top and a landscape sheet comes out spun after "Áp dụng" — the exact complaint.
+    //
+    // Measured rather than reasoned: the new page's viewport is the rotated original's
+    // viewport, and ink placed through "image" mode must land on the SAME display points
+    // the rotated original produced. rasterRedacted itself needs a canvas and cannot run
+    // here; the arithmetic around it is what this pins.
+    for (const rot of [90, 270]) {
+      const a = VECTOR_SHAPES.find((s) => s.name === "cloud").a;
+      const src = await makePage(rot, PAGE_W, PAGE_H);
+      const ref = toDisplaySet(inkUserPoints(
+        (await (async () => { await drawOneAnnot(src.doc, src.page, a, makeMap(src.vp1, "orig")); return src.page; })())), src.vp1);
+
+      // what bakeWithRedaction builds in its place
+      const outDoc = await PDFDocument.create();
+      const flat = outDoc.addPage([src.vp1.width, src.vp1.height]);
+      check(`redact page /Rotate ${rot}: the replacement page takes the DISPLAY size`,
+        [Math.round(flat.getWidth()), Math.round(flat.getHeight())],
+        [Math.round(src.vp1.width), Math.round(src.vp1.height)]);
+      check(`redact page /Rotate ${rot}: and carries NO rotation of its own`,
+        flat.getRotation().angle, 0);
+      await drawOneAnnot(outDoc, flat, a, makeMap(src.vp1, "image"));
+      const outPdf = await pdfjs.getDocument({ data: await outDoc.save(), useSystemFonts: false }).promise;
+      const outVp = (await outPdf.getPage(1)).getViewport({ scale: 1 });
+      check(`redact page /Rotate ${rot}: ink lands exactly where the rotated original had it`,
+        toDisplaySet(inkUserPoints(flat), outVp), ref);
+      // The round-trip writer must agree with the flattened one on that page too.
+      const outDoc2 = await PDFDocument.create();
+      const flat2 = outDoc2.addPage([src.vp1.width, src.vp1.height]);
+      check(`redact page /Rotate ${rot}: a managed shape goes in as a real annotation`,
+        await addManagedAnnot(outDoc2, flat2, a, makeMap(src.vp1, "image"), new Map()), true);
+      const { pts } = apInkUser(outDoc2, outDoc2.context.lookup(flat2.node.Annots().get(0)));
+      check(`redact page /Rotate ${rot}: … and its /AP ink matches the flattened copy`,
+        toDisplaySet(pts, outVp), ref);
+    }
+
+    // ---- GUARD: prove part (b) can still FAIL ----------------------------------
+    // The mixed-document bug, re-created by hand: hoist `vp1` out of the page loop, so
+    // every page is mapped through PAGE 0's viewport. On a single-orientation document
+    // that is harmless and the grid would never notice; here it must go wrong on the
+    // pages that differ from page 0 — which is all three of them.
+    {
+      const a = VECTOR_SHAPES.find((s) => s.name === "cloud").a;
+      const refs = [];
+      for (const m of MIXED) refs.push(await displayInk(a, m.rot, m.w, m.h));
+      const { doc, pages, vps } = await makeMixedDoc();
+      const stale = makeMap(vps[0], "orig"); // <- the bug: page 0's map, for every page
+      for (let i = 0; i < MIXED.length; i++) await addManagedAnnot(doc, pages[i], a, stale, new Map());
+      const got = [];
+      for (let i = 0; i < MIXED.length; i++) {
+        const { pts } = apInkUser(doc, doc.context.lookup(pages[i].node.Annots().get(0)));
+        got.push(JSON.stringify(toDisplaySet(pts, vps[i])) === JSON.stringify(refs[i]));
+      }
+      check("guard: page 0's own viewport is still right FOR page 0 (not measuring noise)",
+        got[0], true);
+      check("guard: reusing it for pages 1–3 is wrong (part (b) is sensitive)",
+        got.slice(1), [false, false, false]);
+    }
   }
 
   console.log(`annot-rotate: ${pass} pass, ${fail} fail`);

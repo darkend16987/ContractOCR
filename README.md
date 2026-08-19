@@ -8,7 +8,7 @@ sổ app**) · chèn · thêm trang trắng · xoay · **đánh số trang** ·
 **xoá nhiều trang theo khoảng (từ trang X đến Y, trừ vài trang — khỏi tick chọn)** ·
 **lối tắt tác vụ trang ngay trên thanh công cụ + menu chuột phải trên thumbnail**
 (thêm trang trắng ngay trên/dưới trang đang trỏ, xoay, tách, xoá) · chú thích ·
-khoanh vùng (chữ nhật / elip / **khoanh mây revision** — chữ nhật hoặc **vẽ mây tự do** bằng bút/điểm, chọn nét viền + màu nền + **độ mờ nền 0–100%** + **cỡ vòng mây tuỳ chỉnh**) ·
+khoanh vùng (chữ nhật / elip / **khoanh mây revision** — chữ nhật hoặc **vẽ mây tự do** bằng bút/điểm, chọn nét viền + màu nền + **độ mờ nền 0–100%** + **cỡ vòng mây tuỳ chỉnh** — **cả bốn sửa/di chuyển/đổi màu/xoá lại được sau khi áp dụng, appearance dạng vector nên phóng to & in vẫn sắc**) ·
 **mũi tên (nhãn text ở đầu hoặc cuối · kéo 2 đầu để xoay / đổi độ dài, giữ Shift khoá góc 15° · nút Đảo chiều lật mũi nhọn — sửa/di chuyển/xoay lại được sau khi áp dụng)** · **đo & ghi kích thước (dim — hiệu chuẩn 1 đoạn, các đoạn khác tự ghi theo tỷ lệ)** · **vẽ tay (giữ Shift để nét thành đoạn thẳng, thả ra vẽ tay tiếp — gấp khúc trong cùng một nét)** · **dấu ✓ / ✗ (bấm ra cỡ mặc định, kéo để tự chọn cỡ; đổi màu + độ dày nét, mỗi loại nhớ màu riêng)** · **màu mặc định cho chú thích mới đổi được ở Cài đặt** (mặc định đỏ; ✓/✗/tô sáng/che thông tin vẫn giữ màu riêng của chúng) · hộp văn bản (font/đậm/nghiêng/gạch chân/gạch ngang · **căn lề trái/giữa/phải/đều · bullet & đánh số · giãn dòng/đoạn/ký tự/từ · co giãn ngang · độ mờ · căn giữa/sát mép trang** — **sửa/di chuyển lại được sau khi áp dụng**) · **ghi chú dạng chuỗi bình luận (note-of-note) — comment tiếp được sau khi áp dụng, đọc được ở Foxit/Acrobat, kèm bảng danh sách ghi chú toàn tài liệu (bấm để nhảy tới)** · **chèn ảnh / chữ ký** (đóng dấu 1 lần cho **nhiều trang**, nhận PNG/JPG/BMP — **sửa/di chuyển/đổi cỡ/xoá lại được sau khi áp dụng**, giữ Shift khi kéo góc để **giữ đúng tỷ lệ**) ·
 **sao chép / dán vật thể chú thích sang trang khác** (giữ Ctrl bấm để chọn nhiều mục · Ctrl+C / Ctrl+V hoặc menu chuột phải · kéo cả nhóm, đổi màu & nét cả nhóm · clipboard **không mất khi bấm Áp dụng**) ·
 watermark · redact (che thông tin chọn màu) · **sửa chữ gốc trong PDF — giữ đúng font, đúng cỡ và đúng nền** (tự dùng lại font hệ thống theo họ, kể cả tên kiểu `TimesNewRomanBold`; khi phải thay face thì tự khớp lại bề rộng & chiều cao để chữ sửa không dài ra đè chữ bên cạnh; không để lại vệt trắng trên ô bảng có nền; tự OCR lấy lại chữ Việt lỗi font `.Vn`/mã hoá hỏng trên bản vẽ CAD/Revit) ·
@@ -108,7 +108,7 @@ python cli.py scan.png --engine rapidocr --api-key YOUR_KEY --verbose
 |------|--------|---------|
 | `--engine` | OCR engine: `auto`, `rapidviet`, `hybrid`, `rapidocr`, `paddleocr`, `vietocr` | `auto` |
 | `--api-key` | Gemini API key | từ `.env` |
-| `--model` | Gemini model | `gemini-3.1-flash-lite` |
+| `--model` | Gemini model | `gemini-3.5-flash-lite` |
 | `--template` | Template trường: `generic`, `mua_ban`, `lao_dong`, `dich_vu` | `generic` |
 | `--output-format` | Output: `json`, `excel`, `markdown`, `all` | `json` |
 | `--output-dir` | Thư mục output | `results/` |

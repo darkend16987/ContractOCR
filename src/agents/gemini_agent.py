@@ -39,7 +39,7 @@ class GeminiAgent:
     def __init__(
         self,
         api_key: str,
-        model_name: str = "gemini-3.1-flash-lite",
+        model_name: str = "gemini-3.5-flash-lite",
         fields: dict[str, str] | None = None,
     ):
         self.api_key = api_key

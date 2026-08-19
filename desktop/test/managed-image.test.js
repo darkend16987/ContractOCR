@@ -27,7 +27,8 @@ const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
 const PDFLib = require("pdf-lib");
-const { PDFDocument, PDFName, PDFHexString, PDFRawStream, PDFDict } = PDFLib;
+// `rgb` is at module scope for the LIFTED hexRgb, which returns pdf-lib colour objects.
+const { PDFDocument, rgb, PDFName, PDFHexString, PDFRawStream, PDFDict } = PDFLib;
 // `b64ToU8` is here for the LIFTED `dataUrlToBytes`, which delegates to it (v0.2.48
 // folded two hand-rolled copies of that loop into wire.js's one). Not used directly
 // by this grid — it has to exist at MODULE scope or the lifted function can't see it.
@@ -81,7 +82,7 @@ const {
   sniffImage, strToBytes, pushPageAnnot, makeMap, serializeManaged,
   managedSrcBytes, managedSrcDataUrl, collectManagedChain, freeManagedTrash,
   stripManagedFromPage, stripManagedAnnots,
-  normAngle, apRotatable, apMatrixFor, apRectFor,
+  normAngle, apRotatable, apMatrixFor, apRectFor, shapeAppearance, isVectorKind,
 } = MC;
 // `normTextStyle` is what serializeManaged's text branch normalises through; required
 // here too so the LIFTED addManagedAnnot resolves it the same way the browser does.
@@ -94,6 +95,9 @@ const lift = (name) => eval("(" + fnSource(name) + ")");
 //   addManagedAnnot     calls the canvas rasterisers renderTextPng / renderArrowPng
 //   edSnapshot          is the undo pool, and closes over URL_TOKEN below
 //   dataUrlToBytes      a 3-line adapter over wire.js's b64ToU8, private to editor.js
+// The shape branch of addManagedAnnot converts its colours with this; the note branch
+// does too. Lifted rather than re-implemented so a change to the hex parser is felt here.
+const hexRgb = lift("hexRgb");
 const dataUrlToBytes = lift("dataUrlToBytes");
 const deserializeManaged = lift("deserializeManaged");
 const addManagedAnnot = lift("addManagedAnnot");
@@ -407,6 +411,289 @@ function readManaged(doc) {
     grewMb < 80, true);
   check("… and every slot still holds the image", slots.every((s) => s.annots[0][0].dataUrl === hugeUrl), true);
 
+  // ---- 6. box / ellipse round-trip as VECTOR appearances (v0.2.61) ----------
+  //
+  // The other half of the managed family. A rectangle and an oval go in as /Stamp
+  // annots like text/arrow/image, but their /AP is a PATH, not a PNG — shapeAppearance()
+  // in managed-codec builds it from pdf-lib's own drawRectangle / drawEllipse operator
+  // generators, the same ones drawOneAnnot's flatten branch goes through.
+  //
+  // WHERE the ink lands is measured in test:rotate, at four rotations, against the
+  // shipped flatten path. What THIS section owns is everything else:
+  //   · /NabuData alone is enough to rebuild the overlay object (there is no /NabuSrc);
+  //   · a stroke-only shape writes NO /Resources — the common case stays minimal;
+  //   · a filled one carries its alpha in a DIRECT ExtGState, so no fourth object exists
+  //     for collectManagedChain to forget about (that is BI-38's whole failure mode);
+  //   · a re-bake replaces rather than duplicates, and the file does not grow.
+  {
+    const boxAnnot = (over) =>
+      Object.assign({ id: 7, kind: "box", x: 40, y: 60, w: 120, h: 90,
+                      color: "#d32f2f", width: 3 }, over);
+    const ovalAnnot = (over) =>
+      Object.assign({ id: 8, kind: "ellipse", x: 40, y: 60, w: 120, h: 90,
+                      color: "#1565c0", width: 2 }, over);
+    const apForm = (d, dict) =>
+      d.context.lookup(d.context.lookup(dict.get(PDFName.of("AP"))).get(PDFName.of("N")));
+
+    // -- the payload -------------------------------------------------------
+    check("serializeManaged(box) carries geometry + style, and NO fill key when there is none",
+      Object.keys(serializeManaged(boxAnnot())).sort(),
+      ["color", "h", "k", "w", "width", "x", "y"]);
+    check("serializeManaged(box+fill) adds exactly fill + fillOpacity",
+      Object.keys(serializeManaged(boxAnnot({ fill: "#ffeb3b", fillOpacity: 0.4 }))).sort(),
+      ["color", "fill", "fillOpacity", "h", "k", "w", "width", "x", "y"]);
+    // `fill: "none"` is what the edit bar's "không tô" writes. It must serialise the same
+    // as no fill at all, or a re-opened file would come back with a black fill.
+    check("fill:\"none\" serialises as NO fill (not as the string \"none\")",
+      "fill" in serializeManaged(boxAnnot({ fill: "none" })), false);
+
+    // -- write → save → read back -----------------------------------------
+    for (const [label, mk] of [["box", boxAnnot], ["ellipse", ovalAnnot]]) {
+      const d = await PDFDocument.create();
+      const pg = d.addPage([A4.width, A4.height]);
+      check(`${label}: goes in as a real annotation`,
+        await addManagedAnnot(d, pg, mk(), map, new Map()), true);
+      const b = await PDFDocument.load(await d.save());
+      const g = readManaged(b);
+      check(`${label}: reads back as exactly one editable object of the right kind`,
+        [g.length, g[0] && g[0].annot && g[0].annot.kind], [1, label]);
+      check(`${label}: geometry + style survive the round-trip`,
+        [g[0].annot.x, g[0].annot.y, g[0].annot.w, g[0].annot.h,
+         g[0].annot.color, g[0].annot.width],
+        [40, 60, 120, 90, mk().color, mk().width]);
+      check(`${label}: a stroke-only shape comes back with NO fill property`,
+        ["fill" in g[0].annot, "fillOpacity" in g[0].annot], [false, false]);
+      check(`${label}: it is a /Stamp with an appearance (any viewer shows it)`,
+        [String(g[0].dict.get(PDFName.of("Subtype"))), !!g[0].dict.get(PDFName.of("AP"))],
+        ["/Stamp", true]);
+      check(`${label}: it owns NO /NabuSrc (nothing rasterised, nothing to vet)`,
+        !!g[0].dict.get(NABU_SRC), false);
+      // The BBox must be the box GROWN by one stroke width each side. If it were the
+      // bare w×h the form would CLIP the border — half a stroke always sits outside the
+      // path, and a mitred corner reaches further still.
+      const fd0 = apForm(b, g[0].dict);
+      const bb = (fd0.dict || fd0).get(PDFName.of("BBox")).asArray().map((n) => n.asNumber());
+      check(`${label}: /BBox is padded by the stroke width on every side`,
+        [bb[0], bb[1], bb[2], bb[3]],
+        [0, 0, 120 + 2 * mk().width, 90 + 2 * mk().width]);
+      check(`${label}: a stroke-only appearance carries NO /Resources at all`,
+        !!(fd0.dict || fd0).get(PDFName.of("Resources")), false);
+      // At 0° the /Rect is the padded box mapped to lower-left origin, and apRectFor(0)
+      // is the identity — so this is the absolute answer, not just an internally
+      // consistent one. map() here is the "image" mode y-flip: y_pdf = H - y_overlay.
+      const pad = mk().width;
+      check(`${label}: /Rect is the padded box at the mapped anchor`,
+        g[0].dict.get(PDFName.of("Rect")).asArray().map((n) => +n.asNumber().toFixed(4)),
+        apRectFor(0, 120 + 2 * pad, 90 + 2 * pad, 40 - pad, A4.height - 150 - pad));
+    }
+
+    // -- a filled shape: alpha rides in a DIRECT ExtGState (BI-38) ----------
+    {
+      const d = await PDFDocument.create();
+      const pg = d.addPage([A4.width, A4.height]);
+      await addManagedAnnot(d, pg, boxAnnot({ fill: "#ffeb3b", fillOpacity: 0.4 }), map, new Map());
+      const b = await PDFDocument.load(await d.save());
+      const g = readManaged(b);
+      check("box+fill: fill and its opacity survive the round-trip",
+        [g[0].annot.fill, g[0].annot.fillOpacity], ["#ffeb3b", 0.4]);
+      const fd = apForm(b, g[0].dict);
+      const res = b.context.lookup((fd.dict || fd).get(PDFName.of("Resources")));
+      const gsHolder = res && res.get(PDFName.of("ExtGState"));
+      check("box+fill: the appearance declares an /ExtGState resource", !!gsHolder, true);
+      // THE POINT OF THIS CASE. An INDIRECT ExtGState would be a registered object that
+      // collectManagedChain does not walk — leaked on every single re-bake. A direct
+      // dict is owned by the form and dies with it.
+      check("box+fill: /ExtGState is a DIRECT dict, never an indirect ref (nothing to leak)",
+        gsHolder instanceof PDFDict, true);
+      const gs = b.context.lookup(gsHolder.get(PDFName.of("NabuGS")));
+      check("box+fill: /NabuGS sets fill alpha (ca) and leaves stroke alpha alone",
+        [gs.get(PDFName.of("ca")).asNumber(), !!gs.get(PDFName.of("CA"))], [0.4, false]);
+      // A fully opaque fill needs no graphics state at all — do not pay for one.
+      const d2 = await PDFDocument.create();
+      const pg2 = d2.addPage([A4.width, A4.height]);
+      await addManagedAnnot(d2, pg2, boxAnnot({ fill: "#ffeb3b", fillOpacity: 1 }), map, new Map());
+      const b2 = await PDFDocument.load(await d2.save());
+      const fd2 = apForm(b2, readManaged(b2)[0].dict);
+      check("box+fill at opacity 1: no /ExtGState is written (nothing to set)",
+        !!(fd2.dict || fd2).get(PDFName.of("Resources")), false);
+    }
+
+    // -- re-bake replaces, and does not grow the file (BI-38) --------------
+    {
+      const d = await PDFDocument.create();
+      const pg = d.addPage([A4.width, A4.height]);
+      await addManagedAnnot(d, pg, boxAnnot(), map, new Map());
+      await addManagedAnnot(d, pg, ovalAnnot({ x: 200, y: 200 }), map, new Map());
+      const once = await d.save();
+      const re = await PDFDocument.load(once);
+      check("two shapes on one page strip together", stripManagedAnnots(re), 2);
+      check("… and nothing managed is left behind", readManaged(re).length, 0);
+      const rePg = re.getPages()[0];
+      await addManagedAnnot(re, rePg, boxAnnot(), map, new Map());
+      await addManagedAnnot(re, rePg, ovalAnnot({ x: 200, y: 200 }), map, new Map());
+      const twice = await re.save();
+      check("a strip-and-rewrite does not grow the file (old appearances were freed)",
+        twice.length <= once.length + 64, true);
+      check("… and it still holds exactly two shapes",
+        readManaged(await PDFDocument.load(twice)).length, 2);
+    }
+
+    // -- rotated pages take the same /Matrix path as every other kind (BI-59) --
+    for (const rot of [90, 180, 270]) {
+      const d = await PDFDocument.create();
+      const pg = d.addPage([A4.width, A4.height]);
+      pg.setRotation(PDFLib.degrees(rot));
+      check(`box /Rotate ${rot}: still written as a real annotation`,
+        await addManagedAnnot(d, pg, boxAnnot(), map, new Map()), true);
+      const b = await PDFDocument.load(await d.save());
+      const g = readManaged(b);
+      check(`box /Rotate ${rot}: overlay geometry survives untouched by the rotation`,
+        [g[0].annot.x, g[0].annot.y, g[0].annot.w, g[0].annot.h], [40, 60, 120, 90]);
+      const fd = apForm(b, g[0].dict);
+      const mtx = (fd.dict || fd).get(PDFName.of("Matrix"));
+      check(`box /Rotate ${rot}: the appearance carries /Matrix = R(${rot})`,
+        mtx ? mtx.asArray().map((n) => n.asNumber()) : null, apMatrixFor(rot));
+      const rect = g[0].dict.get(PDFName.of("Rect")).asArray().map((n) => n.asNumber());
+      // Padded dims: 126 × 96 at width 3. Swapped at the quarter turns, or §12.5.5 would
+      // make the viewer stretch the appearance to fit.
+      check(`box /Rotate ${rot}: /Rect carries the rotated aspect (so the /AP map is 1:1)`,
+        [+(rect[2] - rect[0]).toFixed(4), +(rect[3] - rect[1]).toFixed(4)],
+        rot === 180 ? [126, 96] : [96, 126]);
+      check(`box /Rotate ${rot}: a re-bake strips the previous copy`, stripManagedAnnots(b), 1);
+    }
+    {
+      const d = await PDFDocument.create();
+      const pg = d.addPage([A4.width, A4.height]);
+      pg.node.set(PDFName.of("Rotate"), PDFLib.PDFNumber.of(45));
+      check("box on an out-of-spec /Rotate 45 falls back to flatten, like every other kind",
+        await addManagedAnnot(d, pg, boxAnnot(), map, new Map()), false);
+    }
+
+    // -- shapeAppearance itself, as a pure function --------------------------
+    // GUARD: the padding is what keeps the border out of the clip. A grid that only
+    // checked "BBox exists" would stay green through a one-character regression to
+    // `pad = 0`, and the symptom — a hairline shaved off all four sides — is precisely
+    // the kind of thing nobody reports as a bug.
+    {
+      const sa = shapeAppearance({ kind: "box", w: 100, h: 50, width: 4 }, hexRgb("#000000"), null, 1);
+      check("shapeAppearance pads by a full stroke width (mitred corners reach √2 halves)",
+        [sa.pad, sa.wPt, sa.hPt], [4, 108, 58]);
+      check("… and draws the path INSIDE that padding, not at the origin",
+        sa.ops.includes("1 0 0 1 4 4 cm"), true);
+      check("stroke-only emits `S` (stroke) and never `B` (fill+stroke)",
+        [/\bS\b/.test(sa.ops), /\bB\b/.test(sa.ops)], [true, false]);
+      const sf = shapeAppearance({ kind: "box", w: 100, h: 50, width: 4 }, hexRgb("#000000"), hexRgb("#ff0000"), 1);
+      check("a filled shape emits `B`, so the fill is actually painted",
+        /\bB\b/.test(sf.ops), true);
+      const se = shapeAppearance({ kind: "ellipse", w: 100, h: 50, width: 2 }, hexRgb("#000000"), null, 1);
+      check("the ellipse branch emits Béziers, not a rectangle path",
+        [/\bc\b/.test(se.ops), /\bre\b/.test(se.ops)], [true, false]);
+      // A degenerate drag (click without moving) must not produce NaN in the content
+      // stream — a single NaN makes the whole page unparseable in some readers.
+      const sz = shapeAppearance({ kind: "ellipse", w: 0, h: 0, width: 2 }, hexRgb("#000000"), null, 1);
+      check("a zero-size shape still emits finite numbers", /NaN|Infinity/.test(sz.ops), false);
+    }
+  }
+
+    // -- revision clouds: the same vector /AP, with annot-geom's own path ------
+    //
+    // A cloud differs from a box in exactly two ways that this grid has to pin, and both
+    // are places an off-by-one-pad hides: its path is produced by annot-geom (shifted by a
+    // whole scallop `bump`, not by the stroke), and a freehand one is stored as VERTICES
+    // rather than a rect — so `/NabuData` must carry the polygon, and a polygon too small
+    // to scallop must be refused rather than imported as an invisible ghost.
+    {
+      const AG = require("../renderer/annot-geom.js");
+      const cloudAnnot = (over) =>
+        Object.assign({ id: 9, kind: "cloud", x: 60, y: 90, w: 140, h: 80,
+                        color: "#d32f2f", width: 2, bump: 12 }, over);
+      const penAnnot = (over) =>
+        Object.assign({ id: 10, kind: "cloudpen", color: "#d32f2f", width: 2, bump: 10,
+                        closed: true,
+                        pts: [{ x: 50, y: 50 }, { x: 160, y: 70 }, { x: 140, y: 170 }, { x: 45, y: 140 }] }, over);
+      const apForm2 = (d, dict) =>
+        d.context.lookup(d.context.lookup(dict.get(PDFName.of("AP"))).get(PDFName.of("N")));
+
+      check("serializeManaged(cloud) carries the box + the scallop size",
+        Object.keys(serializeManaged(cloudAnnot())).sort(),
+        ["bump", "color", "h", "k", "w", "width", "x", "y"]);
+      check("serializeManaged(cloudpen) carries the VERTICES, not a box",
+        Object.keys(serializeManaged(penAnnot())).sort(),
+        ["bump", "color", "pts", "width", "k"].sort());
+      // A cloud drawn before the size control existed has no `bump` field at all. The
+      // payload must still pin the size it was DRAWN at, or it changes shape on reopen
+      // the day the default moves.
+      check("a bump-less cloud serialises the resolved default, not undefined",
+        serializeManaged(cloudAnnot({ bump: undefined })).bump, AG.CLOUD_BUMP);
+
+      for (const [label, mk] of [["cloud", cloudAnnot], ["cloudpen", penAnnot]]) {
+        const d = await PDFDocument.create();
+        const pg = d.addPage([A4.width, A4.height]);
+        check(`${label}: goes in as a real annotation`,
+          await addManagedAnnot(d, pg, mk(), map, new Map()), true);
+        const b = await PDFDocument.load(await d.save());
+        const g = readManaged(b);
+        check(`${label}: reads back as exactly one editable object of the right kind`,
+          [g.length, g[0] && g[0].annot && g[0].annot.kind], [1, label]);
+        check(`${label}: the scallop size survives`, g[0].annot.bump, mk().bump);
+        check(`${label}: it owns NO /NabuSrc`, !!g[0].dict.get(NABU_SRC), false);
+        // BBox must be annot-geom's own padded W×H grown by the STROKE. Two paddings
+        // stack here and mixing them up is the whole trap: `bump` keeps the bulges
+        // inside the path box, `width` keeps the border inside the /BBox.
+        const geo = label === "cloud"
+          ? AG.cloudPath(mk().w, mk().h, mk().bump)
+          : AG.cloudPathPoly(mk().pts, mk().bump);
+        const fd = apForm2(b, g[0].dict);
+        const bb = (fd.dict || fd).get(PDFName.of("BBox")).asArray().map((n) => +n.asNumber().toFixed(4));
+        check(`${label}: /BBox is annot-geom's padded box PLUS the stroke width`,
+          bb, [0, 0, +(geo.W + 2 * mk().width).toFixed(4), +(geo.H + 2 * mk().width).toFixed(4)]);
+      }
+
+      // Geometry survives bit-for-bit — the vertices ARE the shape for a cloudpen.
+      {
+        const d = await PDFDocument.create();
+        const pg = d.addPage([A4.width, A4.height]);
+        await addManagedAnnot(d, pg, cloudAnnot(), map, new Map());
+        await addManagedAnnot(d, pg, penAnnot(), map, new Map());
+        const b = await PDFDocument.load(await d.save());
+        const g = readManaged(b);
+        const cl = g.find((x) => x.annot.kind === "cloud").annot;
+        const pn = g.find((x) => x.annot.kind === "cloudpen").annot;
+        check("cloud: the box survives the round-trip",
+          [cl.x, cl.y, cl.w, cl.h], [60, 90, 140, 80]);
+        check("cloudpen: every vertex comes back exactly", cl && pn.pts, penAnnot().pts);
+        check("cloudpen: it comes back CLOSED (the only kind a file can hold)", pn.closed, true);
+        check("two clouds on one page strip together", stripManagedAnnots(b), 2);
+      }
+
+      // A polygon too small to scallop. cloudPathPoly answers null, and BOTH writers have
+      // to agree about that: the annot writer declines (so drawOneAnnot flattens, which
+      // also draws nothing), and the reader refuses the import rather than parking an
+      // invisible, unselectable object in ed.annots that the next bake would drop.
+      {
+        const d = await PDFDocument.create();
+        const pg = d.addPage([A4.width, A4.height]);
+        check("a 2-point cloudpen is declined by the annot writer (falls back to flatten)",
+          await addManagedAnnot(d, pg, penAnnot({ pts: [{ x: 1, y: 1 }, { x: 9, y: 9 }] }), map, new Map()),
+          false);
+        check("… and nothing was written to the page", !!pg.node.Annots(), false);
+        check("deserializeManaged refuses a 2-point payload rather than making a ghost",
+          deserializeManaged({ k: "cloudpen", color: "#000", width: 2, pts: [{ x: 1, y: 1 }, { x: 9, y: 9 }] }, null),
+          null);
+        check("… and refuses NaN vertices too (they poison cloudPathPoly's perimeter)",
+          deserializeManaged({ k: "cloudpen", color: "#000", width: 2,
+                               pts: [{ x: 1, y: 1 }, { x: NaN, y: 2 }, { x: 3, y: 3 }] }, null),
+          null);
+      }
+
+      // A payload with no `bump` must leave the key OFF, so bumpOf() falls back to the
+      // historical default — setting it to 0 or NaN would silently make every old cloud
+      // a different shape.
+      check("a bump-less payload leaves `bump` unset (bumpOf falls back)",
+        "bump" in deserializeManaged({ k: "cloud", x: 1, y: 2, w: 3, h: 4, color: "#000", width: 2 }, null),
+        false);
+    }
+
   // ---- the module surface (BI-14: a rename here breaks editor.js silently) ----
   // editor.js calls all of these by BARE NAME out of the shared classic-script scope,
   // so a rename produces a runtime ReferenceError with no build-time warning. Pinning
@@ -416,17 +703,26 @@ function readManaged(doc) {
     // NB: .sort() is by UTF-16 code unit, so "strToBytes" (capital T, 0x54) comes
     // BEFORE "stripManagedAnnots" (lowercase i, 0x69). Not a typo.
     ["MANAGED_KINDS", "NABU_DATA", "NABU_IMG", "NABU_KIND", "NABU_SRC", "P_ANNOTS",
-     "apMatrixFor", "apRectFor", "apRotatable",
-     "collectManagedChain", "freeManagedTrash", "isManagedKind", "makeMap",
+     "VECTOR_KINDS", "apMatrixFor", "apRectFor", "apRotatable",
+     "collectManagedChain", "freeManagedTrash", "isManagedKind", "isVectorKind", "makeMap",
      "managedSrcBytes", "managedSrcDataUrl", "normAngle", "pageRotate", "pushPageAnnot",
-     "serializeManaged", "sniffImage", "strToBytes", "stripManagedAnnots",
-     "stripManagedFromPage"]);
+     "serializeManaged", "shapeAppearance", "sniffImage", "strToBytes",
+     "stripManagedAnnots", "stripManagedFromPage"]);
   check("the /Nabu* keys are PDFName objects, not strings",
     [NABU_KIND, NABU_DATA, NABU_SRC, NABU_IMG, P_ANNOTS].map((k) => String(k)),
     ["/NabuKind", "/NabuData", "/NabuSrc", "/NabuImg", "/Annots"]);
   check("MANAGED_KINDS is the set that round-trips, and isManagedKind reads it",
-    [[...MC.MANAGED_KINDS].sort(), MC.isManagedKind("image"), MC.isManagedKind("highlight")],
-    [["arrow", "image", "note", "text"], true, false]);
+    [[...MC.MANAGED_KINDS].sort(), MC.isManagedKind("image"), MC.isManagedKind("box"),
+     MC.isManagedKind("ellipse"), MC.isManagedKind("cloud"), MC.isManagedKind("highlight")],
+    [["arrow", "box", "cloud", "cloudpen", "ellipse", "image", "note", "text"],
+     true, true, true, true, false]);
+  // VECTOR_KINDS is the SUBSET whose /AP is a path instead of a PNG. It must stay a
+  // strict subset: a kind outside MANAGED_KINDS would never reach shapeAppearance at all.
+  check("VECTOR_KINDS is the vector subset of MANAGED_KINDS, and isVectorKind reads it",
+    [[...MC.VECTOR_KINDS].sort(),
+     [...MC.VECTOR_KINDS].every((k) => MC.MANAGED_KINDS.has(k)),
+     MC.isVectorKind("cloudpen"), MC.isVectorKind("text"), MC.isVectorKind("image")],
+    [["box", "cloud", "cloudpen", "ellipse"], true, true, false, false]);
   // Guard: the module resolves pdf-lib and wire.js/annot-text.js itself (window.PDFLib +
   // bare names in the browser, require() here). If either shim regressed, these two would
   // throw rather than return — and managedSrcDataUrl is the image round-trip's only

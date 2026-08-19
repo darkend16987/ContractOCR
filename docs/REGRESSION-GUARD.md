@@ -15,7 +15,7 @@ tài liệu này chỉ có giá trị nếu được cập nhật.
 | `desktop/renderer/app.js` | ~4440 | State trung tâm + 12 hàm nút thắt. **Gần như mọi bản phát hành đều đụng.** |
 | `desktop/renderer/editor.js` | ~3180 | Overlay annotation, bake, form. Diff lớn nhất mỗi lần release. |
 | `desktop/renderer/annot-text.js` | ~230 | Bố cục chữ (`layoutTextBox`). Rủi ro **thấp** nhờ lưới `npm run test:text`, nhưng sai ở đây **im lặng**: hộp trên màn hình và PNG đem bake lệch nhau → chữ tràn/xuống dòng khác trong file đã lưu → xem BI-40. |
-| `desktop/renderer/managed-codec.js` | ~340 | Lớp object PDF riêng của chú thích sửa-lại-được. **Hậu quả cao nhất trong repo**: sai là **mất ảnh của người dùng** hoặc phình file âm thầm. Từ v0.2.58 chứa thêm số học đặt `/AP` trên trang xoay (`apMatrixFor`/`apRectFor`) — thuần, nằm trong `test:managed` + `test:rotate`. Xem BI-37, BI-38, BI-14, BI-59. |
+| `desktop/renderer/managed-codec.js` | ~340 | Lớp object PDF riêng của chú thích sửa-lại-được. **Hậu quả cao nhất trong repo**: sai là **mất ảnh của người dùng** hoặc phình file âm thầm. Từ v0.2.58 chứa thêm số học đặt `/AP` trên trang xoay (`apMatrixFor`/`apRectFor`), từ v0.2.61 thêm `shapeAppearance` — appearance **vector** của chữ nhật/elip — cả hai đều thuần, nằm trong `test:managed` + `test:rotate`. Xem BI-37, BI-38, BI-14, BI-59, BI-64. |
 | `desktop/renderer/annot-geom.js` | ~420 | Đường mây revision + nhãn mũi tên + `resizeRect` + (v0.2.50) `strokeExtend` (luật Shift của vẽ tay) + `symbolStrokes` (hình ✓/✗) + (v0.2.52) `snapLineEnd` (kéo một đầu mũi tên) và `annotBounds`/`translateAnnot`/`unionBounds`/`fitShift` (số học của copy–paste vật thể). Rủi ro **thấp** nhờ `npm run test:cloud` + `test:geom`; sai ở đây làm mây/dấu lệch chỗ **trong PDF đã lưu** (trên màn hình vẫn đúng), hoặc dán một mục ra **ngoài mép giấy** nơi không tay nắm nào tóm lại được → xem BI-40, BI-42, BI-46. |
 | `desktop/renderer/editor.js` — khối bake (`drawOneAnnot`) | ~200 dòng | Bù xoay trang. Rủi ro **cao và im lặng**: overlay trên màn hình luôn đúng, chỉ **file đã lưu** sai, và **chỉ trên trang có `/Rotate`** — tức đúng loại tài liệu (scan nằm ngang, bản vẽ A3) mà người viết code không mở hằng ngày. Nay có lưới `npm run test:rotate` đi qua **mọi** kind → xem BI-45. |
 | `desktop/renderer/editor.js` — ba nhánh `/AP` của `addManagedAnnot` | ~120 dòng | Cùng loại rủi ro im lặng như hàng trên, ở **đường annotation** thay vì đường dán cứng: viewer tự co giãn appearance cho khít `/Rect` (PDF §12.5.5) nên `/Rect` sai không làm con dấu lệch mà làm nó **méo**, và chỉ thấy trên trang xoay. `test:rotate` §5 đo lại đúng cùng một câu hỏi ("rơi vào đâu trên màn hình") bằng cách so với đường dán cứng đang ship, kèm **ca canh gác** → xem BI-59. |
@@ -742,9 +742,9 @@ chỉ tên hàm.
   nhưng **dùng chung ô "Màu"**. `colorSlotFor()` là chỗ duy nhất quyết định ghi vào đâu, và
   nó ưu tiên **kind của mục đang chọn** hơn công cụ hiện tại — nếu không, dưới công cụ Chọn
   việc đổi màu một dấu ✗ sẽ âm thầm ghi đè màu chung của bút tô sáng/vẽ tay.
-- Hai loại này **flatten** khi bake (như draw/box/cloud), **không** round-trip — chúng
+- Hai loại này **flatten** khi bake (như vẽ tay / tô sáng), **không** round-trip — chúng
   không nằm trong `MANAGED_KINDS`. Muốn sửa lại sau khi Lưu là **tính năng khác** (xem
-  BI-37/38 để biết cái giá).
+  BI-37/38 để biết cái giá; chữ nhật, elip và **khoanh mây** đã đi con đường đó ở BI-64).
 - **Vỡ khi:** giữ Shift mà nét vẫn ngoằn ngoèo (hoặc đứng im) · dấu ✓ trên màn hình một
   nơi, trong PDF đã lưu một nẻo · đổi màu ✗ xong bút tô sáng cũng đổi màu theo · đóng dấu
   sát mép trang rồi không kéo tay nắm được nữa.
@@ -851,8 +851,9 @@ chỉ tên hàm.
   **ngay cả khi đã áp dụng xong**” đòi phải sống sót. Vì thế nó là binding cấp module.
   Không lưu ra đĩa, **không** chia sẻ giữa các tab (mỗi tab một renderer — §2).
 - **Giới hạn phải nói ra, đừng đi tìm bug:** chỉ `MANAGED_KINDS` (chữ · ghi chú · mũi
-  tên · ảnh) quay lại thành đối tượng sống sau khi Lưu. Mây, box, elip, vẽ tay, ✓/✗
-  **flatten thành pixel** (BI-42) ⇒ đã áp dụng rồi thì **không còn đối tượng để chọn**.
+  tên · ảnh · **chữ nhật · elip · mây · mây-vẽ-tay** từ v0.2.61, BI-64) quay lại thành đối
+  tượng sống sau khi Lưu. Vẽ tay, tô sáng, che thông tin, đo, ✓/✗ **flatten thành pixel**
+  (BI-42) ⇒ đã áp dụng rồi thì **không còn đối tượng để chọn**.
   Cách dùng đúng: copy **trước** khi Áp dụng — clip sống qua bake, đó là điều làm cho
   trình tự đó chạy được. Cho các kind kia round-trip là **tính năng khác** (giá: BI-37/38).
 - **Nhóm bị kẹp theo HỘP HỢP (`unionBounds`), không kẹp từng mục**: kẹp riêng lẻ sẽ
@@ -1407,6 +1408,129 @@ _Ghi 2026-08-13. **Đo được, không suy luận.**_
 
 ---
 
+### BI-64 · Chữ nhật · elip · **khoanh mây** round-trip bằng `/AP` **VECTOR** — cái bẫy là `pad`, không phải ma trận
+
+- `managed-codec.js` `shapeAppearance()` + `MANAGED_KINDS` + `VECTOR_KINDS`/`isVectorKind`
+  + nhánh vector của `serializeManaged`; `editor.js` nhánh vector của `addManagedAnnot` +
+  `deserializeManaged`. Lưới: `npm run test:managed` §6 + `npm run test:rotate` §6/§7.
+- **Bốn kind, MỘT nhánh mỗi nơi.** `VECTOR_KINDS = {box, ellipse, cloud, cloudpen}` có tên
+  riêng vì câu hỏi “kind này có vector không” bị hỏi ở **ba** file; viết chuỗi `||` ở mỗi
+  chỗ là đúng cách để ba chỗ đó trôi khỏi nhau (lý lẽ y hệt `RESIZABLE_KINDS`).
+- **Tại sao vector chứ không phải PNG như chữ/mũi tên.** Chữ và mũi tên rasterise vì mực
+  của chúng là **glyph tiếng Việt** — nhúng font để vẽ được "Nghiệm thu" là bài toán ta cố
+  ý không có. Hình chữ nhật và elip không có cái cớ đó: pdf-lib **export sẵn** đúng những
+  hàm sinh operator mà `page.drawRectangle`/`page.drawEllipse` gọi bên trong, nên `/AP` có
+  thể dùng **chính đường vẽ** mà nhánh flatten của `drawOneAnnot` đang dùng — chỉ khác chỗ
+  chứa (Form XObject thay vì content stream của trang). Được ba thứ: nét **không mờ** ở mọi
+  mức zoom và khi in, tốn vài chục byte thay vì một bitmap supersample, và — vì hình học đến
+  từ **cùng một hàm** — bản sửa-lại-được **không thể** trôi khỏi bản flatten.
+- **`pad` là thứ chịu lực, và nó là chỗ dễ sai nhất.** Form `/AP` **cắt** theo `/BBox`, mà
+  **một nửa nét vẽ nằm NGOÀI** đường path nó bám theo — ở góc vuông bo mí (miter) còn với ra
+  xa hơn (√2 nửa nét). Lấy BBox đúng bằng w×h là **gọt mất viền** của người dùng ở cả bốn
+  cạnh. `shapeAppearance` đệm **trọn một bề rộng nét** mỗi bên, vẽ hình ở `(pad, pad)` bên
+  trong form, và neo form tại `map(a.x - pad, a.y + a.h + pad)` — **ba chỗ phải cùng nói về
+  một số `pad`**, sai lệch một chỗ là hình lệch đúng một bề rộng nét (2–8pt): **không thấy
+  trên ảnh chụp màn hình, sai trong file**, và **không** bị bắt bởi bất kỳ test nào chỉ so
+  `/Rect` với công thức dựng từ chính `pad` đó.
+- **Mây chồng HAI lớp đệm, và đó là bẫy riêng của nó.** `annot-geom` đã dịch path đi trọn
+  một `bump` (để bướu không âm) — đó là **đệm hình học**, dùng chung với `<svg>` của lớp phủ.
+  `/BBox` còn phải cộng thêm **đệm NÉT** nữa. Nhầm hai thứ này là viền mây bị gọt (chỉ
+  `test:managed` bắt được) hoặc hình lệch (chỉ `test:rotate` bắt được).
+- **`drawSvgPath` LẬT trục y** (`translate · R · scale(1,-1)`), nên điểm neo của nó là góc
+  **TRÊN**-trái của hộp path, không phải dưới-trái như `drawRectangle`. Trong form, điểm đó
+  là `(lw, hPt - lw)`. Viết nhầm thành `(lw, lw)` là mây lộn ngược **và** lệch.
+- **Bên trong form LUÔN vẽ ở `degrees(0)`.** Đường flatten **bắt buộc** truyền
+  `rotate: pageRotate(page)` cho `drawSvgPath` (BI-45 — quên nó chính là lỗi mây bị quay trên
+  mọi trang xoay tới tận v0.2.52); trong Form XObject thì hệ toạ độ local **chính là** không
+  gian form, đã dựng đứng theo màn hình, và `/Matrix = R(angle)` mới là thứ quay. Truyền góc
+  trang vào `shapeAppearance` là **quay HAI lần**.
+- **`shapeAppearance` trả về `ox`/`oy`** — toạ độ lớp phủ của góc dưới-trái form — nên chỗ
+  gọi map **đúng một điểm** và không cần biết luật đệm của từng kind. Cố ý: `pad` của hộp
+  (nửa nét bo mí) và của mây (trọn một bướu **cộng** nét) là hai thứ khác nhau, và để chỗ gọi
+  tự suy ra là **bốn** cơ hội lệch một bề rộng nét.
+- **Đa giác suy biến (<3 điểm phân biệt) phải bị TỪ CHỐI ở cả hai đầu:** `shapeAppearance`
+  trả `null` ⇒ `addManagedAnnot` trả `false` ⇒ rơi về `drawOneAnnot`, chỗ `cloudPathPoly`
+  cũng trả `null` và vẽ **không gì cả** — hai bên đồng ý. `deserializeManaged` cũng từ chối,
+  nếu không sẽ có một vật **vô hình, không chọn được** nằm trong `ed.annots` mà lần bake sau
+  âm thầm đánh rơi. Điểm `NaN` cũng bị lọc: nó đầu độc `Math.hypot` và cả chu vi.
+- **Vì thế `test:rotate` §6 đọc content stream BÊN TRONG form**, không phải hộp bao của nó:
+  với ảnh round-trip thì `/AP` chỉ là một `Do` của hình vuông đơn vị nên bao form **chính là**
+  bao mực; với hình vector thì bao form là bao **phần đệm**. Đo xong đẩy từng điểm qua
+  `/Matrix` rồi qua phép ánh xạ §12.5.5 lên `/Rect`, đúng như một trình đọc thật làm, và so
+  với **đường flatten đã phát hành** ở 0° — thứ mà §1 đã ghim vào đúng chỗ người dùng vẽ.
+- **Hai ca guard, và chúng không phải trang trí:** (i) `/AP` **thiếu `/Matrix`** — đúng ở 0°,
+  sai ở cả ba góc phần tư (lỗi tiền-BI-59 dựng lại bằng tay); (ii) **quên `pad` ở khâu neo** —
+  sai ở **cả 0°**, đó là lý do (i) một mình không đủ. Không có hai ca này, §6 xanh mà không
+  chứng minh được gì. Đã mutation-test: `pad = 0` làm đỏ 8 ca ở `test:managed` + 4 ở
+  `test:rotate`; bỏ `/Matrix` làm đỏ 12 ca; neo thiếu `pad` làm đỏ 24 ca. Riêng phần mây:
+  neo `drawSvgPath` ở `(lw, lw)` → **49** ca đỏ ở `test:rotate`; quên `- g.pad` → **49**;
+  `rotate: degrees(90)` trong form (đúng lỗi BI-45) → **98**. Còn `/BBox` không cộng nét thì
+  `test:rotate` **KHÔNG** thấy (mực không dời, chỉ bị cắt) — **2** ca của `test:managed` là
+  thứ duy nhất bắt được. **Hai lưới bù nhau: đừng bỏ lưới nào.**
+- **Độ mờ nền đi bằng ExtGState ghi TRỰC TIẾP (inline) trong `/Resources`, tuyệt đối không
+  đăng ký thành object gián tiếp.** Đây không phải chuyện thẩm mỹ: `collectManagedChain` giải
+  phóng `/NabuSrc`, `/NabuImg` và bản thân form — một ExtGState gián tiếp là **object thứ tư
+  không ai giải phóng**, rò rỉ đều đặn sau **mỗi** lần bake. Đúng lớp lỗi mà BI-38 tồn tại để
+  chặn. Dict trực tiếp chết cùng form giữ nó. Nền **đục hoàn toàn thì không ghi ExtGState** —
+  không có gì để đặt thì đừng trả giá.
+- **Chỉ `ca` (alpha nền), không `CA` (alpha nét):** đường flatten truyền cho pdf-lib đúng một
+  `opacity`, mà pdf-lib hiểu là alpha **nền**. Bịa thêm alpha nét ở đây là làm bản bake **lệch
+  khỏi lớp phủ trên màn hình**.
+- **`deserializeManaged` phải rơi về một LITERAL, không bao giờ về màu mặc định đang nhớ.**
+  Màu mặc định là một **tuỳ chọn sống**; đọc nó ở đây là ngày người dùng đổi màu thì **mọi
+  hình trong file cũ đổi màu theo**. `test:defaults` chặn bằng cách so **chuỗi con trên toàn
+  bộ source của hàm — kể cả trong comment**, nên đừng nhắc tên hằng đó ở đây.
+- **Còn cố ý flatten:** vẽ tay, tô sáng, che thông tin, đo, ✓/✗. Không phải bỏ sót — mỗi
+  loại cần nhánh appearance riêng, và ra từng lớp một là điều giữ cho các ca guard của
+  `test:rotate` còn có nghĩa.
+- **Vỡ khi:** vẽ chữ nhật **hoặc khoanh mây** → Áp dụng → Lưu → mở lại → **không chọn được**
+  (rơi về flatten) · mây mở lại **lộn ngược** hoặc lệch trọn một bướu ·
+  chọn được nhưng **lệch đúng một bề rộng nét** lên trên-trái · viền **bị gọt** một sợi ở cả
+  bốn cạnh (BBox thiếu đệm) · hình trên trang **đã xoay** ra **méo hoặc lệch 90°** · lưu 3–4
+  lần liên tiếp mà **file phình** (ExtGState rò) · elip nền mờ mở lại thành **đục**.
+- Lưới: `npm run test:managed` (§6) · `npm run test:rotate` (§6 + §7, xem BI-65) ·
+  `npm run test:defaults`.
+  Nửa GUI vẫn phải thử tay — xem hàng tương ứng ở §5.
+
+---
+
+### BI-65 · “Landscape” là **HAI** thứ khác nhau, và mỗi trang phải dùng **viewport của CHÍNH NÓ**
+
+- `editor.js` `bakeInPlace()` / `bakeWithRedaction()` — dòng
+  `const vp1 = (await state.pdf.getPage(i + 1)).getViewport({ scale: 1 });` **nằm TRONG**
+  vòng lặp trang. Lưới: `npm run test:rotate` §7.
+- **Hai nghĩa của “trang ngang”, và chúng đi hai đường số học khác nhau:**
+  · `/MediaBox` **rộng** (bản vẽ CAD, `/Rotate 0`) → `vp1.width/height` đổi thẳng;
+  · `/MediaBox` **cao** + `/Rotate 90` (ảnh scan dựng đứng bị xoay) → `convertToPdfPoint`
+  **hoán vị** hai chiều bên trong.
+  Trước v0.2.61 lưới chỉ phủ nghĩa thứ hai. Bộ hồ sơ thật có **cả hai**, và rất thường
+  **trong cùng một file** — tờ bản vẽ ngang đóng chung với thuyết minh dọc.
+- **Lớp lỗi mà §7 tồn tại để chặn không phải “xoay sai”** (§1/§5/§6 đã giữ việc đó) mà là
+  **“bake dùng viewport của trang này cho trang khác”**. Trong tài liệu **một hướng** lỗi đó
+  **tàng hình hoàn toàn**; trong tài liệu trộn hướng nó ném mực **ra ngoài mặt giấy**. Vì thế
+  §7(b) dựng **một** tài liệu 4 trang {dọc 0°, ngang 0°, dọc 90°, ngang 270°}, bake trong
+  **một lượt** đúng như `bakeInPlace`, rồi so **từng trang** với đáp án một-trang của chính nó.
+- **Ca guard là thứ làm §7(b) có nghĩa:** nó nhấc `vp1` ra ngoài vòng lặp (dùng map của
+  **trang 0** cho mọi trang) và **đòi** kết quả phải SAI ở trang 1–3, đồng thời vẫn ĐÚNG ở
+  trang 0 — nếu không thì ca guard chỉ đang đo nhiễu.
+- **“Áp dụng xong trang tự quay” có HAI đường gây ra, §7 chốt cả hai:** mực xoay (so bộ điểm
+  hiển thị) **và** bản thân trang xoay — nên §7(b) kiểm luôn `page.getRotation().angle` và
+  `getWidth()/getHeight()` **không đổi** sau khi bake.
+- **Đường redact là đường nguy hiểm nhất và nó CỐ Ý phẳng hoá xoay:** `bakeWithRedaction`
+  **không** copy trang bị che, nó rasterise rồi dựng trang **MỚI**
+  `out.addPage([vp1.width, vp1.height])` **không `/Rotate`**, và map mực qua
+  `makeMap(vp1, "image")`. Ảnh PNG **đã ở hướng hiển thị** — cộng thêm góc xoay của trang lên
+  nữa là tờ ngang ra **quay 90°** sau khi Áp dụng. §7(c) đo đúng phép tính đó ở 90° và 270°
+  (bản thân `rasterRedacted` cần canvas nên không chạy được ở node).
+- **Vỡ khi:** file có cả trang dọc lẫn trang ngang → chú thích trên trang **thứ hai trở đi**
+  lệch hoặc biến mất · tờ ngang **quay 90°** sau khi Áp dụng · che thông tin trên trang đã
+  xoay làm trang đó **nằm ngang ra** · bản vẽ A3 ngang `/Rotate 0` đúng nhưng A4 dọc trong
+  cùng file thì sai (dấu hiệu kinh điển của `vp1` bị nhấc khỏi vòng lặp).
+- Lưới: `npm run test:rotate` §7 (a: mọi kind vector trên `/MediaBox` rộng × 4 góc ·
+  b: tài liệu trộn hướng + guard · c: trang redact).
+
+---
+
 ## 4. Hàm nút thắt (đổi chữ ký = ảnh hưởng diện rộng)
 
 | Hàm | Định nghĩa | Ai gọi |
@@ -1437,11 +1561,13 @@ _Ghi 2026-08-13. **Đo được, không suy luận.**_
 | Zoom (`zoomTo`, `applyScaleToDom`, `commitScale`, `wheelZoomFactor`, `renderViewer`) | `cd desktop ; npm run test:geom` · Ctrl+lăn **nhanh liên tục** → trang bám tay, dừng lại ~0.2s là **nét**, không nấc nào bị bỏ · Ctrl+lăn trên A0 nhiều trang → không treo · zoom rồi bôi đen chữ → **vệt chọn đúng chỗ** · Ctrl+F có kết quả rồi zoom → highlight đúng chỗ · zoom **khi đang Chú thích** → hình vẽ/hộp chữ theo đúng tỷ lệ, ô nhập chữ đang mở **không mất** · zoom khi đang “Sửa chữ” → ô span đúng chỗ · Vừa bề ngang / Vừa cả trang / Ctrl+0 · F11 vào/ra (BI-36, BI-22) |
 | Cột trang theo trang đang đọc (`syncThumbFocus`, `nearestScrollDelta`, `.thumb.current`) | `npm run test:geom` · cuộn tài liệu → thumbnail sáng đúng trang & tự trượt vào khung nhìn · **tick chọn vài trang rồi cuộn đi đâu đó → Xoá trang vẫn xoá đúng các trang đã tick** (BI-39, BI-26) · đang kéo sắp xếp trang thì cột **không nhảy** (BI-33) · thu sidebar (F4) rồi cuộn → không lỗi console · F11 → dải trang vẫn sáng đúng trang |
 | Ảnh round-trip (`addManagedAnnot` nhánh image, `managedSrcBytes`, `collectManagedChain`, `freeManagedTrash`, `MANAGED_KINDS`) | `cd desktop ; npm run test:managed` · chèn 1 ảnh → Áp dụng → Lưu → **mở lại** → Chỉnh sửa → ảnh **kéo/đổi cỡ/xoá được**, “Áp nhiều trang” vẫn dùng được · lưu 3–4 lần liên tiếp → **cỡ file không phình** · áp 1 chữ ký cho 20 trang → file ~1 lần cỡ ảnh, không 20 · ảnh trên trang **đã xoay** → **cũng sửa lại được** kể từ v0.2.58, xem hàng dưới (BI-59) · xoá ảnh round-trip rồi **thêm ô redact trên chính trang đó** → Áp dụng: ảnh **không** quay lại thành pixel, và ảnh còn lại **không nhân đôi** (BI-37, BI-38) |
+| Chữ nhật / elip / **khoanh mây** round-trip (`shapeAppearance`, `VECTOR_KINDS`, nhánh vector của `addManagedAnnot` · `serializeManaged` · `deserializeManaged`, `MANAGED_KINDS`) | `cd desktop ; npm run test:managed ; npm run test:rotate ; npm run test:defaults` · vẽ 1 chữ nhật **viền không nền** + 1 elip **có nền mờ** + 1 **khoanh mây hộp** + 1 **khoanh mây vẽ tay** → Áp dụng → Lưu → **mở lại** → Chú thích → cả hai **chọn/kéo/đổi cỡ/đổi màu/đổi nét/xoá được**, elip vẫn **mờ đúng độ mờ đã lưu** · zoom 400% → viền **nét, không rỗ** (vector, không phải PNG) · so **viền có bị gọt** không ở cả 4 cạnh với nét dày 8pt · lặp trên trang **đã xoay 90/180/270** → không méo, không lệch · Lưu 3–4 lần liên tiếp → **cỡ file không phình** · mở file đã bake bằng **Foxit + Acrobat + Chrome** → thấy đúng chỗ, đúng màu (BI-64) |
 | Tay nắm đổi cỡ (`resizeRect`, `RESIZABLE_KINDS`, `.handle.h-*`) | `npm run test:geom` · kéo **cả 4 góc** của ảnh/tô sáng/redact/chữ nhật/elip → góc đối diện **đứng yên** · **giữ Shift** → không méo · Esc giữa lúc kéo → về đúng vị trí+cỡ cũ · Ctrl+Z sau khi đổi cỡ · bấm vào tay nắm rồi **không kéo** → không tạo bước undo rỗng |
 | `editor.js` bake | Chú thích → Xong → sửa lại được · số trang không đổi · comment panel còn đúng (BI-5) |
 | Cổng bake (`exit()`, `bakePending()`, `hasUnsaved`, `ed._importedManaged`) hay `openTextEditor` | `cd desktop ; npm run test:managed` · **đường xoá, làm trên tài liệu chỉ có ĐÚNG MỘT chú thích** (đó là ca vỡ): tạo hộp văn bản → Xong → Lưu → vào Chú thích → `Delete` → Xong → hộp **mất thật**, mở lại file vẫn mất · lặp lại nhưng thay `Delete` bằng **xoá trắng nội dung rồi bấm ra ngoài** → hộp mất, chữ cũ **không** hiện lại · lặp lại nhưng bấm **Ctrl+S** thay vì Xong → cũng mất · xoá hết rồi **đóng app** → **có** hỏi lưu · xoá 1 trong 2 hộp → hộp còn lại **nguyên vẹn**, không nhân đôi (BI-60) |
 | Đặt `/AP` trên trang xoay (`apMatrixFor`, `apRectFor`, `apRotatable`, `normAngle`, ba nhánh `/AP` của `addManagedAnnot`) | `cd desktop ; npm run test:rotate ; npm run test:managed` · `docs/SPEC-annot-rotated.md` §7 lưới tay: với **cả 4 góc** `/Rotate` × {hộp chữ, mũi tên, ảnh, ghi chú} → bake → **Xong** → mở lại Chú thích → **sửa/kéo/xoá được**, không méo, không lệch 90° · re-bake 3 lần → **không** thành hai con dấu, file không phình · mở file đã bake bằng **Foxit + Acrobat + Chrome** → thấy đúng chỗ · và **hồi quy quan trọng nhất**: một tài liệu 0° bake rồi lưu phải ra **byte y hệt** bản trước (BI-59) |
 | Ảnh → PDF (`runImagesToPdf`) và **giá trị trả về của `loadBytes`** | Ảnh→PDF → kết quả **mở ra trong app** (không bắt Lưu trước), có chấm ● · sắp xếp lại trang / xoay / chú thích được · Ctrl+S → hiện hộp thoại **Lưu thành** · đang có tài liệu **bẩn** rồi chạy Ảnh→PDF → chọn **"Ở lại"** thì **vẫn được hỏi nơi lưu** file vừa tạo (không mất công convert) · đóng app khi chưa lưu → **có** cảnh báo |
+| Hướng trang trong bake (`vp1` trong vòng lặp của `bakeInPlace`/`bakeWithRedaction`, `makeMap`, `pageRotate`) | `cd desktop ; npm run test:rotate` §7 · **ca vỡ là tài liệu TRỘN HƯỚNG**: ghép 1 file có trang **A4 dọc** + trang **A3 ngang** (`/MediaBox` rộng, `/Rotate 0`) + trang **dọc đã Xoay 90°** → khoanh mây / chữ nhật trên **từng** trang → Áp dụng → mọi hình **đứng yên đúng chỗ**, **không trang nào tự quay**, khổ giấy không đổi · lặp lại kèm **che thông tin** trên trang ngang (đường raster dựng trang mới) → tờ ngang **vẫn nằm ngang** · in thử: số tờ không tăng (BI-65, BI-45) |
 | Tầng tab/cửa sổ (`main.js`, `tabs.js`) | Toàn bộ `docs/TABS-TEST-L1.md` (24 mục) |
 | Tách tab / kéo tab (`detachTab`, `adoptTab`, `classifyDrop`, `shell.js` dragend) | `docs/TABS-2B-DESIGN.md` §6.2 (18 mục) · BI-15/16/17 · **mục #1 là hồi quy của tính năng sắp xếp tab** |
 | Chuyển trang giữa 2 tài liệu (`renderer/page-move.js`, `classifyPageDrop`, `docViewScreenRect`, `routePages`, `pages:*`) | `cd desktop ; npm run test:pagedrop` · `docs/SPEC-page-drag.md` §7.1 (22 mục) · BI-55/56/57/58 · **mục #1 và #2 là hồi quy của kéo-sắp-xếp trang và kéo file PDF vào cột trang** — hai thứ đã chạy tốt từ v0.2.41 mà tính năng này gắn thêm việc lên đúng cùng một cử chỉ |

@@ -384,16 +384,16 @@
         {
           ul: [
             T(
-              "**Đối tượng sống** — **hộp văn bản, ghi chú, mũi tên, ảnh / chữ ký**. Mở lại file → bấm **Chú thích** → chúng lại là đối tượng riêng: chọn, kéo di chuyển, kéo 4 góc đổi cỡ, `Delete` để xoá, và vẫn dùng được **Áp nhiều trang**.",
-              "**Live objects** — **text boxes, notes, arrows, images / signatures**. Reopen the file, click **Chú thích**, and they are separate objects again: select, drag, resize by the corners, `Delete`, and **Áp nhiều trang** still works on them."
+              "**Đối tượng sống** — **hộp văn bản, ghi chú, mũi tên, ảnh / chữ ký**, và từ **v0.2.61** thêm **khoanh vùng chữ nhật, elip, khoanh mây và khoanh mây tự do**. Mở lại file → bấm **Chú thích** → chúng lại là đối tượng riêng: chọn, kéo di chuyển, đổi màu / nét / nền, `Delete` để xoá. Hộp chữ nhật và elip kéo 4 góc đổi cỡ được; hộp văn bản, ghi chú, mũi tên và ảnh vẫn dùng được **Áp nhiều trang**.",
+              "**Live objects** — **text boxes, notes, arrows, images / signatures**, and from **v0.2.61** also **rectangles, ellipses, revision clouds and freehand clouds**. Reopen the file, click **Chú thích**, and they are separate objects again: select, drag, restyle, `Delete`. Rectangles and ellipses resize by the corners; text boxes, notes, arrows and images still work with **Áp nhiều trang**."
             ),
             T(
-              "**Bị dán chết** — **khoanh mây, khoanh vùng, tô sáng, vẽ tay, ✓ / ✗, ô che, đoạn đo**. Bấm **Xong** là chúng thành hình trên trang, **không chọn lại được**. Muốn sao chép thì **copy trước khi bấm Xong**.",
-              "**Flattened** — **clouds, rectangles / ellipses, highlights, freehand, ✓ / ✗, redactions, dimensions**. Once you press **Xong** they become part of the page and **cannot be selected again**. If you want to copy them, **copy before applying**."
+              "**Bị dán chết** — **tô sáng, vẽ tay, ✓ / ✗, ô che, đoạn đo**. Bấm **Xong** là chúng thành hình trên trang, **không chọn lại được**. Muốn sao chép thì **copy trước khi bấm Xong**.",
+              "**Flattened** — **highlights, freehand, ✓ / ✗, redactions, dimensions**. Once you press **Xong** they become part of the page and **cannot be selected again**. If you want to copy them, **copy before applying**."
             ),
             T(
-              "**Trang đã xoay cũng sửa lại được (từ v0.2.58).** Trước đó, trên trang có `/Rotate` — bản scan nằm ngang, bản vẽ A3, hoặc bất cứ trang nào bạn vừa bấm **Xoay** — cả 4 loại đối tượng sống đều bị dán chết. Nay chúng vẫn là đối tượng sống ở mọi chiều xoay.",
-              "**Rotated pages are editable too (from v0.2.58).** Before that, on a page with `/Rotate` — a landscape scan, an A3 drawing, or any page you had just hit **Xoay** on — all four live kinds got flattened. Now they stay live at every rotation."
+              "**Trang xoay và trang ngang cũng sửa lại được.** Trên trang có `/Rotate` — bản scan nằm ngang, bản vẽ A3, hoặc trang bạn vừa bấm **Xoay** — mọi đối tượng sống đều giữ nguyên là đối tượng sống (từ v0.2.58). File **trộn cả trang dọc lẫn trang ngang** cũng vậy: mỗi trang được tính riêng, nên **áp dụng xong không trang nào tự quay** và hình không lệch sang trang khác.",
+              "**Rotated and landscape pages are editable too.** On a page with `/Rotate` — a landscape scan, an A3 drawing, or any page you had just hit **Xoay** on — live objects stay live (since v0.2.58). The same holds for files that **mix portrait and landscape pages**: every page is measured on its own, so **nothing turns after you apply** and no mark drifts onto the wrong page."
             ),
           ],
         },

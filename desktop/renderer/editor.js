@@ -44,6 +44,16 @@
   //            rendered the same Vietnamese-safe way as text; geometry + label in
   //            /NabuData so a re-opened file is fully re-editable (move / re-angle /
   //            retype the head-or-tail label).
+  //  - box / ellipse / cloud / cloudpen (v0.2.61) → /Stamp whose /AP is a VECTOR form,
+  //            appearance is built by managed-codec's shapeAppearance() from pdf-lib's
+  //            own drawRectangle / drawEllipse operator generators — the same ones
+  //            drawOneAnnot's flatten branch goes through — so the re-editable copy and
+  //            the flattened copy cannot draw different geometry. Stays sharp at any
+  //            zoom and in print, and owns no image (so no /NabuSrc, and nothing for
+  //            managedSrcBytes to vet). Everything the shape needs is in /NabuData.
+  // Still flattened, deliberately: draw (vẽ tay), highlight, redact, measure, ✓/✗. Not an
+  // oversight — each would need its own appearance branch, and shipping them one class at
+  // a time is what keeps test:rotate's guard cases meaningful.
   // Kinds drawn as a plain x/y/w/h box — the ones that get resize grips. Named
   // because it used to be an inline `||` chain inside renderAnnot, which is the kind
   // of thing that quietly drifts out of step with the .handle rules in app.css.
@@ -2356,6 +2366,48 @@
                labelEnd: data.labelEnd === "tail" ? "tail" : "head",
                labelSize: +data.labelSize || 14, _managed: true };
     }
+    if (isVectorKind(data.k)) {
+      // No `fill` key at all ⇒ stroke-only, which is also how a file written before
+      // shapes round-tripped reads. `fill` is left OFF the object rather than set to
+      // "none": renderAnnot and drawOneAnnot both test `a.fill && a.fill !== "none"`,
+      // and an absent key is the shape a freshly-drawn stroke-only box has.
+      const a = { id: ed.seq++, kind: data.k,
+                  // A LITERAL, and never the remembered default colour — test:defaults
+                  // enforces that (by substring, comments included) and it is right to:
+                  // the remembered one is a live preference, so reading it here would
+                  // silently re-colour every shape in an old file the day the user changes
+                  // it. Black matches the text branch's fallback, and the branch is
+                  // unreachable in practice anyway (serializeManaged always writes `color`);
+                  // it exists so a hand-edited /NabuData still draws something visible.
+                  color: data.color || "#000000", width: +data.width || 2,
+                  _managed: true };
+      if (data.k === "cloudpen") {
+        // Junk points are dropped rather than tolerated: a NaN reaches cloudPathPoly's
+        // Math.hypot, poisons the whole perimeter length and the cloud renders nowhere.
+        const pts = (Array.isArray(data.pts) ? data.pts : [])
+          .filter((p) => p && isFinite(+p.x) && isFinite(+p.y))
+          .map((p) => ({ x: +p.x, y: +p.y }));
+        // Fewer than 3 and cloudPathPoly returns null — an invisible, unselectable ghost
+        // in ed.annots that a re-bake would silently drop. Refuse the import instead.
+        if (pts.length < 3) return null;
+        a.pts = pts;
+        // Always true: the only cloudpen a writer can put in a file is a CLOSED scallop
+        // loop (cloudPathPoly emits `Z` unconditionally), and renderAnnot draws the open,
+        // still-being-clicked polygon down a different path entirely.
+        a.closed = true;
+      } else {
+        a.x = +data.x || 0; a.y = +data.y || 0;
+        a.w = +data.w || 1; a.h = +data.h || 1;
+      }
+      // Absent ⇒ leave `bump` off so bumpOf() falls back to the historical default,
+      // which is exactly how a cloud drawn before the size control behaves.
+      if (+data.bump) a.bump = +data.bump;
+      if (data.fill && data.fill !== "none") {
+        a.fill = data.fill;
+        a.fillOpacity = data.fillOpacity != null ? +data.fillOpacity : 1;
+      }
+      return a;
+    }
     if (data.k === "note") {
       return { id: ed.seq++, kind: "note", x: +data.x || 0, y: +data.y || 0,
                w: +data.w || 18, h: +data.h || 18, text: String(data.text || ""),
@@ -2483,6 +2535,41 @@
         AP: { N: apRef },
       });
       annot.set(NABU_KIND, PDFName.of("arrow"));
+      annot.set(NABU_DATA, dataHex);
+      pushPageAnnot(doc, page, ctx.register(annot));
+      return true;
+    }
+    if (isVectorKind(a.kind)) {
+      if (!apRotatable(angle)) return false; // /Rotate 45 & friends keep flattening
+      const shape = shapeAppearance(
+        a,
+        hexRgb(a.color),
+        a.fill && a.fill !== "none" ? hexRgb(a.fill) : null,
+        a.fillOpacity != null ? a.fillOpacity : 1
+      );
+      // A freehand cloud with fewer than 3 distinct points has no path at all. Falling
+      // through to drawOneAnnot is the honest answer: it asks cloudPathPoly the same
+      // question, gets the same null, and draws nothing — so the two writers agree.
+      if (!shape) return false;
+      // ONE anchor line for all four kinds: shapeAppearance already resolved the form's
+      // overlay bottom-left, padding rule and all. Re-deriving it per kind here is four
+      // chances to be off by one stroke width — invisible on screen, wrong in the file.
+      const [bx, by] = map(shape.ox, shape.oy);
+      const ap = {
+        Type: "XObject", Subtype: "Form", FormType: 1,
+        BBox: [0, 0, shape.wPt, shape.hPt],
+      };
+      // Stroke-only shapes get NO /Resources key at all — the common case writes the
+      // smaller, simpler dict, and a form with nothing to resolve should not claim one.
+      if (shape.resources) ap.Resources = shape.resources;
+      if (normAngle(angle)) ap.Matrix = apMatrixFor(angle);
+      const apStream = PDFRawStream.of(ctx.obj(ap), strToBytes(shape.ops));
+      const annot = ctx.obj({
+        Type: "Annot", Subtype: "Stamp", F: 4,
+        Rect: apRectFor(angle, shape.wPt, shape.hPt, bx, by),
+        AP: { N: ctx.register(apStream) },
+      });
+      annot.set(NABU_KIND, PDFName.of(a.kind));
       annot.set(NABU_DATA, dataHex);
       pushPageAnnot(doc, page, ctx.register(annot));
       return true;

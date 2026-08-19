@@ -4,7 +4,69 @@
 > [DESIGN.md](DESIGN.md) (kiến trúc), [ROADMAP.md](ROADMAP.md) (tiến độ chi tiết),
 > [SETUP.md](SETUP.md) (dựng môi trường).
 
-_Cập nhật: 2026-08-13 · v0.2.60 đã phát hành (dưới đây) · v0.2.59 là bản trước đó_
+_Cập nhật: 2026-08-20 · v0.2.61 đã phát hành (dưới đây) · v0.2.60 là bản trước đó_
+
+> **v0.2.61 — chữ nhật · elip · khoanh mây sửa lại được sau khi Lưu, bằng `/AP` VECTOR.**
+> Bốn kind (`box`, `ellipse`, `cloud`, `cloudpen`) vào `MANAGED_KINDS`, cộng một lưới
+> mới cho hướng trang mà lâu nay chưa ai phủ.
+>
+> **1. Vector `/AP`, không phải PNG.** Chữ và mũi tên rasterise vì mực của chúng là
+> glyph tiếng Việt — nhúng font để vẽ được "Nghiệm thu" là bài toán ta cố ý không có.
+> Hình học thì khác: pdf-lib **export sẵn** đúng những hàm sinh operator mà
+> `page.drawRectangle` / `drawEllipse` / `drawSvgPath` gọi bên trong, nên appearance
+> dùng **chính đường vẽ** của nhánh flatten trong `drawOneAnnot`, chỉ đổi chỗ chứa
+> (Form XObject thay vì content stream). Được ba thứ: nét **không mờ** ở mọi mức zoom
+> và khi in, tốn vài chục byte thay vì bitmap supersample, và vì hình học đến từ **cùng
+> một hàm** nên bản sửa-lại-được **không thể** trôi khỏi bản flatten.
+> - `shapeAppearance()` (managed-codec.js) là hàm thuần, trả cả `ox`/`oy` — toạ độ lớp
+>   phủ của góc dưới-trái form — nên `addManagedAnnot` map **đúng một điểm** cho cả bốn
+>   kind. Cố ý: `pad` của hộp (nửa nét bo mí) khác `pad` của mây (trọn một bướu **cộng**
+>   nét), và để chỗ gọi tự suy ra là bốn cơ hội lệch một bề rộng nét.
+> - Mây chồng **hai** lớp đệm: `annot-geom` đã dịch path đi một `bump` (đệm hình học,
+>   dùng chung với `<svg>` của lớp phủ), `/BBox` còn phải cộng đệm **nét** nữa. Nhầm là
+>   viền bị gọt.
+> - `drawSvgPath` **lật trục y**, nên neo của nó là góc **TRÊN**-trái hộp path —
+>   `(lw, hPt - lw)` trong form, không phải `(lw, lw)`.
+> - Bên trong form **luôn** vẽ ở `degrees(0)`; `/Matrix = R(angle)` mới là thứ quay.
+>   Truyền góc trang vào đây là **quay hai lần** (đúng lỗi BI-45 cũ).
+> - Độ mờ nền đi bằng ExtGState ghi **trực tiếp** trong `/Resources`, không đăng ký
+>   thành object gián tiếp — object gián tiếp là thứ thứ tư mà `collectManagedChain`
+>   không giải phóng, rò rỉ mỗi lần bake (lớp lỗi BI-38).
+> - Đa giác suy biến (<3 điểm) bị từ chối ở **cả hai** đầu ghi và đọc.
+> - `deserializeManaged` rơi về **literal** `#000000`, không bao giờ về màu mặc định
+>   đang nhớ — nếu không, ngày người dùng đổi màu thì mọi hình trong file cũ đổi theo.
+> - Lưới: `test:managed` 139→162, `test:rotate` 185→545. BI-64.
+>
+> **2. Lưới HƯỚNG TRANG (§7 của `test:rotate`) — phần lâu nay bị hở.** "Trang ngang" là
+> **hai** thứ khác nhau: `/MediaBox` **rộng** (bản vẽ CAD, `/Rotate 0`) và `/MediaBox`
+> **cao + `/Rotate 90`** (ảnh scan dựng đứng bị xoay). Lưới cũ chỉ phủ nghĩa thứ hai.
+> Bộ hồ sơ thật có cả hai, thường **trong cùng một file**.
+> - §7(a) chạy mọi kind vector trên `/MediaBox` rộng × 4 góc xoay.
+> - §7(b) dựng **một** tài liệu 4 trang {dọc 0°, ngang 0°, dọc 90°, ngang 270°}, bake
+>   trong một lượt đúng như `bakeInPlace`, so **từng trang** với đáp án một-trang của
+>   chính nó — cộng kiểm `/Rotate` và khổ giấy **không đổi** sau khi bake ("áp dụng xong
+>   trang tự quay" có hai đường gây ra, đây là đường thứ hai).
+> - Ca guard nhấc `vp1` ra ngoài vòng lặp (dùng map của trang 0 cho mọi trang) và
+>   **đòi** kết quả phải sai ở trang 1–3 — lớp lỗi này **tàng hình** trong tài liệu một
+>   hướng.
+> - §7(c) chốt đường redact: `bakeWithRedaction` **không** copy trang bị che mà dựng
+>   trang **mới** `[vp1.width, vp1.height]` **không `/Rotate`** — nó cố ý *phẳng hoá*
+>   xoay, vì PNG đã ở hướng hiển thị. Cộng góc trang lên nữa là tờ ngang ra quay 90°.
+> - BI-65.
+>
+> **3. Gemini mặc định → `gemini-3.5-flash-lite`.** Đổi ở `config.py` (default thật),
+> `gemini_agent.py`, đầu `GEMINI_MODEL_CHOICES` (giữ 3.1 làm đường lùi), placeholder +
+> ghi chú ở Cài đặt, README, SPEC. Người dùng **đã tự chọn** model thì giữ nguyên lựa
+> chọn của họ — đó là thiết kế sẵn có.
+>
+> **Kiểm chứng bằng mutation test, không phải lập luận:** `pad = 0` → đỏ 8+4 ca; bỏ
+> `/Matrix` → 12; neo thiếu `pad` → 24; neo `drawSvgPath` ở `(lw, lw)` → 49; quên
+> `- g.pad` → 49; `rotate: degrees(90)` trong form → 98. Riêng `/BBox` không cộng nét
+> thì **chỉ** `test:managed` thấy (mực không dời, chỉ bị cắt) — hai lưới bù nhau.
+> pdf.js (viewer của chính app) sinh `constructPath/stroke/setGState/fillStroke` cho cả
+> 4 trang trộn hướng ⇒ vẽ được `/AP` vector và giải được ExtGState độ mờ.
+
+_Cập nhật trước: 2026-08-13 · v0.2.60_
 
 > **v0.2.60 — màu chú thích mặc định đổi được + gộp nhiều PDF từ Explorer/kéo–thả.**
 > Hai tính năng theo yêu cầu, cộng một lỗi có thật lộ ra khi làm tính năng thứ hai.

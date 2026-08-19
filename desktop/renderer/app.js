@@ -3850,7 +3850,7 @@ async function openSettings() {
     const mi = $("set-gemini-model");
     if (mi) {
       mi.value = data.gemini_model || "";
-      mi.placeholder = data.gemini_model_default || "gemini-3.1-flash-lite";
+      mi.placeholder = data.gemini_model_default || "gemini-3.5-flash-lite";
       const dl = $("gemini-model-list");
       if (dl && Array.isArray(data.gemini_model_choices)) {
         dl.innerHTML = "";

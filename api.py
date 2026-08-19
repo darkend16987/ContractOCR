@@ -90,6 +90,7 @@ from src.pdf.layout import (
 # Curated Gemini models offered in the app's Settings dropdown. The user can
 # still type any other id (free-text override) — this is only a convenience list.
 GEMINI_MODEL_CHOICES = [
+    "gemini-3.5-flash-lite",
     "gemini-3.1-flash-lite",
     "gemini-3-flash-preview",
     "gemini-2.5-flash",
