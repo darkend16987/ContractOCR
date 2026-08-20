@@ -10,6 +10,7 @@ import base64
 import hashlib
 import io
 import logging
+import math
 import os
 import shutil
 import subprocess
@@ -1582,6 +1583,67 @@ def _norm_color(c) -> tuple[float, float, float]:
     return (0.0, 0.0, 0.0)
 
 
+# ---- the writing frame of a span (BI-66) ----------------------------------
+#
+# Page rotation is NOT the question. `page.insert_text` — like every PyMuPDF
+# content method — draws in UNROTATED page space and ignores `/Rotate` entirely
+# (measured, PyMuPDF 1.27.2: the same call on a page at 0/90/180/270 produces the
+# same bbox). `get_text` reports in that same space. So the ONLY thing that keeps a
+# redraw pointing the way the original text pointed is the span's own writing
+# direction, which `get_text("dict")` hands over as `line["dir"]`.
+#
+# Deriving it from `page.rotation` instead would be wrong on real drawing sets: a
+# /Rotate 90 CAD sheet carries BOTH upright text (dir (0,-1)) and vertical labels
+# (dir (-1,0)), and one page angle cannot describe both.
+#
+# `theta` is the angle to hand `fitz.Matrix()`; morph-by-Matrix(theta) is
+# pixel-identical to `insert_text(rotate=theta)` at the four right angles and also
+# covers the in-between angles a CAD leader label is drawn at (measured).
+_DIR_SNAP_DEG = 2.0  # below this, treat the direction as exactly axis-aligned
+
+
+def _text_frame(direction) -> tuple[float, tuple[float, float], tuple[float, float], int | None]:
+    """The writing frame of a text span, from the unit direction /text-spans reported.
+
+    Returns `(theta, u, n, quadrant)`:
+      * `theta` — degrees for `fitz.Matrix(theta)`; 0 is plain left-to-right, i.e.
+        exactly what this code did before it knew about direction at all.
+      * `u` — unit vector ALONG the baseline, in unrotated page space.
+      * `n` — unit vector from the baseline DOWN to the descender.
+      * `quadrant` — 0/1/2/3 when the direction is a right angle (within
+        `_DIR_SNAP_DEG`), else None. The caller needs it because a span's bbox is
+        AXIS-ALIGNED: only at a right angle can it be split into an along-text and
+        an across-text extent, and every geometry correction here divides by one of
+        those two.
+
+    `direction` may be None/garbage (an older renderer, a caller that never sends
+    it) → the horizontal frame, which is the pre-BI-66 behaviour byte for byte.
+    """
+    dx, dy = 1.0, 0.0
+    if isinstance(direction, (list, tuple)) and len(direction) >= 2:
+        try:
+            dx, dy = float(direction[0]), float(direction[1])
+        except (TypeError, ValueError):
+            dx, dy = 1.0, 0.0
+    if not (math.isfinite(dx) and math.isfinite(dy)) or (dx == 0.0 and dy == 0.0):
+        dx, dy = 1.0, 0.0
+
+    # PDF page space is y-DOWN, so a screen-counterclockwise angle is atan2(-dy, dx).
+    theta = math.degrees(math.atan2(-dy, dx)) % 360.0
+    q = int(round(theta / 90.0)) % 4
+    if min(abs(theta - q * 90.0), abs(theta - q * 90.0 - 360.0)) <= _DIR_SNAP_DEG:
+        # Snap: the exact multiple keeps u/n free of float dust (cos 90° is 6e-17,
+        # not 0) and keeps quadrant 0 producing the identical content stream.
+        theta = float(q * 90)
+        u, n = ((1.0, 0.0), (0.0, 1.0)) if q == 0 else \
+               ((0.0, -1.0), (1.0, 0.0)) if q == 1 else \
+               ((-1.0, 0.0), (0.0, -1.0)) if q == 2 else \
+               ((0.0, 1.0), (-1.0, 0.0))
+        return theta, u, n, q
+    t = math.radians(theta)
+    return theta, (math.cos(t), -math.sin(t)), (math.sin(t), math.cos(t)), None
+
+
 class TextSpansRequest(BaseModel):
     """Request body for reading a page's editable text spans."""
     pdf_b64: str
@@ -1594,6 +1656,7 @@ class TextSpan(BaseModel):
     bbox: list[float]  # [x0, y0, x1, y1] in PDF points, UNROTATED page space (redraw uses this)
     bbox_view: list[float]  # [x0, y0, x1, y1] in DISPLAYED (rotation-applied) space (overlay uses this)
     origin: list[float]  # [x, y] text baseline origin (for faithful re-drawing)
+    dir: list[float] = [1.0, 0.0]  # unit writing direction, UNROTATED space (BI-66)
     size: float
     font: str
     color: int  # packed sRGB
@@ -1656,6 +1719,7 @@ async def text_spans(req: TextSpansRequest):
         rot_mat = page.rotation_matrix
         for block in data.get("blocks", []):
             for line in block.get("lines", []):
+                ldir = line.get("dir", (1.0, 0.0))
                 for sp in line.get("spans", []):
                     txt = sp.get("text", "")
                     if not txt.strip():
@@ -1685,6 +1749,10 @@ async def text_spans(req: TextSpansRequest):
                             bbox=[x0, y0, x1, y1],
                             bbox_view=[vr.x0, vr.y0, vr.x1, vr.y1],
                             origin=[ox, oy],
+                            # The LINE's direction, not the page's: a /Rotate 90 sheet
+                            # carries upright text and vertical labels side by side, and
+                            # /edit-text has to redraw each the way it was (BI-66).
+                            dir=[float(ldir[0]), float(ldir[1])],
                             size=float(sp.get("size", 11.0)),
                             font=font_name,
                             color=int(sp.get("color", 0)),
@@ -1746,6 +1814,7 @@ class TextFindHit(BaseModel):
     bbox: list[float]  # UNROTATED span box; this is what /edit-text redraws into
     bbox_view: list[float]  # rotation-applied box; what the highlight is drawn from
     origin: list[float]
+    dir: list[float] = [1.0, 0.0]  # unit writing direction, UNROTATED space (BI-66)
     size: float
     font: str
     color: int
@@ -1832,6 +1901,7 @@ def _find_occurrences(
 # ONE span is flattened to a plain tuple (a big drawing set has hundreds of
 # thousands of them, and the cache holds them all):
 #   0 text · 1 host · 2 bbox · 3 bbox_view · 4 origin · 5 size · 6 font · 7 color · 8 flags
+#   · 9 dir (the LINE's unit writing direction in unrotated space — BI-66)
 #
 # `host` is False for the whitespace-only spans PyMuPDF synthesises when a line is
 # drawn in pieces (a Td/TJ cursor jump between two words becomes a real span holding
@@ -1871,6 +1941,11 @@ def _find_build_index(doc) -> tuple[list, int]:
         span_idx = 0
         for block in data.get("blocks", []):
             for line in block.get("lines", []):
+                # ONE tuple per line, shared by reference across its spans — every
+                # span on a line has the same direction, and the index holds hundreds
+                # of thousands of them (see _FIND_CACHE_MAX_PARTS).
+                ldir = line.get("dir", (1.0, 0.0))
+                ldir = (float(ldir[0]), float(ldir[1]))
                 parts: list = []
                 for sp in line.get("spans", []):
                     txt = sp.get("text", "")
@@ -1901,6 +1976,7 @@ def _find_build_index(doc) -> tuple[list, int]:
                             font_name,
                             int(sp.get("color", 0)),
                             int(sp.get("flags", 0)),
+                            ldir,
                         )
                     )
                 if not any(p[1] for p in parts):
@@ -1991,6 +2067,7 @@ def _find_scan_index(
                             bbox=list(p[2]),
                             bbox_view=list(p[3]),
                             origin=list(p[4]),
+                            dir=list(p[9]),
                             size=p[5],
                             font=p[6],
                             color=p[7],
@@ -2030,6 +2107,7 @@ def _find_scan_index(
                         bbox=[union.x0, union.y0, union.x1, union.y1],
                         bbox_view=[union_v.x0, union_v.y0, union_v.x1, union_v.y1],
                         origin=[union.x0, union.y1],
+                        dir=list(first[9]),
                         size=first[5],
                         font=first[6],
                         color=first[7],
@@ -2223,6 +2301,10 @@ class TextEdit(BaseModel):
     # both optional, so an older renderer keeps working with no scaling applied.
     orig_text: str | None = None
     orig_size: float | None = None
+    # The span's writing direction in UNROTATED page space, as /text-spans and
+    # /text-find report it. None = draw left-to-right, which is what this endpoint
+    # did before BI-66 — so an older renderer keeps its exact old behaviour.
+    dir: list[float] | None = None
 
 
 class EditTextRequest(BaseModel):
@@ -2380,7 +2462,22 @@ async def edit_text(req: EditTextRequest, raw: bool = False):
                     continue  # empty edit = delete the span (redaction already did it)
                 x0, y0, x1, y1 = e.bbox
                 color = _norm_color(e.color)
-                size = float(e.size) if e.size else max(6.0, (y1 - y0) * 0.8)
+
+                # ---- which way does this run? (BI-66) ---------------------------
+                # insert_text draws in UNROTATED page space and ignores /Rotate, so
+                # a redraw that assumes left-to-right comes out turned 90° on every
+                # rotated CAD/Revit sheet. The span's own direction is the answer;
+                # `theta` == 0 reproduces the pre-BI-66 output exactly.
+                theta, u_dir, n_dir, quad = _text_frame(e.dir)
+                # A span's bbox is axis-aligned, so it only splits into an ALONG-text
+                # and an ACROSS-text extent at a right angle. Off-axis (a CAD leader
+                # label drawn at 15°) both extents mix the two and every ratio built
+                # from them is meaningless — so there we correct nothing rather than
+                # distort the text on a reading we know is wrong.
+                bw, bh = (x1 - x0), (y1 - y0)
+                adv = None if quad is None else (bw if quad % 2 == 0 else bh)
+                thick = None if quad is None else (bh if quad % 2 == 0 else bw)
+                size = float(e.size) if e.size else max(6.0, (thick if thick else min(bw, bh)) * 0.8)
                 # Redraw on the original baseline so the new text sits exactly where the
                 # old text was. insert_text (point/baseline) is more faithful than
                 # insert_textbox for a single span — no box-fit failure if the new text
@@ -2502,11 +2599,11 @@ async def edit_text(req: EditTextRequest, raw: bool = False):
                 #    the original's line box in em. Applied as a RATIO, so an explicit
                 #    size the user typed is corrected the same way and stays consistent
                 #    with the text around it.
-                if fobj and e.orig_size and e.orig_size > 0:
+                if fobj and e.orig_size and e.orig_size > 0 and thick is not None:
                     try:
                         line_em = fobj.ascender - fobj.descender
                         if line_em > 0.1:
-                            v = ((y1 - y0) / float(e.orig_size)) / line_em
+                            v = (thick / float(e.orig_size)) / line_em
                             if 0.6 <= v <= 1.6 and abs(v - 1.0) > 0.02:
                                 size *= v
                     except Exception as ve:
@@ -2531,14 +2628,16 @@ async def edit_text(req: EditTextRequest, raw: bool = False):
                 #    measurably wide (median 1.03, worst 1.08 across this page).
                 hscale = 1.0
                 probe = e.orig_text or ""
-                if fobj and probe.strip() and (x1 - x0) > 1:
+                if fobj and probe.strip() and adv is not None and adv > 1:
                     try:
                         natural = fobj.text_length(probe, fontsize=size)
                         if natural > 1:
-                            r = (x1 - x0) / natural
+                            r = adv / natural
                             # Outside this range the measurement is not credible (a
-                            # one-glyph span, a rotated matrix, a broken bbox) — leave
-                            # the text alone rather than distort it on a bad reading.
+                            # one-glyph span, a broken bbox) — leave the text alone
+                            # rather than distort it on a bad reading. Text drawn at an
+                            # angle no longer lands here at all: `adv` is None for it,
+                            # so the whole correction is skipped (BI-66).
                             if 0.5 <= r <= 2.0 and abs(r - 1.0) > 0.02:
                                 hscale = r
                     except Exception as he:
@@ -2548,13 +2647,26 @@ async def edit_text(req: EditTextRequest, raw: bool = False):
                 # horizontal shear. Only used when no real variant was found.
                 render_mode = 2 if faux_bold else 0
                 border_width = max(0.3, size * 0.03) if faux_bold else 0
-                # One matrix carries both the shear and the squeeze; morphing about the
-                # baseline origin keeps the text starting exactly where the old text did.
+                # ONE matrix carries all three: the shear, the squeeze and the
+                # span's own writing direction — morphing about the baseline origin
+                # keeps the text starting exactly where the old text did.
+                #
+                # ORDER MATTERS: shear/squeeze belong to the TEXT's frame, rotation
+                # takes that frame to the page, so it is `S * Matrix(theta)` (fitz
+                # composes left-to-right). Reversed, the squeeze lands on the glyph
+                # HEIGHT instead of the advance on a rotated span — measured.
+                #
+                # Why not `insert_text(rotate=...)`: measured pixel-identical to this
+                # at 0/90/180/270 (single- and multi-line), and unlike `rotate` — which
+                # takes multiples of 90 only — a matrix also carries the in-between
+                # angles a CAD leader label is drawn at.
+                pivot = fitz.Point(ox, oy)
+                rot_mat = fitz.Matrix(theta)
                 morph = None
-                if faux_italic or hscale != 1.0:
+                if faux_italic or hscale != 1.0 or theta:
                     morph = (
-                        fitz.Point(ox, oy),
-                        fitz.Matrix(hscale, 0, 0.25 if faux_italic else 0, 1, 0, 0),
+                        pivot,
+                        fitz.Matrix(hscale, 0, 0.25 if faux_italic else 0, 1, 0, 0) * rot_mat,
                     )
 
                 try:
@@ -2565,8 +2677,13 @@ async def edit_text(req: EditTextRequest, raw: bool = False):
                     )
                 except Exception as ie:
                     logger.debug("insert_text error: %s", ie)
-                    try:  # retry plain — some morph/render combos fail on odd fonts
-                        page.insert_text((ox, oy), txt, fontname=fontname, fontsize=size, color=color)
+                    # Retry plain — some morph/render combos fail on odd fonts. Drop
+                    # the shear/squeeze but KEEP the direction: a fallback that turns
+                    # the line 90° is not a fallback.
+                    try:
+                        page.insert_text((ox, oy), txt, fontname=fontname, fontsize=size,
+                                         color=color,
+                                         morph=(pivot, rot_mat) if theta else None)
                     except Exception as ie2:
                         logger.debug("insert_text retry error: %s", ie2)
                         continue
@@ -2581,11 +2698,20 @@ async def edit_text(req: EditTextRequest, raw: bool = False):
                         else:
                             tw = fitz.Font(fontname=fontname).text_length(txt, fontsize=size)
                     except Exception:
-                        tw = x1 - x0
+                        # No font object to measure with: fall back to the box the old
+                        # text filled ALONG the line, not its width (BI-66).
+                        tw = adv if adv is not None else (x1 - x0)
                     tw *= hscale  # the drawn glyphs were squeezed; the rule must match
-                    uy = oy + size * 0.12
+                    # Under the BASELINE and along the TEXT — `n_dir` is "down" and
+                    # `u_dir` is "forward" in the span's own frame, so on a rotated
+                    # sheet the rule turns with the glyphs instead of cutting across
+                    # them. At theta 0 these are (0,1)/(1,0) → the old arithmetic.
+                    drop = size * 0.12
+                    ux0 = ox + n_dir[0] * drop
+                    uy0 = oy + n_dir[1] * drop
                     try:
-                        page.draw_line(fitz.Point(ox, uy), fitz.Point(ox + tw, uy),
+                        page.draw_line(fitz.Point(ux0, uy0),
+                                       fitz.Point(ux0 + u_dir[0] * tw, uy0 + u_dir[1] * tw),
                                        color=color, width=max(0.4, size * 0.06))
                     except Exception as ue:
                         logger.debug("draw_line (underline) error: %s", ue)

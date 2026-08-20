@@ -480,6 +480,12 @@
       if (sp) {
         ed.orig_text = sp.text;
         ed.orig_size = sp.size;
+        // Which way this run is written, in the same UNROTATED space as `bbox`. The
+        // sidecar draws in that space and ignores /Rotate, so without this every
+        // redraw on a rotated CAD sheet comes out turned 90° — and page rotation
+        // alone cannot say it, because one sheet carries upright text AND vertical
+        // labels (BI-66). Absent (older sidecar) → null → left-to-right, as before.
+        ed.dir = sp.dir || null;
       }
       return ed;
     });

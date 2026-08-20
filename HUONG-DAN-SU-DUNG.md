@@ -166,6 +166,11 @@ sau dùng OCR sẽ tải lại.
 
 Giới hạn đã biết: sửa trong phạm vi từng đoạn (không tự dàn lại dòng); chữ dài hơn ô cũ sẽ tự co nhỏ.
 
+> **Bản vẽ nằm ngang (CAD / hồ sơ thầu):** từ v0.2.62, chữ sửa lại — và chữ thay thế của
+> **Tìm & Thay thế** — giữ **đúng chiều của dòng nó thay**: dòng đọc xuôi vẫn đọc xuôi, **nhãn kích
+> thước dựng dọc vẫn dựng dọc**, nhãn dẫn viết chéo vẫn đúng góc. Trước đó mọi thứ bị vẽ lại nằm
+> ngang nên trên tờ đã xoay trông như **tự quay 90°**.
+
 **Tìm & Thay thế (`Ctrl+H`)** — đổi một từ khoá xuất hiện nhiều chỗ trong cả tài liệu, giống `Ctrl+H`
 của Word. Mở bằng `Ctrl+H` hoặc nút **⇄** ở cuối ô *Tìm trong tài liệu* trên thanh công cụ.
 

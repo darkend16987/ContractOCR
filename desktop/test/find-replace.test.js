@@ -42,6 +42,7 @@ function hit(over) {
       bbox: [50, 100, 250, 112],
       bbox_view: [50, 100, 250, 112],
       origin: [50, 110],
+      dir: [1, 0],
       size: 11,
       font: "Times-Roman",
       color: 0,
@@ -145,6 +146,25 @@ check("edit carries the baseline origin", e1.origin, [50, 110]);
 // run at, and replacements come out too long and too tall.
 check("edit carries orig_text", e1.orig_text, "hop dong so 12");
 check("edit carries orig_size", e1.orig_size, 11);
+// BI-66: the sidecar redraws in UNROTATED page space and ignores /Rotate, so the
+// run's own direction is the only thing that keeps a replacement on a landscape
+// drawing sheet pointing the way the original did. Dropping it here turns every
+// replaced run 90 degrees and nothing in this file would have noticed.
+check("edit carries the writing direction", e1.dir, [1, 0]);
+check(
+  "a vertical run on a rotated sheet keeps ITS direction, not the sheet's",
+  FR.editForSpan(hit({ dir: [-1, 0] }), [{ start: 0, end: 3 }], "x").dir,
+  [-1, 0]
+);
+check(
+  "an older sidecar sends no direction -> null, not undefined",
+  (() => {
+    const h = hit();
+    delete h.dir;
+    return FR.editForSpan(h, [{ start: 0, end: 3 }], "x").dir;
+  })(),
+  null
+);
 check("edit keeps the span's own font (BI-21)", e1.font, "Times-Roman");
 check("edit adds no background fill", e1.bg, null);
 check(

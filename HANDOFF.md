@@ -4,7 +4,69 @@
 > [DESIGN.md](DESIGN.md) (kiến trúc), [ROADMAP.md](ROADMAP.md) (tiến độ chi tiết),
 > [SETUP.md](SETUP.md) (dựng môi trường).
 
-_Cập nhật: 2026-08-20 · v0.2.61 đã phát hành (dưới đây) · v0.2.60 là bản trước đó_
+_Cập nhật: 2026-08-20 · v0.2.62 đã phát hành (dưới đây) · v0.2.61 là bản trước đó_
+
+> **v0.2.62 — “Sửa nội dung” và chữ thay thế của Tìm & Thay thế không còn tự xoay trên bản vẽ nằm ngang.**
+> Một lớp lỗi **mới**, cùng họ với BI-45/BI-65 nhưng ở **tầng khác**: hai bản vá trước ở đường bake
+> **chú thích** (pdf-lib, renderer); lần này là chữ **thật** của trang (PyMuPDF, sidecar), và hai
+> đường **không** dùng chung một dòng số học nào — nên vá một bên chưa hề vá bên kia.
+>
+> **1. Nguyên nhân — đã ĐO, không suy luận.** `page.insert_text` (và **mọi** hàm ghi nội dung của
+> PyMuPDF) vẽ ở không gian trang **CHƯA XOAY** và **bỏ qua hoàn toàn** `/Rotate`: cùng một lệnh gọi
+> trên trang 0°/90°/180°/270° cho ra **cùng một** bbox, **cùng một** `dir (1,0)`. `get_text` cũng báo
+> ở đúng không gian đó. Nên `/edit-text` **không có cách nào biết** chữ nó đang thay chạy theo chiều
+> nào — nó vẽ **mọi** đoạn từ trái sang phải. Trên bản vẽ `/Rotate 90`, chữ gốc chạy **DỌC** trong
+> không gian chưa xoay để đọc **xuôi** sau khi viewer xoay lại ⇒ chữ vẽ lại ra **quay 90°**.
+>
+> **2. `page.rotation` là câu trả lời SAI, và đây là con số.** File report
+> (`260521_CLD_NAVY_SGSU`, 30 trang, **trang nào cũng** `/Rotate 90`) có **5799** đoạn đọc xuôi
+> `dir (0,-1)` **và 902** nhãn kích thước dựng dọc `dir (-1,0)`, cộng 40 nhãn dẫn **chéo** 15°–49°.
+> Một góc trang không mô tả được cả hai nhóm đầu; vá theo góc trang thì 902 đoạn kia chỉ đổi từ lệch
+> 180° sang lệch 90°. Nguồn sự thật là `line["dir"]` của **chính đoạn chữ**, nên nó đi suốt
+> `/text-spans` · `/text-find` → renderer → `/edit-text` (trường `dir` mới, mặc định `None`).
+>
+> **3. Ba phép tính, không phải một** — sửa mỗi chiều vẽ là biến một lỗi **lộ** thành hai lỗi **im**:
+> - **Chiều vẽ** đi bằng **ma trận `morph`**, không phải `insert_text(rotate=)`: `rotate` chỉ nhận bội
+>   số 90 nên không làm được nhãn dẫn chéo. Đã đo `morph` **pixel-identical** với `rotate=` ở cả 4 góc
+>   vuông, cả 1 dòng và nhiều dòng. Thứ tự **bắt buộc** là `Matrix(hscale,0,shear,1,0,0) * Matrix(θ)` —
+>   nén ngang thuộc hệ **của chữ**, phép xoay mới đưa hệ đó ra trang; đảo lại thì trên đoạn đã xoay cái
+>   nén rơi vào **chiều cao glyph** thay vì bước tiến (đo: `h=0.5` làm bề ngang 27.5→13.7 mà độ dài
+>   111.1 **không đổi**).
+> - **`hscale`/`vscale` (BI-25)** chia cho bề ngang / bề cao của bbox, mà bbox là **axis-aligned** ⇒
+>   trên đoạn xoay 90° hai số **đổi chỗ**. Đoạn dài thì tỷ số rơi ra ngoài dải tin cậy nên bị loại
+>   (may); đoạn **ngắn** thì rơi **vào trong** ⇒ chữ bị nén còn ~50% mà **không báo gì**. Nay chọn
+>   `adv`/`thick` theo `quadrant`.
+> - **Gạch chân** chạy theo `u_dir`/`n_dir` (dọc theo chữ / xuống dưới đường chân), và **nhánh retry**
+>   của `insert_text` **giữ nguyên góc** — một fallback làm quay chữ 90° thì không phải fallback.
+> - Góc **không** phải bội số 90 thì bbox axis-aligned **không tách được** thành “dọc theo chữ” /
+>   “ngang qua chữ” ⇒ `quadrant = None` và **cả hai** phép chỉnh hình học bị **tắt**: thà không chỉnh
+>   còn hơn chỉnh theo số đo đã biết là sai. Dưới `2°` thì **bắt** vào góc vuông (file thật có đoạn
+>   lệch 0.11°).
+>
+> **4. Dải chết là hợp đồng.** Không có `dir` ⇒ `θ = 0` ⇒ `Matrix(0)` là ma trận đơn vị ⇒ `morph` về
+> đúng biểu thức cũ ⇒ tài liệu Word/Excel bình thường ra **y hệt từng pixel** (ca `D3` đo đúng điều
+> đó). Không có endpoint mới: Tìm & Thay thế vẫn ghi qua `/edit-text`, chỉ thêm **một** trường vào
+> payload nó đã dựng — nên hai tính năng không thể lệch nhau.
+>
+> **5. Lưới.** `test_edit_text_rotate.py` **mới, 107 ca** (dải chết · **4×4** tổ hợp {góc trang}×{chiều
+> chữ} · gốc đường chân · `/Rotate` không tự đổi sau khi sửa · trục hình học · gạch chân · góc chéo
+> 30° · **đường Tìm & Thay thế đi hết vòng**). **Mỗi nhóm có ca canh gác** gửi `dir=None` để dựng lại
+> đúng lỗi cũ và **đòi** kết quả phải SAI — bỏ ma trận `morph` ra thì lưới **đỏ 26 ca**, nên một lưới
+> xanh mới có nghĩa. `test_text_find.py` 52→55, `test:find` 138→141. Python **13/13**.
+> BI-66 + [docs/SPEC-text-edit-rotated.md](docs/SPEC-text-edit-rotated.md).
+>
+> **6. Phát hiện lúc đóng gói: v0.2.61 đã ship một sidecar CŨ HƠN chính commit release của nó.**
+> Marker `dist/sidecar/SIDECAR_BUILD.json` trỏ `1f4cb69` (build 2026-08-13), còn commit release
+> `7a65c08` **có** sửa 3 file Python — đúng cái đổi Gemini mặc định sang `gemini-3.5-flash-lite`
+> (`api.py` +1 dòng vào `GEMINI_MODEL_CHOICES`, `config.py`, `gemini_agent.py`). Nghĩa là bản v0.2.61
+> **đang phát hành** vẫn dùng model mặc định cũ và **không** có `gemini-3.5-flash-lite` trong danh
+> sách chọn do sidecar trả về. Không crash, nhưng là đúng lớp lỗi mà `check-sidecar-fresh.js` sinh ra
+> để chặn — dấu hiệu là **sửa `.py` SAU khi đã build installer** rồi gộp vào cùng commit release.
+> v0.2.62 rebuild sidecar nên nhận cả bản vá này. **Luật giữ nguyên: đừng bao giờ
+> `SKIP_SIDECAR_CHECK=1`** — và thêm một luật nữa: **build installer là bước CUỐI**, sửa `.py` sau đó
+> thì phải build lại.
+
+---
 
 > **v0.2.61 — chữ nhật · elip · khoanh mây sửa lại được sau khi Lưu, bằng `/AP` VECTOR.**
 > Bốn kind (`box`, `ellipse`, `cloud`, `cloudpen`) vào `MANAGED_KINDS`, cộng một lưới

@@ -446,6 +446,10 @@
               "❌ **PDF scan** (ảnh chụp / scan giấy): không có ký tự nào để sửa. App sẽ báo và bạn nên dùng **OCR văn bản** hoặc **Bóc tách** thay thế.",
               "❌ **Scanned PDFs** (photographed / scanned paper): there are no characters to edit. The app says so; use **OCR văn bản** or **Bóc tách** instead."
             ),
+            T(
+              "✅ **Bản vẽ nằm ngang** (CAD / hồ sơ thầu): chữ sửa lại giữ **đúng chiều của dòng nó thay** — dòng đọc xuôi vẫn đọc xuôi, **nhãn kích thước dựng dọc vẫn dựng dọc**, nhãn dẫn viết chéo vẫn đúng góc.",
+              "✅ **Landscape drawing sheets** (CAD / tender sets): a redrawn run keeps **the direction of the run it replaces** — upright text stays upright, **a vertical dimension label stays vertical**, and a slanted leader label keeps its angle."
+            ),
           ],
         },
         { h: T("Trên thanh Sửa chữ gốc", "On the text-edit bar") },

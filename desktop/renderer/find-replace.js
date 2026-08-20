@@ -111,6 +111,10 @@ function editForSpan(hit, occs, replacement) {
     font: hit.font || "default",
     orig_text: hit.span_text,
     orig_size: hit.size,
+    // The run's writing direction (BI-66). Same reason as orig_text/orig_size: the
+    // sidecar redraws in unrotated page space, so without it a replacement on a
+    // rotated drawing sheet is written across the page instead of along the line.
+    dir: hit.dir || null,
   };
 }
 

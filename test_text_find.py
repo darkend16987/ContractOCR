@@ -56,13 +56,20 @@ def check(name, actual, expected):
 # ---------------------------------------------------------------------------
 
 
-def part(text, *, host=None, size=11.0, font="Times", color=0, flags=0, x=0.0):
+def part(text, *, host=None, size=11.0, font="Times", color=0, flags=0, x=0.0,
+         direction=(1.0, 0.0)):
     """One flattened span. `host=False` marks the whitespace spans PyMuPDF
-    synthesises for a cursor jump: their text counts, but they never take a write."""
+    synthesises for a cursor jump: their text counts, but they never take a write.
+
+    The tuple shape MUST track `_find_build_index` exactly — it is a positional
+    contract, and a fixture that lags it tests a document shape the sidecar never
+    produces. Field 9 (`direction`) arrived with BI-66.
+    """
     if host is None:
         host = bool(text.strip())
     bbox = (x, 100.0, x + max(1.0, 5.0 * len(text)), 112.0)
-    return (text, host, bbox, bbox, (bbox[0], bbox[3]), size, font, color, flags)
+    return (text, host, bbox, bbox, (bbox[0], bbox[3]), size, font, color, flags,
+            direction)
 
 
 def page(*lines):
@@ -276,6 +283,26 @@ check("R10 a rotated page still finds its text", len(res.hits), 1)
 if res.hits:
     h = res.hits[0]
     check("R10b …and reports a separate displayed box", h.bbox != h.bbox_view, True)
+    # BI-66 — a hit must also say which way its run is WRITTEN, not just where it
+    # sits. /edit-text draws in unrotated space and cannot tell otherwise, so
+    # without this every replacement on a landscape sheet comes out turned 90°.
+    # This page's text was drawn horizontally and only the SHEET is rotated, so the
+    # direction stays (1,0): the run's own angle, never the page's.
+    check("R10b2 …and the run's own writing direction", list(h.dir), [1.0, 0.0])
+
+# R10e — the same page, text drawn to READ UPRIGHT on a /Rotate 90 sheet (how every
+# real CAD/tender drawing carries it). Here the run genuinely does run vertically in
+# page space, and the hit must say so.
+doc = fitz.open()
+pg = doc.new_page(width=400, height=200)
+pg.insert_text((60, 160), "2026", fontsize=11, rotate=90)
+pg.set_rotation(90)
+upright = doc.tobytes()
+doc.close()
+res_up = find(upright, "2026")
+check("R10e an upright run on a rotated sheet is found", len(res_up.hits), 1)
+if res_up.hits:
+    check("R10e …and carries dir (0,-1)", list(res_up.hits[0].dir), [0.0, -1.0])
 
 # R10c — the SAME contract has to hold for a crossing hit, and it did not: the union
 # was built from the already-rotated parts and copied into both fields, so `bbox` —

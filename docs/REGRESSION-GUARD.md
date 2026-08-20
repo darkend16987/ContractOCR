@@ -1529,6 +1529,72 @@ _Ghi 2026-08-13. **Đo được, không suy luận.**_
 - Lưới: `npm run test:rotate` §7 (a: mọi kind vector trên `/MediaBox` rộng × 4 góc ·
   b: tài liệu trộn hướng + guard · c: trang redact).
 
+### BI-66 · Vẽ lại chữ phải theo **CHIỀU VIẾT CỦA CHÍNH ĐOẠN CHỮ**, không theo `/Rotate` của trang
+
+- `_text_frame()` + khối vẽ lại của `/edit-text` ([api.py](../api.py)); trường `dir` của
+  `/text-spans`, `/text-find` và `TextEdit`; `ed.dir` ở
+  [text-edit.js](../desktop/renderer/text-edit.js) `apply()`, `dir` ở
+  [find-replace.js](../desktop/renderer/find-replace.js) `editForSpan()`.
+  Lưới: `.venv\Scripts\python test_edit_text_rotate.py`. Chẩn đoán đầy đủ + số đo:
+  [SPEC-text-edit-rotated.md](SPEC-text-edit-rotated.md).
+- **Đã đo, không suy luận** (PyMuPDF 1.27.2 đang ship): `page.insert_text` — như **mọi**
+  hàm ghi nội dung của PyMuPDF — vẽ ở không gian trang **CHƯA XOAY** và **bỏ qua hoàn
+  toàn** `/Rotate`: gọi y hệt trên trang 0°/90°/180°/270° cho ra **cùng một** bbox.
+  `get_text` cũng báo ở đúng không gian đó. Nên bản thân endpoint **không có cách nào
+  biết** chữ nó đang thay chạy theo chiều nào — trước bản vá nó vẽ **mọi** đoạn từ trái
+  sang phải.
+- **Lỗi thật, do người dùng báo 2026-08-20:** trên bộ hồ sơ thầu/CAD (`/Rotate 90`), chữ
+  gốc chạy **DỌC** trong không gian chưa xoay để đọc **xuôi** sau khi viewer xoay lại ⇒
+  “Sửa nội dung” và **chữ thay thế của Tìm & Thay thế** ra **quay 90°**. Đây là **lớp lỗi
+  BI-45 ở một tầng khác**: BI-45/BI-65 vá đường bake chú thích (pdf-lib, phía renderer);
+  đường này là chữ **thật** của trang (PyMuPDF, phía sidecar) và **không** dùng chung một
+  dòng số học nào với nó.
+- **`page.rotation` là câu trả lời SAI, và đây là con số:** file tham chiếu
+  (`260521_CLD_NAVY_SGSU`, 30 trang, **trang nào cũng** `/Rotate 90`) có **5799** đoạn đọc
+  xuôi — `dir (0,-1)` — **và 902** nhãn dựng dọc — `dir (-1,0)`. Một góc trang **không thể**
+  mô tả cả hai; lấy góc trang mà vá thì 902 đoạn kia sai theo kiểu mới. Nguồn sự thật duy
+  nhất là `line["dir"]` của **chính đoạn chữ**, nên nó được chuyển suốt từ
+  `/text-spans`/`/text-find` → renderer → `/edit-text`.
+- **Ba phép tính, không phải một.** Sửa chiều mà bỏ hai chỗ còn lại là đổi lỗi lộ thành
+  lỗi im:
+  1. **Chiều vẽ** — một ma trận `morph` mang cả xén-nghiêng, nén ngang **và** góc chữ:
+     `Matrix(hscale, 0, shear, 1, 0, 0) * Matrix(theta)`. **Thứ tự bắt buộc** như vậy: nén
+     ngang thuộc hệ **của chữ**, phép xoay mới đưa hệ đó ra trang; đảo lại thì trên đoạn đã
+     xoay cái nén rơi vào **chiều cao glyph** thay vì bước tiến (đã đo).
+  2. **`hscale` / `vscale` (BI-25)** chia cho bề ngang / bề cao của bbox. bbox là
+     **axis-aligned**, nên trên đoạn xoay 90° bề ngang chính là **chiều cao dòng** và bề cao
+     chính là **độ dài chữ** — hai số **đổi chỗ**. Với đoạn dài thì tỷ số rơi ra ngoài dải tin
+     cậy và bị loại (may), nhưng với đoạn **ngắn** nó rơi **vào trong** dải ⇒ chữ bị nén còn
+     một nửa mà **không báo gì**. Vì thế `adv`/`thick` được chọn theo `quadrant`.
+  3. **Gạch chân** vẽ theo `u_dir`/`n_dir` (dọc theo chữ / xuống dưới đường chân), không
+     phải theo trục x/y của trang.
+- **Không phải góc vuông thì KHÔNG suy diễn.** Nhãn dẫn của bản vẽ được viết ở 15°, 22.7°,
+  30°, 49°… — `insert_text(rotate=…)` chỉ nhận bội số 90 nên đường vá dùng **ma trận**, tái
+  tạo **đúng** góc đó. Nhưng bbox axis-aligned của một đoạn chữ chéo **không** tách được
+  thành “dọc theo chữ” và “ngang qua chữ”, nên ở đó `quadrant = None` và **cả hai** phép
+  chỉnh hình học bị **tắt** — thà không chỉnh còn hơn chỉnh theo một số đo đã biết là sai.
+  Dưới `_DIR_SNAP_DEG = 2°` thì **bắt vào** góc vuông: file thật có đoạn lệch 0.11°, và bắt
+  đúng góc giữ cho `u`/`n` không nhiễm bụi float (`cos 90° = 6e-17`).
+- **Dải chết là hợp đồng, không phải may mắn:** không có `dir` (renderer cũ, caller khác,
+  test cũ) ⇒ `theta = 0` ⇒ `Matrix(0)` là ma trận đơn vị và `morph` về đúng biểu thức cũ ⇒
+  tài liệu Word/Excel bình thường ra **y hệt từng pixel**. Lưới có ca `D3` đo đúng điều đó.
+- **Luật:** thêm bất kỳ phép vẽ nào vào vòng lặp `for e in edits` của `/edit-text` (viền,
+  gạch giữa, chỉ số trên/dưới…) thì phải trả lời nó đi theo **hệ của chữ** (`u_dir`/`n_dir`,
+  hoặc nằm trong `morph`) hay hệ của **trang**, **và** thêm ca vào `test_edit_text_rotate.py`.
+  Lớp lỗi ở đây là “phép vẽ mới âm thầm không tham gia bù xoay” — hệt BI-45.
+- **Vỡ khi:** sửa một dòng trên bản vẽ A1 nằm ngang → chữ mới **quay 90°** · Thay tất cả
+  trên hồ sơ CAD → chữ thay thế nằm **vắt ngang** bản vẽ · nhãn kích thước dựng dọc sau khi
+  sửa thì **nằm ngang ra** · đoạn **ngắn** trên trang xoay bị **nén còn ~50%** · gạch chân
+  **cắt ngang** chữ thay vì nằm dưới. Trên trang **không** xoay thì mọi thứ vẫn đúng — đúng
+  khuôn im lặng của BI-40/BI-45.
+- Lưới: `test_edit_text_rotate.py` (107 ca — helper thuần · dải chết · 4×4 tổ hợp
+  {góc trang} × {chiều chữ} · gốc đường chân · `/Rotate` không tự đổi · trục hình học ·
+  gạch chân · góc chéo 30° · **đường Tìm & Thay thế đi hết vòng**). **Mỗi** nhóm có **ca
+  canh gác** gửi `dir=None` để dựng lại đúng lỗi cũ và **đòi** kết quả phải SAI — bỏ ma
+  trận `morph` ra thì lưới đỏ 26 ca, nên một lưới xanh mới có nghĩa.
+- Trường `dir` **cũng là trường thứ 9 của tuple span dẹt** trong `_find_build_index`. Tuple
+  đó là **hợp đồng theo vị trí**: fixture `part()` của `test_text_find.py` phải đi theo, nếu
+  không nó đang test một hình dạng tài liệu mà sidecar không bao giờ sinh ra.
 ---
 
 ## 4. Hàm nút thắt (đổi chữ ký = ảnh hưởng diện rộng)
@@ -1587,6 +1653,7 @@ _Ghi 2026-08-13. **Đo được, không suy luận.**_
 | Badge trạng thái (`renderSidecarBadge`, `setApiBadge`, `/config`) | Mở app lúc engine chưa lên → OCR chấm rỗng, API “…” · engine lên & chưa có key → API chấm rỗng vàng · nhập key → chuyển xanh **ngay**, không cần khởi động lại · bấm badge API → mở Cài đặt đúng ô nhập · đổi VI↔EN → cả hai badge đổi theo (BI-29) |
 | Bất kỳ điều kiện nào đọc `Editor.active` / `TextEdit.active` | Vào Chú thích rồi bấm ↑/↓/PageUp/PageDown/Delete → **không** có lỗi trong console, trang không bị xoá · thoát Chú thích → Delete xoá lại được (BI-28) |
 | Menu ngữ cảnh dùng chung (`showPageMenu` trong `capture.js`) | Chuột phải lên **trang PDF** (Sao chép ảnh/vùng/Dán) vẫn đúng · mở menu này rồi mở menu kia → menu cũ đóng · cuộn dải thumbnail → menu đóng |
+| Chiều vẽ lại chữ (`_text_frame`, `theta`/`u_dir`/`n_dir`, `morph`, trường `dir` của `/text-spans`·`/text-find`·`TextEdit`, `ed.dir` ở `text-edit.js`, `dir` ở `editForSpan`) | BI-66 · `.venv\Scripts\python test_edit_text_rotate.py` · rồi **test tay trên bản vẽ `/Rotate 90` thật** (bộ hồ sơ thầu/CAD): **Sửa nội dung** một dòng đọc xuôi → chữ mới **đọc xuôi**, thẳng hàng với dòng bên cạnh · sửa một **nhãn kích thước dựng dọc** → vẫn **dựng dọc**, cùng chiều với nhãn kế bên · **Ctrl+H → Thay tất cả** → mọi chữ thay thế đúng chiều của chỗ nó thay · sửa một đoạn **rất ngắn** (2–3 ký tự) trên trang xoay → **không** bị nén lại · bật **gạch chân** → gạch nằm **dưới** chữ, cùng chiều · lặp lại trên trang **không** xoay để chắc không có gì dịch đi (BI-66, BI-25, BI-45) |
 | Cỡ/hình học chữ vẽ lại (`hscale`, `vscale`, `orig_text`, `orig_size`) | `test_edit_text_metrics.py` · sửa 1 dòng trên hoá đơn thật → **không** dài ra đè chữ bên cạnh, **không** cao hơn dòng chưa sửa (BI-25) |
 | Redaction / `add_redact_annot` / `apply_redactions` | `test_edit_text_layout.py` **và** `test_translate_layout.py` · sửa 1 chữ trong ô bảng **có nền** → không vệt trắng, không mất đường kẻ (BI-23) |
 | `wire.js` (`pdfJsonBody` / `binArrayJsonBody` / `pushB64Chunks` / `b64ToU8` / `B64_CHUNK`) hay bất kỳ chỗ gọi sidecar nào có PDF | `cd desktop ; npm run test:wire` (51 ca) · mở file **lớn** (≥100MB) rồi: Sửa nội dung · Nén · So sánh 2 file · Tách — không tab nào chết vì hết bộ nhớ · **Ảnh → PDF với ~50 ảnh máy ảnh**: tạo được file, PDF mở lại đúng số trang và đúng thứ tự (BI-24) |
@@ -1657,6 +1724,10 @@ _Ghi 2026-08-13. **Đo được, không suy luận.**_
    **mọi khoá `tr()` có trong từ điển i18n**, `fr-status` nằm trong `SKIP_IDS`,
    `btn-find-replace` nằm trong `GATED_BTNS`, và `pushUndo` đứng **trước** phép gán
    `state.bytes` — BI-3, BI-9, BI-10).
+2k2. `.venv\Scripts\python test_edit_text_rotate.py` → phải `N pass, 0 fail`
+   (chiều vẽ lại chữ của `/edit-text` — BI-66. Mỗi nhóm có **ca canh gác** gửi `dir=None`
+   để dựng lại đúng lỗi "chữ tự quay 90°" và đòi nó phải SAI, nên lưới này **không thể**
+   xanh một cách vô nghĩa. `run_tests.py` đã tự gom, mục này để nhớ khi chỉ chạy lẻ.)
 2l. `cd desktop ; npm run test:defaults` → phải `N pass, 0 fail`
    (màu chú thích mặc định — BI-61. Giữ **ba** literal `#d32f2f` bằng nhau, chặn việc gộp
    4 màu có nghĩa `✓/✗/tô sáng/che`, và canh gác 2 fallback `#ffd54a` của
