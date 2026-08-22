@@ -209,75 +209,88 @@ def _page_text_dict(page) -> dict:
 # painted at all: an opaque patch across a rendering is a worse outcome than a page
 # that reports it could not be cleaned. The caller counts both cases and tells the user.
 _INK_PROBE_DPI = 72
-_COVER_RING_PX = 3       # band sampled above/below the block for the page colour
+_COVER_RING_PT = 3.0     # band (in points) above/below a block, sampled for the page colour
 _COVER_MODAL_MIN = 0.6   # share of that band that must agree before we trust a colour
 
 
-def _probe_pixmap(page, dpi: int = _INK_PROBE_DPI):
-    """(pixmap, zoom) for `page` at probe resolution — RGB, no alpha."""
-    fitz = _require_fitz()
-    z = dpi / 72.0
-    return page.get_pixmap(matrix=fitz.Matrix(z, z), colorspace=fitz.csRGB, alpha=False), z
+def _probe_list(page):
+    """(display list, zoom) for the ink probe.
+
+    A DISPLAY LIST, not a full-page pixmap, and the difference is not a micro-
+    optimisation. Measured on a dense A0 CAD sheet (3370x2384pt, 4000 paths):
+
+        one full-page render at 72 dpi          11 950 ms
+        the WHOLE probe, 16 blocks, this way       389 ms
+
+    Two full-page renders per page would have put 24 SECONDS on every page of a
+    drawing set, silently, to answer a question that only ever concerns the handful
+    of rectangles the blocks occupy. The display list parses the page content once;
+    each clip then rasterises only its own few thousand pixels. The same probe on an
+    ordinary A4 text page is 5 ms, so nothing was traded away to get this.
+    """
+    return page.get_displaylist(), _INK_PROBE_DPI / 72.0
 
 
-def _px_box(page, pm, rect, z) -> tuple[int, int, int, int] | None:
-    """An UNROTATED-space page rect as an integer pixel box inside `pm`.
+def _probe_clip(dl, page, rect, z, ring: float = 0.0):
+    """RGB pixmap of `rect` (UNROTATED page space), optionally grown by `ring` points.
 
     The rect goes through `page.rotation_matrix` first: `get_text` reports boxes in
-    unrotated space while `get_pixmap` renders the page as DISPLAYED, and on a
-    /Rotate 90 sheet those are different places. Verified against rendered ink at all
-    four quarter turns. Returns None when the box falls outside the pixmap.
+    unrotated space while rendering happens in DISPLAYED space, and on a /Rotate 90
+    sheet those are different places. Verified against rendered ink at all four
+    quarter turns. Returns None when the box lands outside the page.
     """
     fitz = _require_fitz()
     r = fitz.Rect(rect) * page.rotation_matrix
     r.normalize()
-    # pm.x / pm.y, not pm.irect.x0 — `irect` is a bare tuple on some PyMuPDF
-    # builds, and `.x0` on it is an AttributeError at run time, not import time.
-    x0 = max(0, int(r.x0 * z) - pm.x)
-    y0 = max(0, int(r.y0 * z) - pm.y)
-    x1 = min(pm.width, int(r.x1 * z) + 1 - pm.x)
-    y1 = min(pm.height, int(r.y1 * z) + 1 - pm.y)
-    if x1 <= x0 or y1 <= y0:
+    if ring:
+        r = fitz.Rect(r.x0 - ring, r.y0 - ring, r.x1 + ring, r.y1 + ring)
+    r = r & dl.rect
+    if r.is_empty or r.width <= 0 or r.height <= 0:
         return None
-    return (x0, y0, x1, y1)
+    try:
+        return dl.get_pixmap(matrix=fitz.Matrix(z, z), clip=r,
+                             colorspace=fitz.csRGB, alpha=False)
+    except Exception as e:
+        logger.debug("probe clip failed: %s", e)
+        return None
 
 
-def _box_bytes(pm, box) -> bytes:
-    """The pixel rows of `box` concatenated — one slice per row, no per-pixel work."""
-    x0, y0, x1, y1 = box
-    n = pm.n
-    stride = pm.stride
-    s = pm.samples
-    return b"".join(s[y * stride + x0 * n: y * stride + x1 * n] for y in range(y0, y1))
+def _ink_survived(pm_before, pm_after) -> bool:
+    """True when redaction changed NOT ONE pixel of this block — the glyphs are still there.
 
-
-def _ink_survived(pm_before, pm_after, box) -> bool:
-    """True when redaction changed NOT ONE pixel of `box` — the glyphs are still there."""
-    if box is None:
-        return False
-    return _box_bytes(pm_before, box) == _box_bytes(pm_after, box)
-
-
-def _ring_color(pm, box, ring: int = _COVER_RING_PX) -> tuple[float, float, float] | None:
-    """Modal RGB (0..1) of the band just above and below `box`, or None if it varies.
-
-    Above/below rather than a full frame: for a line of text those bands are the
-    inter-line gap, which is the page colour by construction, while the left and right
-    edges may butt against a neighbouring column.
+    Byte equality, deliberately: any looser test would need a notion of "how much
+    ink" and would start guessing about photographs. What this asks is only whether
+    the redaction did anything at all here, which is a fact, not a judgement.
     """
-    x0, y0, x1, y1 = box
+    if pm_before is None or pm_after is None:
+        return False
+    if pm_before.width != pm_after.width or pm_before.height != pm_after.height:
+        return False
+    return bytes(pm_before.samples) == bytes(pm_after.samples)
+
+
+def _ring_color(pm, ring_px: int) -> tuple[float, float, float] | None:
+    """Modal RGB (0..1) of the top and bottom `ring_px` rows, or None if they vary.
+
+    `pm` is the block's clip grown by the ring, so those rows are the band just above
+    and below the words. Above/below rather than a full frame: for a line of text that
+    band is the inter-line gap, which is the page colour by construction, while the
+    left and right edges may butt against a neighbouring column.
+    """
+    if pm is None or ring_px <= 0 or pm.height <= 2 * ring_px:
+        return None
     n = pm.n
     stride = pm.stride
     s = pm.samples
     counts: dict[bytes, int] = {}
     total = 0
-    for band in (range(max(0, y0 - ring), y0), range(y1, min(pm.height, y1 + ring))):
-        for y in band:
-            row = s[y * stride + x0 * n: y * stride + x1 * n]
-            for i in range(0, len(row), n):
-                px = row[i:i + 3]
-                counts[px] = counts.get(px, 0) + 1
-                total += 1
+    rows = list(range(0, ring_px)) + list(range(pm.height - ring_px, pm.height))
+    for y in rows:
+        row = s[y * stride: y * stride + pm.width * n]
+        for i in range(0, len(row), n):
+            px = bytes(row[i:i + 3])
+            counts[px] = counts.get(px, 0) + 1
+            total += 1
     if not total:
         return None
     best, hits = max(counts.items(), key=lambda kv: kv[1])

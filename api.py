@@ -81,11 +81,13 @@ from src.pdf.layout import (
     _mask_terms,
     _fix_span_box,
     _fix_text_dict,
+    _COVER_RING_PT,
+    _INK_PROBE_DPI,
+    _ink_survived,
     _page_text_blocks,
     _page_text_dict,
-    _probe_pixmap,
-    _px_box,
-    _ink_survived,
+    _probe_clip,
+    _probe_list,
     _ring_color,
     _run_boxes,
     _split_block_by_cells,
@@ -2936,14 +2938,14 @@ async def translate_pdf(req: TranslateRequest):
             #    image pixels behind it. Translating replaces words, not what
             #    they are drawn on top of.
             #
-            #    The 72-dpi snapshot taken here is the BEFORE half of the ink
-            #    probe in step 1b — see src/pdf/layout.py. It has to be rendered
-            #    now, while the old words are still on the page.
+            #    The display list captured here is the BEFORE half of the ink
+            #    probe in step 1b — see src/pdf/layout.py. It has to be taken now,
+            #    while the old words are still on the page.
             try:
-                pm_before, probe_z = _probe_pixmap(page)
+                dl_before, probe_z = _probe_list(page)
             except Exception as pe:
                 logger.debug("ink probe (before) skipped: %s", pe)
-                pm_before = probe_z = None
+                dl_before = probe_z = None
             for i in finals:
                 page.add_redact_annot(fitz.Rect(*blocks[i]["bbox"]))
             try:
@@ -2963,26 +2965,34 @@ async def translate_pdf(req: TranslateRequest):
             #     the page colour sampled beside the block. A block whose
             #     surroundings are not one flat colour is left alone and counted
             #     — painting an opaque patch across a photo is the worse failure.
-            if pm_before is not None:
+            if dl_before is not None:
                 try:
-                    pm_after, _ = _probe_pixmap(page)
+                    dl_after, _ = _probe_list(page)
                 except Exception as pe:
                     logger.debug("ink probe (after) skipped: %s", pe)
-                    pm_after = None
-                if pm_after is not None:
-                    for i in finals:
-                        box = _px_box(page, pm_after, blocks[i]["bbox"], probe_z)
-                        if not _ink_survived(pm_before, pm_after, box):
-                            continue
-                        bg = _ring_color(pm_after, box)
-                        if bg is None:
-                            blocks_uncleaned += 1
-                            continue
-                        page.draw_rect(fitz.Rect(*blocks[i]["bbox"]),
-                                       color=None, fill=bg, width=0)
-                        blocks_covered += 1
-                pm_after = None
-            pm_before = None
+                    dl_after = None
+                ring_px = max(1, int(round(_COVER_RING_PT * probe_z)))
+                for i in (finals if dl_after is not None else ()):
+                    bbox = blocks[i]["bbox"]
+                    # The INK test compares the block's own rectangle; the RING colour
+                    # is read from a second, slightly larger clip. Two clips rather
+                    # than one padded one because the padding may straddle a
+                    # NEIGHBOURING block that redaction did change — folding that into
+                    # the comparison would answer a different question.
+                    if not _ink_survived(_probe_clip(dl_before, page, bbox, probe_z),
+                                         _probe_clip(dl_after, page, bbox, probe_z)):
+                        continue
+                    bg = _ring_color(
+                        _probe_clip(dl_after, page, bbox, probe_z, ring=_COVER_RING_PT),
+                        ring_px,
+                    )
+                    if bg is None:
+                        blocks_uncleaned += 1
+                        continue
+                    page.draw_rect(fitz.Rect(*bbox), color=None, fill=bg, width=0)
+                    blocks_covered += 1
+                dl_after = None
+            dl_before = None
 
             # 2. Lazily embed fonts (same scheme as /edit-text), then re-typeset.
             embedded: dict[tuple[bool, bool], tuple[str, str] | None] = {}
