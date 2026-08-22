@@ -77,13 +77,16 @@ from src.pdf.layout import (
     _block_from_spans,
     _cell_layout,
     _cell_of,
+    _COVER_RING_PT,
     _fit_fontsize,
-    _mask_terms,
+    # _fix_span_box / _fix_text_dict are NOT called here — `_page_text_dict` applies
+    # them. They are re-exported so `test_helpers.py` can drive the rule as pure
+    # dicts-in/tuples-out, the same way it reaches every other pure helper. Do not
+    # "tidy them away" as unused imports.
     _fix_span_box,
     _fix_text_dict,
-    _COVER_RING_PT,
-    _INK_PROBE_DPI,
     _ink_survived,
+    _mask_terms,
     _page_text_blocks,
     _page_text_dict,
     _probe_clip,
