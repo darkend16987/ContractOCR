@@ -3047,10 +3047,26 @@ async function runTranslate() {
     const name = `${baseName(state.name)}-dich-${target}.pdf`;
     const r = await window.desktop.savePdf(bytes, name);
     if (r.saved) {
-      toast(
-        `Đã dịch ${data.blocks_translated || 0} đoạn trên ${data.pages_changed || 0} trang → ${r.path}`,
-        "good",
-      );
+      // `success` only means the file was produced. Two things can still be
+      // wrong with it and BOTH used to be invisible: pages the model returned
+      // nothing for ship untranslated, and blocks whose original words are
+      // vector outlines the sidecar could not clean end up with the translation
+      // sitting on top of them. Say so in the same toast — the user is about to
+      // send this file to somebody.
+      const failed = data.pages_failed || 0;
+      const dirty = data.blocks_uncleaned || 0;
+      let msg = t("Đã dịch {b} đoạn trên {p} trang → {f}", {
+        b: data.blocks_translated || 0,
+        p: data.pages_changed || 0,
+        f: r.path,
+      });
+      if (failed) {
+        msg += " · " + t("{n} trang KHÔNG dịch được (AI không trả kết quả) — giữ nguyên bản gốc", { n: failed });
+      }
+      if (dirty) {
+        msg += " · " + t("{n} đoạn chữ gốc là nét vẽ trên nền không phẳng nên không xoá được — bản dịch nằm đè lên", { n: dirty });
+      }
+      toast(msg, failed || dirty ? "warn" : "good");
     }
   } catch (err) {
     toast("Lỗi dịch: " + err.message, "bad");

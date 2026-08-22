@@ -44,16 +44,21 @@
   //            rendered the same Vietnamese-safe way as text; geometry + label in
   //            /NabuData so a re-opened file is fully re-editable (move / re-angle /
   //            retype the head-or-tail label).
-  //  - box / ellipse / cloud / cloudpen (v0.2.61) → /Stamp whose /AP is a VECTOR form,
+  //  - box / ellipse / cloud / cloudpen (v0.2.61) + draw (v0.2.63) → /Stamp whose /AP is a VECTOR form,
   //            appearance is built by managed-codec's shapeAppearance() from pdf-lib's
   //            own drawRectangle / drawEllipse operator generators — the same ones
   //            drawOneAnnot's flatten branch goes through — so the re-editable copy and
   //            the flattened copy cannot draw different geometry. Stays sharp at any
   //            zoom and in print, and owns no image (so no /NabuSrc, and nothing for
   //            managedSrcBytes to vet). Everything the shape needs is in /NabuData.
-  // Still flattened, deliberately: draw (vẽ tay), highlight, redact, measure, ✓/✗. Not an
-  // oversight — each would need its own appearance branch, and shipping them one class at
-  // a time is what keeps test:rotate's guard cases meaningful.
+  //            `draw` (vẽ tay, v0.2.63) is the same branch: an OPEN polyline instead of a
+  //            closed shape, with its points thinned by annot-geom's simplifyStroke on the
+  //            way into /NabuData — a freehand stroke collects a point per mousemove, which
+  //            no other kind does.
+  // Still flattened, deliberately: highlight, redact, measure, ✓/✗. Not an oversight —
+  // each would need its own appearance branch, and shipping them one class at a time is
+  // what keeps test:rotate's guard cases meaningful. `redact` will never join them: it
+  // exists to destroy the content underneath, and a re-editable redaction is not one.
   // Kinds drawn as a plain x/y/w/h box — the ones that get resize grips. Named
   // because it used to be an inline `||` chain inside renderAnnot, which is the kind
   // of thing that quietly drifts out of step with the .handle rules in app.css.
@@ -169,6 +174,10 @@
     indent: 0, // left indent in pt
     listType: "none", // none | bullet | number
     textOpacity: 1, // 0..1 text opacity
+    // Anti-clockwise degrees for a NEW text box. The inline editor is always upright
+    // (openTextEditor) — the angle shows up the moment the box is committed, which is
+    // also when it can be selected and re-turned.
+    textRot: 0,
     penWidth: 2,
     arrowLabelEnd: "head", // where a new arrow's label sits: "head" (tip) or "tail" (base)
     fillColor: "#ffffff", // interior fill for box / ellipse / cloud / cloudpen
@@ -365,7 +374,7 @@
       strike: ed.strike, align: ed.align, lineHeight: ed.lineHeight,
       paraSpacing: ed.paraSpacing, letterSpacing: ed.letterSpacing,
       wordSpacing: ed.wordSpacing, charScale: ed.charScale, indent: ed.indent,
-      listType: ed.listType, opacity: ed.textOpacity,
+      listType: ed.listType, opacity: ed.textOpacity, rot: ed.textRot,
     };
   }
 
@@ -537,10 +546,11 @@
       svg.setAttribute("width", "100%");
       svg.setAttribute("height", "100%");
       const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
-      path.setAttribute(
-        "d",
-        a.pts.map((p, k) => (k ? "L" : "M") + (p.x - minX) + " " + (p.y - minY)).join(" ")
-      );
+      // strokePath, not an inline join: the SAME string feeds the round-trip /AP
+      // (managed-codec shapeAppearance) and this <svg>. `sp` is null only for a
+      // stroke with fewer than two distinct points, which draws nothing anywhere.
+      const sp = strokePath(a.pts);
+      path.setAttribute("d", sp ? sp.d : "");
       path.setAttribute("fill", "none");
       path.setAttribute("stroke", a.color);
       path.setAttribute("stroke-width", String(a.width));
@@ -797,8 +807,34 @@
       // Horizontal character scale — approximate preview (baked PNG is exact).
       if (st.charScale !== 1) {
         el.style.width = (a.w * s) / st.charScale + "px";
+      }
+      // ONE transform string for both effects — the property is not additive, so two
+      // separate assignments would silently drop the first, and charScale used to be
+      // the only writer here.
+      //
+      // Read right to left, which is the order they apply: squeeze the glyphs inside
+      // the box about its top-left (unchanged), then turn the result about the box's
+      // VISUAL CENTRE. The centre is spelled out as translate·rotate·translate rather
+      // than switching `transform-origin` to `50% 50%`, because the element was
+      // deliberately WIDENED by 1/charScale above — its own 50% is not the centre of
+      // what the user sees. The raster turns about the same visual centre, so the two
+      // agree. `-st.rot`: CSS rotate() is clockwise, our angle is anti-clockwise
+      // (annot-text.js normRot), the same minus the watermark element carries.
+      //
+      // Selecting and dragging need no extra maths: hit-testing here is
+      // `e.target.closest(".an")`, so the browser tests the TURNED shape for us, and a
+      // move is a translation, which does not care about the angle.
+      const tf = [];
+      if (st.rot) {
+        const cxPx = (a.w * s) / 2;
+        const cyPx = (a.h * s) / 2;
+        tf.push(`translate(${cxPx}px, ${cyPx}px)`, `rotate(${-st.rot}deg)`,
+                `translate(${-cxPx}px, ${-cyPx}px)`);
+      }
+      if (st.charScale !== 1) tf.push(`scaleX(${st.charScale})`);
+      if (tf.length) {
         el.style.transformOrigin = "left top";
-        el.style.transform = `scaleX(${st.charScale})`;
+        el.style.transform = tf.join(" ");
       }
     } else if (a.kind === "redact") {
       el.style.background = a.color || "#000";
@@ -1139,6 +1175,7 @@
     }
     if (a.kind === "text") {
       $("ed-fontsize").value = String(a.fontSize);
+      $("ed-textrot").value = String(normTextStyle(a).rot);
       $("ed-font").value = a.font || "sans";
       setFmtBtn("ed-bold", a.bold);
       setFmtBtn("ed-italic", a.italic);
@@ -1762,6 +1799,25 @@
     applyTextCss(ta, st, state.scale); // live-preview the full paragraph style
     ta.value = existing ? existing.text : "";
     layer.appendChild(ta);
+    // Retyping a TURNED box types at the same angle, so the words never jump between
+    // editing and not editing. The pivot is the ANNOT's visual centre, not the
+    // textarea's: the textarea is a fixed TA_ROWS x TA_COLS slab that has nothing to
+    // do with the box's size, so `transform-origin: 50% 50%` would spin it about a
+    // different point and the text would slide out from under the cursor. Measured
+    // after appendChild because offsetWidth is 0 before layout.
+    //
+    // A NEW box (no `existing`) is always upright: `rot` is a property of a placed
+    // box, and typing into a slanted empty field to create one is a worse first
+    // experience than typing straight and then turning it.
+    if (existing && st.rot) {
+      const cx = (existing.x + existing.w / 2) * state.scale;
+      const cy = (existing.y + existing.h / 2) * state.scale;
+      ta.style.transformOrigin = "left top";
+      ta.style.transform =
+        `translate(${cx - p.x * state.scale}px, ${cy - p.y * state.scale}px) ` +
+        `rotate(${-st.rot}deg) ` +
+        `translate(${p.x * state.scale - cx}px, ${p.y * state.scale - cy}px)`;
+    }
     ta.focus();
 
     let done = false;
@@ -2164,6 +2220,21 @@
 
   // ---- PNG rasterisation for baking ---------------------------------------
 
+  // ROTATION IS BAKED INTO THE RASTER, not into the annotation's placement — and
+  // that choice is the whole reason text rotation could ship without touching the
+  // /AP matrix work BI-59 and test:rotate exist to protect. A text box's appearance
+  // is ALREADY a PNG (Vietnamese glyphs, no embedded font — see the file header), so
+  // turning the glyphs on the canvas costs nothing extra and leaves the annotation
+  // itself an ordinary axis-aligned stamp. apMatrixFor / apRectFor keep meaning only
+  // "the page is rotated", which is the one thing they were measured for.
+  //
+  // The watermark rasteriser next door has done exactly this since v0.1 — same
+  // |w·cos|+|h·sin| growth, same anti-clockwise sign. This is that, generalised.
+  //
+  // `ox` / `oy` are how much the rotated raster's top-left sits ABOVE and LEFT of
+  // where the unrotated one would have been (both ≤ 0, since the box only grows).
+  // Callers add them to the anchor they already computed, so at rot 0 they are 0 and
+  // every existing call site is byte-for-byte unchanged.
   function renderTextPng(text, fontSizePt, colorHex, opts) {
     const RS = 3; // supersample for crisp text
     const s = normTextStyle(opts);
@@ -2173,10 +2244,24 @@
     const pad = Math.ceil(fpx * 0.15);
     const cw = Math.ceil(lay.width) + pad * 2;
     const chh = Math.ceil(lay.height) + pad * 2;
+    // The canvas is the TURNED box; the glyphs are laid out in the untouched one and
+    // the context is rotated about the shared centre. Ceil, so a half-pixel of the
+    // turned box is never clipped away.
+    const rb = rotatedBox(cw, chh, s.rot);
+    const bw = s.rot ? Math.ceil(rb.w) : cw;
+    const bh = s.rot ? Math.ceil(rb.h) : chh;
     const c = document.createElement("canvas");
-    c.width = cw;
-    c.height = chh;
+    c.width = bw;
+    c.height = bh;
     const cx = c.getContext("2d");
+    if (s.rot) {
+      // Canvas rotate() is clockwise for a positive angle and our convention is
+      // anti-clockwise (annot-text.js normRot), hence the minus — the same line the
+      // watermark rasteriser uses.
+      cx.translate(bw / 2, bh / 2);
+      cx.rotate((-s.rot * Math.PI) / 180);
+      cx.translate(-cw / 2, -chh / 2);
+    }
     cx.font = textFont(fpx, s);
     cx.fillStyle = colorHex;
     cx.strokeStyle = colorHex;
@@ -2202,7 +2287,11 @@
         cx.stroke();
       }
     }
-    return { bytes: dataUrlToBytes(c.toDataURL("image/png")), wPt: cw / RS, hPt: chh / RS };
+    return {
+      bytes: dataUrlToBytes(c.toDataURL("image/png")),
+      wPt: bw / RS, hPt: bh / RS,
+      ox: (cw - bw) / 2 / RS, oy: (chh - bh) / 2 / RS,
+    };
   }
 
   // Rasterise a whole arrow (line + filled head + optional label) to a PNG, for a
@@ -2356,6 +2445,9 @@
                paraSpacing: s.paraSpacing, letterSpacing: s.letterSpacing,
                wordSpacing: s.wordSpacing, charScale: s.charScale,
                indent: s.indent, listType: s.listType, opacity: s.opacity,
+               // normTextStyle already normalised it into (-180, 180]; a payload
+               // written before rotation existed has no `rot` and reads 0.
+               rot: s.rot,
                _managed: true };
     }
     if (data.k === "arrow") {
@@ -2381,20 +2473,23 @@
                   // it exists so a hand-edited /NabuData still draws something visible.
                   color: data.color || "#000000", width: +data.width || 2,
                   _managed: true };
-      if (data.k === "cloudpen") {
+      if (data.k === "cloudpen" || data.k === "draw") {
         // Junk points are dropped rather than tolerated: a NaN reaches cloudPathPoly's
         // Math.hypot, poisons the whole perimeter length and the cloud renders nowhere.
         const pts = (Array.isArray(data.pts) ? data.pts : [])
           .filter((p) => p && isFinite(+p.x) && isFinite(+p.y))
           .map((p) => ({ x: +p.x, y: +p.y }));
-        // Fewer than 3 and cloudPathPoly returns null — an invisible, unselectable ghost
-        // in ed.annots that a re-bake would silently drop. Refuse the import instead.
-        if (pts.length < 3) return null;
+        // Below the minimum its own path builder needs, the object is an invisible,
+        // unselectable ghost in ed.annots that a re-bake would silently drop. Refuse
+        // the import instead. A cloud needs 3 (cloudPathPoly closes a loop); an open
+        // stroke needs 2 (strokePath).
+        if (pts.length < (data.k === "draw" ? 2 : 3)) return null;
         a.pts = pts;
-        // Always true: the only cloudpen a writer can put in a file is a CLOSED scallop
-        // loop (cloudPathPoly emits `Z` unconditionally), and renderAnnot draws the open,
-        // still-being-clicked polygon down a different path entirely.
-        a.closed = true;
+        // Always true for a cloudpen: the only one a writer can put in a file is a
+        // CLOSED scallop loop (cloudPathPoly emits `Z` unconditionally), and renderAnnot
+        // draws the open, still-being-clicked polygon down a different path entirely.
+        // A `draw` is never closed — leave the flag off.
+        if (data.k === "cloudpen") a.closed = true;
       } else {
         a.x = +data.x || 0; a.y = +data.y || 0;
         a.w = +data.w || 1; a.h = +data.h || 1;
@@ -2494,10 +2589,14 @@
       if (!apRotatable(angle)) return false; // /Rotate 45 & friends keep flattening
       // Pass the whole annot as the style so alignment / spacing / lists / scale /
       // opacity all bake in (normTextStyle picks the fields it needs).
-      const { bytes, wPt, hPt } = renderTextPng(a.text, a.fontSize, a.color, a);
+      const { bytes, wPt, hPt, ox, oy } = renderTextPng(a.text, a.fontSize, a.color, a);
       const img = await doc.embedPng(bytes);
       const padPt = a.fontSize * 0.15;
-      const [bx, by] = map(a.x - padPt, a.y - padPt + hPt); // lower-left, matches flattened path
+      // Lower-left, matching the flattened path line for line — including `ox`/`oy`,
+      // which are the margin a rotated raster grew by (0 when upright). The /AP itself
+      // stays axis-aligned: the glyphs are already turned inside the PNG, so `/Matrix`
+      // keeps meaning ONLY the page rotation. See renderTextPng.
+      const [bx, by] = map(a.x - padPt + ox, a.y - padPt + oy + hPt);
       const ap = {
         Type: "XObject", Subtype: "Form", FormType: 1,
         BBox: [0, 0, wPt, hPt],
@@ -2719,19 +2818,31 @@
           opacity: 0.35,
         });
       } else if (a.kind === "draw") {
+        // Still per-segment `drawLine` and NOT one drawSvgPath, deliberately: every
+        // endpoint is mapped independently, which is what keeps a stroke correct on a
+        // /Rotate page for free (see the note above drawAnnots — handing pdf-lib a
+        // local coordinate system is what needed the explicit `rotate:` that BI-45 was
+        // about). Round caps join the segments seamlessly, which is both what the
+        // overlay <svg> shows (stroke-linecap: round) and what makes this identical to
+        // the round-capped, round-joined polyline in the managed /AP.
         const c = hexRgb(a.color);
         for (let k = 1; k < a.pts.length; k++) {
           const [sx, sy] = map(a.pts[k - 1].x, a.pts[k - 1].y);
           const [ex, ey] = map(a.pts[k].x, a.pts[k].y);
-          page.drawLine({ start: { x: sx, y: sy }, end: { x: ex, y: ey }, thickness: a.width, color: c });
+          page.drawLine({
+            start: { x: sx, y: sy }, end: { x: ex, y: ey },
+            thickness: a.width, color: c, lineCap: PDFLib.LineCapStyle.Round,
+          });
         }
       } else if (a.kind === "text") {
-        const { bytes, wPt, hPt } = renderTextPng(a.text, a.fontSize, a.color, a);
+        const { bytes, wPt, hPt, ox, oy } = renderTextPng(a.text, a.fontSize, a.color, a);
         const img = await doc.embedPng(bytes);
         // The PNG carries ~0.15em padding; offset so the glyphs line up with
-        // where the overlay (zero-padding) showed them.
+        // where the overlay (zero-padding) showed them. `ox`/`oy` add the extra
+        // margin a TURNED raster grew by — both 0 for an upright box, so this is
+        // the same arithmetic that shipped before rotation existed.
         const padPt = a.fontSize * 0.15;
-        const [bx, by] = map(a.x - padPt, a.y - padPt + hPt);
+        const [bx, by] = map(a.x - padPt + ox, a.y - padPt + oy + hPt);
         page.drawImage(img, { x: bx, y: by, width: wPt, height: hPt, rotate: pageRotate(page) });
       } else if (a.kind === "box") {
         const [x1, y1] = map(a.x, a.y);
@@ -3217,7 +3328,7 @@
 
   // Which palette controls (data-ctl) are relevant per drawing tool.
   const TOOL_CTLS = {
-    text: ["color", "font", "fontsize", "biu"],
+    text: ["color", "font", "fontsize", "biu", "textrot"],
     highlight: ["color"],
     draw: ["color", "penwidth"],
     box: ["color", "penwidth", "fill"],
@@ -3238,7 +3349,7 @@
   // by the Select tool so the palette shows only what the *selected* item needs
   // (nothing when the selection is empty) instead of every control at once.
   const KIND_CTLS = {
-    text: ["color", "font", "fontsize", "biu"],
+    text: ["color", "font", "fontsize", "biu", "textrot"],
     highlight: ["color"],
     draw: ["color", "penwidth"],
     box: ["color", "penwidth", "fill"],
@@ -3296,6 +3407,10 @@
     // laying down yellow.
     const cpick = $("ed-color");
     if (cpick) cpick.value = ed[colorSlotFor(tool)];
+    // Same reason as the colour picker above: switching to the Hộp văn bản tool must
+    // show the angle the NEXT box will get, not whatever the last SELECTED box had.
+    const rpick = $("ed-textrot");
+    if (rpick && tool === "text") rpick.value = String(ed.textRot || 0);
     syncCtlVisibility(tool);
     // #ed-hint used to hold a per-tool instruction sentence for all 15 tools. Those
     // moved to Trợ giúp → Hướng dẫn sử dụng; the slot is now cleared on every tool
@@ -3648,6 +3763,33 @@
         syncOverlays();
       }
     }
+  };
+  // Rotation applies to the SELECTED box and is also remembered as the palette
+  // default, exactly like size / font / B-I-U. What it deliberately does NOT do is
+  // re-measure: `a.w`/`a.h` stay the box's own upright size, and the turn is applied
+  // on top of that by the overlay transform and by renderTextPng. Re-measuring here
+  // would make the stored box the TURNED bounding box, and the next rotation would
+  // then be applied to an already-turned box — the size would grow every time.
+  function setTextRot(deg) {
+    const v = normRot(deg);
+    ed.textRot = v;
+    $("ed-textrot").value = String(v);
+    if (ed.sel != null) {
+      const hit = findAnnot(ed.sel);
+      if (hit && hit.a.kind === "text") {
+        pushEdUndo("trot:" + ed.sel);
+        hit.a.rot = v;
+        syncOverlays();
+      }
+    }
+  }
+  $("ed-textrot").oninput = (e) => setTextRot(+e.target.value || 0);
+  $("ed-textrot-90").onclick = () => {
+    // Reads the SELECTED box, not the field: with nothing selected the field is the
+    // palette default and +90 still means "turn the default a quarter turn".
+    const hit = ed.sel != null ? findAnnot(ed.sel) : null;
+    const cur = hit && hit.a.kind === "text" ? normTextStyle(hit.a).rot : (ed.textRot || 0);
+    setTextRot(cur + 90);
   };
   $("ed-font").onchange = (e) => {
     ed.font = e.target.value || "sans";

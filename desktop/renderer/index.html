@@ -300,6 +300,12 @@
       <button id="ed-bold" class="icon-only te-fmt" data-ctl="biu" title="In đậm" style="font-weight:800">B</button>
       <button id="ed-italic" class="icon-only te-fmt" data-ctl="biu" title="In nghiêng" style="font-style:italic">I</button>
       <button id="ed-underline" class="icon-only te-fmt" data-ctl="biu" title="Gạch chân" style="text-decoration:underline">U</button>
+      <!-- Text-box rotation (v0.2.63). Free angle, not four buttons: leader labels on a
+           drawing sit at whatever angle the leader does. Positive = ngược chiều kim đồng
+           hồ, the same sign the watermark uses (annot-text.js normRot). The ° step button
+           beside it is the common case (90) without making the field a dropdown. -->
+      <label class="ctl" data-ctl="textrot" title="Xoay chữ trong hộp văn bản (độ, ngược chiều kim đồng hồ). Xoay được cả hộp đã gõ xong và hộp mở lại từ file đã lưu.">Xoay <input type="number" id="ed-textrot" min="-180" max="180" step="1" value="0" /></label>
+      <button id="ed-textrot-90" data-ctl="textrot" title="Xoay thêm 90° ngược chiều kim đồng hồ">+90°</button>
       <label class="ctl" data-ctl="penwidth" title="Độ dày nét vẽ / nét viền">Nét <input type="number" id="ed-penwidth" min="1" max="24" value="2" /></label>
       <label class="ctl" data-ctl="arrowlabel" title="Vị trí nhãn chữ của mũi tên">Nhãn
         <select id="ed-arrowlabel">

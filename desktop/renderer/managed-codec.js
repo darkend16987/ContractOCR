@@ -6,7 +6,8 @@
  * byte-identical to v0.2.48's editor.js before the move.
  *
  * WHAT A MANAGED ANNOT IS. Text boxes, comment notes, arrows, inserted images and —
- * since v0.2.61 — rectangles, ovals and revision clouds are written as REAL PDF annotations (so
+ * since v0.2.61/v0.2.63 — rectangles, ovals, revision clouds and freehand strokes are written as
+ * REAL PDF annotations (so
  * Foxit/Acrobat show them) that ALSO carry a private `/NabuData` payload, plus — for
  * images — a `/NabuSrc` stream holding the ORIGINAL image file bytes. Re-opening the
  * file reads those back and rebuilds live, editable overlay objects instead of finding
@@ -14,7 +15,7 @@
  *
  * TWO FLAVOURS OF APPEARANCE, and the difference is worth knowing before editing here:
  * text / arrow / image carry a RASTER `/AP` (a PNG), because their ink is Vietnamese
- * glyphs or the user's own photo. box / ellipse / cloud / cloudpen carry a VECTOR `/AP`
+ * glyphs or the user's own photo. box / ellipse / cloud / cloudpen / draw carry a VECTOR `/AP`
  * built from pdf-lib's own operator generators — see shapeAppearance(). The vector ones own
  * no image and no `/NabuSrc`, so the two invariants below are about the raster half of the
  * family.
@@ -69,7 +70,8 @@
   // functions `page.drawRectangle` calls once it has resolved its own options. Taking
   // them by the same route as PDFName keeps them inside this IIFE, so BI-14's collision
   // trap does not apply: nothing of theirs reaches the shared classic-script scope.
-  const { PDFName, PDFRawStream, PDFDict, degrees, drawRectangle, drawEllipse, drawSvgPath } = _PDFLib;
+  const { PDFName, PDFRawStream, PDFDict, degrees, drawRectangle, drawEllipse, drawSvgPath,
+          setLineJoin, LineCapStyle, LineJoinStyle } = _PDFLib;
 
   // `pushB64Chunks` (wire.js) and `normTextStyle` (annot-text.js) are bare names in the
   // shared classic-script scope; in node they come from their modules. Resolved lazily
@@ -100,20 +102,30 @@
     if (typeof bumpOf === "function") return bumpOf(a);
     return require("./annot-geom.js").bumpOf(a);
   }
+  function _strokePath(pts) {
+    if (typeof strokePath === "function") return strokePath(pts);
+    return require("./annot-geom.js").strokePath(pts);
+  }
+  function _simplifyStroke(pts) {
+    if (typeof simplifyStroke === "function") return simplifyStroke(pts);
+    return require("./annot-geom.js").simplifyStroke(pts);
+  }
 
   // ---- the private keys ----------------------------------------------------
 
   // Kinds that round-trip as real annotations rather than being flattened to pixels.
   //
-  // `box` / `ellipse` / `cloud` / `cloudpen` joined at v0.2.61 and they are the members
-  // whose appearance is VECTOR rather than a rasterised PNG — see shapeAppearance()
-  // below for why that is the cheap option here and not for text/arrow.
-  const MANAGED_KINDS = new Set(["text", "note", "image", "arrow", "box", "ellipse", "cloud", "cloudpen"]);
-  // The vector half of the family, as one name: four kinds that share ONE branch in
-  // shapeAppearance, ONE branch in addManagedAnnot and ONE branch in deserializeManaged.
+  // `box` / `ellipse` / `cloud` / `cloudpen` joined at v0.2.61 and `draw` at v0.2.63;
+  // they are the members whose appearance is VECTOR rather than a rasterised PNG — see
+  // shapeAppearance() below for why that is the cheap option here and not for text/arrow.
+  const MANAGED_KINDS = new Set(["text", "note", "image", "arrow", "box", "ellipse", "cloud", "cloudpen", "draw"]);
+  // The vector half of the family, as one name: five kinds that share ONE branch in
+  // addManagedAnnot and ONE branch in deserializeManaged (shapeAppearance splits them
+  // three ways internally — box/ellipse, cloud/cloudpen, draw — but no caller cares
+  // which, and that is the point of having the predicate).
   // Named because "is this kind vector?" is asked in three files, and an inline `||`
   // chain in each is how those three drift apart (same argument as RESIZABLE_KINDS).
-  const VECTOR_KINDS = new Set(["box", "ellipse", "cloud", "cloudpen"]);
+  const VECTOR_KINDS = new Set(["box", "ellipse", "cloud", "cloudpen", "draw"]);
   function isVectorKind(k) { return VECTOR_KINDS.has(k); }
   const NABU_KIND = PDFName.of("NabuKind");
   const NABU_DATA = PDFName.of("NabuData");
@@ -286,6 +298,35 @@
       resources: useGs ? { ExtGState: { NabuGS: { Type: "ExtGState", ca: fillOpacity } } } : null,
     });
 
+    // -- freehand strokes: an open polyline, y-DOWN, local 0-origin ------------
+    //
+    // ROUND CAPS AND ROUND JOINS ARE NOT DECORATION — they are what makes this /AP
+    // and drawOneAnnot's flattened version the SAME PICTURE. The flattened writer
+    // draws the stroke as N independent `drawLine` segments with `LineCapStyle.Round`
+    // (it has to: independently mapped endpoints are what keeps it correct on a
+    // rotated page, see the note above drawAnnots). A round cap at every shared
+    // endpoint is geometrically identical to a round join along one polyline, so the
+    // two primitives paint the same ink. Drop either setting and they stop matching:
+    // butt caps leave notches between segments, and a mitre join spikes up to 10x the
+    // pen width at a Shift-straight elbow.
+    //
+    // `setLineJoin` is spliced in AFTER drawSvgPath's own `q` (its ops[0] is
+    // pushGraphicsState) rather than prepended, so `1 j` is scoped by the same
+    // q/Q pair as everything else it affects and cannot leak into a later operator.
+    // pdf-lib exposes no borderLineJoin option — measured on the shipped 1.17.1,
+    // drawSvgPath emits `J` from `borderLineCap` and nothing at all for the join.
+    if (a.kind === "draw") {
+      const g = _strokePath(a.pts);
+      if (!g) return null; // fewer than two distinct points — caller flattens (= nothing)
+      const wPt = g.W + 2 * lw;
+      const hPt = g.H + 2 * lw;
+      const ops = drawSvgPath(g.d, Object.assign({}, common, {
+        x: lw, y: hPt - lw, borderLineCap: LineCapStyle.Round,
+      }));
+      ops.splice(1, 0, setLineJoin(LineJoinStyle.Round));
+      return out(ops, wPt, hPt, g.minX - lw, g.minY - lw);
+    }
+
     // -- revision clouds: ONE SVG path, y-DOWN, local 0-origin -----------------
     // annot-geom already shifts the path by its own `pad` so the scallops stay ≥ 0 —
     // the same string the overlay <svg> uses. All this adds is room for the STROKE,
@@ -338,7 +379,8 @@
                strike: s.strike, align: s.align, lineHeight: s.lineHeight,
                paraSpacing: s.paraSpacing, letterSpacing: s.letterSpacing,
                wordSpacing: s.wordSpacing, charScale: s.charScale,
-               indent: s.indent, listType: s.listType, opacity: s.opacity };
+               indent: s.indent, listType: s.listType, opacity: s.opacity,
+               rot: s.rot };
     }
     if (a.kind === "arrow") {
       return { k: "arrow", x1: a.x1, y1: a.y1, x2: a.x2, y2: a.y2,
@@ -353,7 +395,16 @@
     // which is what a file written before this existed must also mean.
     if (isVectorKind(a.kind)) {
       const o = { k: a.kind, color: a.color, width: a.width || 2 };
-      if (a.kind === "cloudpen") {
+      if (a.kind === "draw") {
+        // THINNED, unlike cloudpen's verbatim corners. A freehand stroke gains a
+        // point per mousemove, so what reaches here is hundreds to thousands of
+        // samples that all have to survive as hex inside /NabuData. simplifyStroke
+        // is idempotent, so re-saving a reopened stroke writes the same list rather
+        // than eroding it a little further every round. See annot-geom.js.
+        o.pts = _simplifyStroke(a.pts).map((p) => ({
+          x: +p.x.toFixed(2), y: +p.y.toFixed(2),
+        }));
+      } else if (a.kind === "cloudpen") {
         // The polygon's own vertices, at full precision. They are the ONLY record of the
         // shape (the scallops are re-derived from them), and a cloudpen is a handful of
         // clicked corners — not a freehand scribble — so there is nothing to thin out.

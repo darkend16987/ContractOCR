@@ -523,6 +523,182 @@ def test_fit_fontsize_never_overflows():
         doc.close()
 
 
+# --------------------------------------------------------------------------- #
+# Outlined text: the words are vector paths, the text layer is invisible
+#
+# THE SHIPPED BUG THIS LOCKS DOWN. Redaction deletes show-text operators. On a
+# PDF whose words were converted to outlines and given a parallel INVISIBLE text
+# layer for searchability, that deletes the invisible layer and leaves every
+# visible word exactly where it was - so the translation is typed on top of a
+# fully readable original. `/translate-pdf` now renders the page at 72 dpi
+# either side of `apply_redactions` and covers any block whose pixels did not
+# move; these cases pin both halves of that, including the refusal.
+#
+# The fixture is honest about what it stands in for: a filled rectangle is not a
+# glyph outline, but it is the same thing to the code under test - ink inside
+# the block box that redaction is configured never to touch - and unlike a real
+# Type3 outline font it can be written in four lines with no fixture file.
+# --------------------------------------------------------------------------- #
+
+INK_TEXT = "Description"  # what the invisible layer says the ink says
+
+
+def _outlined(fill=None):
+    """(bytes, ink rect) — a page whose only visible word is line art.
+
+    The ink is drawn OVER the box the invisible layer reports, read back from
+    the page rather than guessed: the whole point of the fixture is that the two
+    coincide, exactly as they do in a real "text converted to outlines" export.
+    """
+    doc = fitz.open()
+    page = doc.new_page(width=W, height=H)
+    if fill is not None:
+        # A gradient band behind the words: the "cannot sample a flat colour"
+        # case. Drawn as 1pt stripes so no two rows agree.
+        for k in range(40):
+            page.draw_rect(fitz.Rect(40, 80 + k, 400, 81 + k),
+                           color=None, fill=(fill, fill + k / 200.0, fill), width=0)
+    # render_mode=3 = fill-none/stroke-none: extractable, never painted.
+    page.insert_text((60, 108), INK_TEXT, fontsize=FS, render_mode=3)
+    box = None
+    for b in page.get_text("dict")["blocks"]:
+        for line in b.get("lines", []):
+            for sp in line.get("spans", []):
+                if INK_TEXT in sp.get("text", ""):
+                    box = fitz.Rect(sp["bbox"])
+    assert box is not None, "the invisible text layer did not read back"
+    page.draw_rect(box, color=None, fill=(0, 0, 0), width=0)
+    return doc.tobytes(), box
+
+
+def _black_frac(page, rect) -> float:
+    """Share of pixels inside `rect` that render dark. A solid bar is ~1.0."""
+    pm = page.get_pixmap(clip=rect, colorspace=fitz.csGRAY, alpha=False)
+    if not pm.samples:
+        return 0.0
+    dark = sum(1 for v in pm.samples if v < 128)
+    return dark / len(pm.samples)
+
+
+def test_outlined_text_is_covered_before_the_translation_lands():
+    """The un-removable original must be gone, not merely written over.
+
+    Measured as INK COVERAGE, not "is any pixel dark": the translation is
+    typeset into the very box the bar filled, so a few dark pixels there are the
+    new glyphs and are correct. A solid bar fills essentially the whole box; a
+    line of text fills a fraction of it. The gap between the two is enormous, so
+    the threshold is not a tuned number.
+    """
+    src, box = _outlined()
+    before = fitz.open(stream=src, filetype="pdf")
+    try:
+        assert _black_frac(before[0], box) > 0.9, "fixture: the bar is not solid"
+    finally:
+        before.close()
+    resp, doc, _ = _translate(src, {INK_TEXT: "Mo ta hang muc"})
+    try:
+        assert resp.blocks_covered >= 1, (
+            "the block whose ink redaction could not touch was not covered - "
+            "the original words are still readable under the translation"
+        )
+        assert resp.blocks_uncleaned == 0
+        after = _black_frac(doc[0], box)
+        assert after < 0.35, (
+            f"{after:.0%} of the block is still solid ink - the original "
+            "survived and the translation is sitting on top of it"
+        )
+    finally:
+        doc.close()
+
+
+def test_a_normal_page_is_never_covered():
+    """The false-positive guard: real text disappears, so the probe stays quiet.
+
+    Without it, "cover the block" could quietly become the default path and
+    every translated document would grow opaque patches over its own shading.
+    """
+    resp, doc, _ = _translate(_invoice())
+    try:
+        assert resp.blocks_covered == 0, "a normal text page must never be covered"
+        assert resp.blocks_uncleaned == 0
+    finally:
+        doc.close()
+
+
+def test_cover_is_refused_when_the_background_is_not_flat():
+    """Over a gradient there is no colour to paint with, so nothing is painted.
+
+    An opaque rectangle across a photograph is a worse outcome than a page that
+    reports it could not be cleaned - the count is what the UI warns on.
+    """
+    src, _box = _outlined(fill=0.55)
+    resp, doc, _ = _translate(src, {INK_TEXT: "Mo ta hang muc"})
+    try:
+        assert resp.blocks_uncleaned >= 1, "the refusal was not counted"
+        assert resp.blocks_covered == 0, "a gradient was painted over"
+        # The gradient is still there: two rows well inside the band differ.
+        pm = doc[0].get_pixmap(clip=fitz.Rect(300, 85, 390, 115),
+                               colorspace=fitz.csGRAY, alpha=False)
+        rows = {bytes(pm.samples[y * pm.stride:(y + 1) * pm.stride]) for y in range(pm.height)}
+        assert len(rows) > 3, "the gradient behind the words was flattened"
+    finally:
+        doc.close()
+
+
+def test_pages_the_model_gave_nothing_for_are_reported():
+    """A page left untranslated must be COUNTED, not silently shipped as success.
+
+    The reporter's own file came back with two of three pages still in the
+    source language while the app said it had translated the document.
+    """
+    class _Silent(_StubGemini):
+        def _generate(self, prompt, system_instruction=""):
+            return "not json at all"
+
+    stub = _Silent({})
+    real = api._get_gemini
+    api._get_gemini = lambda: stub
+    try:
+        resp = asyncio.run(translate_pdf(TranslateRequest(
+            pdf_b64=base64.b64encode(_invoice()).decode("ascii"),
+            source_lang="en", target_lang="vi")))
+    finally:
+        api._get_gemini = real
+    # Every page failed, so the endpoint reports the honest overall failure...
+    assert not resp.success
+    # ...and a MIXED document is the case the counter exists for: one good page,
+    # one the model dropped.
+    two = fitz.open()
+    two.insert_pdf(fitz.open(stream=_invoice(), filetype="pdf"))
+    two.new_page(width=W, height=H).insert_text((60, 120), "Description", fontsize=FS)
+    both = two.tobytes()
+    two.close()
+
+    class _HalfDead(_StubGemini):
+        def __init__(self, book):
+            super().__init__(book)
+            self.calls = 0
+
+        def _generate(self, prompt, system_instruction=""):
+            self.calls += 1
+            if self.calls > 1:
+                return "not json at all"
+            return super()._generate(prompt, system_instruction)
+
+    stub = _HalfDead(VI)
+    api._get_gemini = lambda: stub
+    try:
+        resp = asyncio.run(translate_pdf(TranslateRequest(
+            pdf_b64=base64.b64encode(both).decode("ascii"),
+            source_lang="en", target_lang="vi")))
+    finally:
+        api._get_gemini = real
+    assert resp.success, resp.error
+    assert resp.pages_failed == 1, f"pages_failed={resp.pages_failed}, expected 1"
+    assert resp.pages_changed == 1
+
+
+
 if __name__ == "__main__":
     # No pytest in the project venv — plain runner, same style as test_export.py.
     for fn in (
@@ -536,6 +712,10 @@ if __name__ == "__main__":
         test_retranslating_an_output_does_not_draw_boxes,
         test_translate_falls_back_when_source_font_lacks_vietnamese,
         test_fit_fontsize_never_overflows,
+        test_outlined_text_is_covered_before_the_translation_lands,
+        test_a_normal_page_is_never_covered,
+        test_cover_is_refused_when_the_background_is_not_flat,
+        test_pages_the_model_gave_nothing_for_are_reported,
     ):
         fn()
         print(f"PASS {fn.__name__}")

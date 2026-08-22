@@ -27,12 +27,12 @@ const I = {
 // here — they made the grid unreadable and went stale every release.
 const FEATURES = [
   { i: "ai", t: "Bóc tách dữ liệu bằng AI", d: "OCR tiếng Việt kết hợp AI để đọc hợp đồng, hoá đơn, biểu mẫu — lấy ra đúng những trường bạn cần rồi xuất Excel hoặc JSON." },
-  { i: "translate", t: "Dịch PDF bằng AI", d: "Dịch tài liệu sang ngôn ngữ khác mà giữ nguyên bố cục, kể cả bảng biểu, và xuất ra một file PDF mới." },
+  { i: "translate", t: "Dịch PDF bằng AI", d: "Dịch tài liệu sang ngôn ngữ khác mà giữ nguyên bố cục, kể cả bảng biểu, và xuất ra một file PDF mới. Xoá được cả chữ gốc đã chuyển thành nét vẽ, nên bản dịch không nằm đè lên bản gốc." },
   { i: "type", t: "Sửa nội dung gốc của PDF", d: "Chỉnh trực tiếp chữ thật trong tài liệu chứ không vẽ đè, giữ đúng font, cỡ chữ và nền sẵn có." },
   { i: "search", t: "Tìm & Thay thế chữ", d: "Tìm một từ khoá trong toàn bộ tài liệu rồi thay từng chỗ hoặc thay tất cả trong một lần — quen tay như trong Word." },
   { i: "pages", t: "Quản lý trang", d: "Ghép, tách, chèn, xoay, sắp xếp, xoá theo khoảng, thêm trang trắng và đánh số trang. Kéo được cả một trang từ tài liệu này sang tài liệu khác đang mở ở cửa sổ bên cạnh." },
   { i: "combine", t: "Gộp nhiều PDF thành một", d: "Chọn nhiều file cùng lúc, sắp xếp thứ tự rồi gộp thành một tài liệu duy nhất — ngay từ menu chuột phải trong Explorer, hoặc bằng cách kéo–thả vào cửa sổ app." },
-  { i: "pen", t: "Chú thích & đánh dấu", d: "Hộp văn bản, ghi chú, mũi tên, ảnh/chữ ký, khoanh vùng chữ nhật, elip và khoanh mây revision đều là đối tượng sống: mở lại file vẫn chọn, kéo, đổi màu/nét/nền và xoá được — kể cả trên trang đã xoay hay bản vẽ khổ ngang. Thêm tô sáng, vẽ tay, che thông tin thật, watermark. Màu mặc định cho vật thể mới chọn được trong Cài đặt, app nhớ cho lần sau." },
+  { i: "pen", t: "Chú thích & đánh dấu", d: "Hộp văn bản, ghi chú, mũi tên, ảnh/chữ ký, khoanh vùng chữ nhật, elip, khoanh mây revision và nét vẽ tay đều là đối tượng sống: mở lại file vẫn chọn, kéo, đổi màu/nét/nền và xoá được — kể cả trên trang đã xoay hay bản vẽ khổ ngang. Chữ trong hộp văn bản xoay được theo góc bất kỳ. Thêm tô sáng, che thông tin thật, watermark. Màu mặc định cho vật thể mới chọn được trong Cài đặt, app nhớ cho lần sau." },
   { i: "compare", t: "So sánh & chồng lớp bản vẽ", d: "Đối chiếu hai phiên bản của một tài liệu hoặc hai bản vẽ CAD/Revit, chỉ ra vùng khác biệt và chồng lớp lên nhau để soi thay đổi." },
   { i: "ruler", t: "Đo & ghi kích thước", d: "Hiệu chuẩn theo một đoạn đã biết kích thước, các đoạn còn lại tự ghi số đúng tỷ lệ — dành cho bản vẽ kỹ thuật." },
   { i: "signature", t: "Ký số bằng USB token", d: "Ký số PKI bằng chứng thư trên token USB (VNPT-CA, Viettel-CA, FPT-CA…), chữ ký nhìn thấy được kèm dấu thời gian. Khoá bí mật không rời token." },
@@ -58,7 +58,7 @@ document.getElementById("feature-grid").innerHTML = FEATURES.map((f) => `
 
 // Live download links from the latest GitHub release (falls back to the
 // releases page hrefs already in the HTML).
-fetch("https://api.github.com/repos/darkend16987/NabuPDF/releases/latest")
+fetch("https://api.github.com/repos/darkend16987/NabuPDF-Releases/releases/latest")
   .then((r) => (r.ok ? r.json() : Promise.reject()))
   .then((rel) => {
     const v = document.getElementById("dl-version");

@@ -429,10 +429,13 @@ check("the default stamp size is a usable number", SYMBOL_SIZE > 0 && SYMBOL_SIZ
 
 check("node import exposes exactly the surface editor.js calls by bare name",
   Object.keys(G).sort(),
-  ["ANGLE_SNAP_DEG", "CLOUD_BUMP", "CLOUD_BUMP_MAX", "CLOUD_BUMP_MIN", "SYMBOL_SIZE",
+  // .sort() is by UTF-16 code unit, so "STROKE_*" (0x54 T) sorts BEFORE "SYMBOL_SIZE"
+  // (0x59 Y). Not a typo — the same trap as strToBytes/stripManagedAnnots in test:managed.
+  ["ANGLE_SNAP_DEG", "CLOUD_BUMP", "CLOUD_BUMP_MAX", "CLOUD_BUMP_MIN",
+   "STROKE_MAX_PTS", "STROKE_TOL", "SYMBOL_SIZE",
    "annotBounds", "arcApex", "arrowLabelPos", "bumpOf", "cloudPath", "cloudPathPoly",
-   "fitShift", "resizeRect", "snapLineEnd", "strokeExtend", "symbolStrokes",
-   "translateAnnot", "unionBounds"]);
+   "fitShift", "resizeRect", "simplifyStroke", "snapLineEnd", "strokeExtend",
+   "strokePath", "symbolStrokes", "translateAnnot", "unionBounds"]);
 check("the constants are numbers, the rest functions",
   Object.keys(G).map((k) => (/^[A-Z]/.test(k) ? typeof G[k] === "number" : typeof G[k] === "function")).every(Boolean),
   true);
@@ -744,6 +747,115 @@ check("fit: the cases above genuinely started off the page",
     return s.dx !== 0 || s.dy !== 0;
   }),
   [true, true, true, true, true, true]);
+
+
+// ==========================================================================
+// strokePath / simplifyStroke - freehand strokes (v0.2.63)
+// ==========================================================================
+//
+// Same contract as cloudPathPoly, and the same reason it needs a grid: ONE path
+// string is read by the overlay <svg>, by the round-trip /AP and (through the same
+// point list) by the flattened bake. What differs is that a stroke is the only kind
+// whose stored points are not the ones the user's object holds - simplifyStroke
+// thins them on the way into the file - so "does the curve survive" is a real
+// question here and nowhere else.
+
+const { strokePath, simplifyStroke, STROKE_TOL } = G;
+
+// Local 0-origin means relative to the BOX, not to the first point: this stroke
+// starts at x=100 while its leftmost point is x=90, so the M is at 10, not 0. Getting
+// that backwards is exactly the class of mistake the pad bookkeeping above is about.
+check("strokePath: coordinates are box-relative, the path is open, one L per segment",
+  (() => {
+    const g = strokePath([{ x: 100, y: 200 }, { x: 140, y: 260 }, { x: 90, y: 300 }]);
+    return [g.d, /Z/.test(g.d), (g.d.match(/L /g) || []).length];
+  })(),
+  ["M 10.00 0.00 L 50.00 60.00 L 0.00 100.00", false, 2]);
+check("strokePath: the box is the points' own, reported for the caller to place",
+  (() => {
+    const g = strokePath([{ x: 100, y: 200 }, { x: 140, y: 260 }, { x: 90, y: 300 }]);
+    return [g.minX, g.minY, g.W, g.H];
+  })(),
+  [90, 200, 50, 100]);
+// A perfectly horizontal stroke has zero height. The path still has to be emitted -
+// it is the CALLER's stroke-width padding that stops the /AP BBox collapsing, not a
+// fudge factor here - so H really is 0 and that is correct.
+check("strokePath: a straight stroke keeps a zero-thickness box (no fudge)",
+  (() => { const g = strokePath([{ x: 10, y: 50 }, { x: 90, y: 50 }]); return [g.W, g.H]; })(),
+  [80, 0]);
+check("strokePath: fewer than two DISTINCT points is null (draw nothing)",
+  [strokePath([]), strokePath([{ x: 1, y: 1 }]),
+   strokePath([{ x: 1, y: 1 }, { x: 1, y: 1 }, { x: 1, y: 1 }])],
+  [null, null, null]);
+check("strokePath: NaN points are dropped, not propagated into the path string",
+  /NaN|undefined/.test(strokePath([{ x: 0, y: 0 }, { x: NaN, y: 5 }, { x: 10, y: 10 }]).d),
+  false);
+// 2dp, deliberately: 1/100 pt is ~3.5 micrometres. Emitting full float precision
+// would roughly double the /NabuData payload for no visible gain.
+check("strokePath: coordinates are 2dp",
+  strokePath([{ x: 0, y: 0 }, { x: 1.23456, y: 9.87654 }]).d, "M 0.00 0.00 L 1.23 9.88");
+
+// --- simplifyStroke -------------------------------------------------------
+// The sampled arc below is what a real drag produces: many points, nearly all of
+// them on the curve their neighbours already describe.
+const ARC = [];
+for (let i = 0; i <= 200; i++) {
+  const t = (i / 200) * Math.PI;
+  ARC.push({ x: 100 + Math.cos(t) * 90, y: 300 - Math.sin(t) * 90 });
+}
+const THIN = simplifyStroke(ARC);
+check("simplifyStroke: most of a sampled curve is redundant",
+  [THIN.length < ARC.length / 3, THIN.length >= 4], [true, true]);
+check("simplifyStroke: the endpoints are never dropped",
+  [THIN[0], THIN[THIN.length - 1]], [ARC[0], ARC[ARC.length - 1]]);
+// IDEMPOTENCE IS THE POINT, not the compression ratio. Without it, save -> reopen ->
+// save shaves the curve a little further every round and a signature slowly turns
+// into a polygon - the same failure mode as re-translating an already-translated file.
+check("simplifyStroke: running it on its own output changes nothing",
+  JSON.stringify(simplifyStroke(THIN)), JSON.stringify(THIN));
+// Every dropped point must be within the tolerance of the kept curve, or the shape
+// moved. Measured directly rather than eyeballed from the count.
+check("simplifyStroke: no original point ends up further than the tolerance from the result",
+  (() => {
+    let worst = 0;
+    for (const p of ARC) {
+      let best = Infinity;
+      for (let k = 1; k < THIN.length; k++) {
+        const a = THIN[k - 1], b = THIN[k];
+        const dx = b.x - a.x, dy = b.y - a.y;
+        const len2 = dx * dx + dy * dy;
+        const t = len2 ? Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / len2)) : 0;
+        best = Math.min(best, Math.hypot(p.x - (a.x + dx * t), p.y - (a.y + dy * t)));
+      }
+      worst = Math.max(worst, best);
+    }
+    return worst <= STROKE_TOL + 1e-9;
+  })(),
+  true);
+check("simplifyStroke: a straight run collapses to its two ends",
+  simplifyStroke([{ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 20, y: 0 }, { x: 30, y: 0 }]),
+  [{ x: 0, y: 0 }, { x: 30, y: 0 }]);
+// A sharp corner is exactly what RDP is for: the elbow carries the shape and must
+// survive even though it sits between two long straight runs.
+check("simplifyStroke: a Shift-straight elbow survives",
+  simplifyStroke([{ x: 0, y: 0 }, { x: 25, y: 0 }, { x: 50, y: 0 },
+                  { x: 50, y: 25 }, { x: 50, y: 50 }]),
+  [{ x: 0, y: 0 }, { x: 50, y: 0 }, { x: 50, y: 50 }]);
+check("simplifyStroke: short inputs and junk pass through safely",
+  [simplifyStroke([]), simplifyStroke([{ x: 1, y: 2 }]),
+   simplifyStroke([{ x: 1, y: 2 }, { x: NaN, y: 3 }, { x: 4, y: 5 }]).length],
+  [[], [{ x: 1, y: 2 }], 2]);
+// The backstop escalates the tolerance rather than truncating: losing the TAIL of a
+// signature is a worse failure than a coarser curve.
+check("simplifyStroke: an over-budget stroke is coarsened, never cut short",
+  (() => {
+    const zig = [];
+    for (let i = 0; i < 4000; i++) zig.push({ x: i * 0.5, y: i % 2 ? 0 : 40 });
+    const out = simplifyStroke(zig, STROKE_TOL, 500);
+    return [out.length <= 500, out[0].x === zig[0].x,
+            out[out.length - 1].x === zig[zig.length - 1].x];
+  })(),
+  [true, true, true]);
 
 console.log(`\nannot-geom: ${pass} pass, ${fail} fail`);
 process.exit(fail ? 1 : 0);

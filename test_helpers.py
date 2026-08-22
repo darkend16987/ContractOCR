@@ -209,6 +209,114 @@ def test_font_covers_bad_fontfile_is_false():
     assert api._font_covers("x", fontfile="/no/such/font.ttf") is False
 
 
+# --------------------------------------------------------------------------- #
+# _fix_span_box / _fix_text_dict — the "baseline on the top edge" span quirk
+#
+# WHY A GRID HERE AND NOT ONLY IN test_translate_layout. The repair sits in ONE
+# reader (`_page_text_dict`) that /translate-pdf, /text-spans and /text-find all
+# go through, so its rule is shared-surface code: getting it wrong moves every
+# highlight box in "Sua noi dung" as well as the translation. These cases are
+# pure dicts in, tuples out - no PDF, no font, nothing to render - so they say
+# exactly what the rule is, and the fixture-driven cases in
+# test_translate_layout.py say what it DOES.
+#
+# The guard case at the end rebuilds the old (broken) behaviour and demands the
+# grid notice: a rule nothing can fail is not a rule.
+# --------------------------------------------------------------------------- #
+
+def _span(y0, y1, oy, size=10.0, asc=0.9, desc=-0.1):
+    return {"bbox": (50.0, y0, 150.0, y1), "origin": (50.0, oy),
+            "size": size, "ascender": asc, "descender": desc}
+
+
+def test_fix_span_box_leaves_a_normal_font_alone():
+    """Baseline 0.9*size below the top edge - exactly how MuPDF reports real text."""
+    sp = _span(y0=91.0, y1=101.0, oy=100.0)  # oy - y0 = 9.0 = 0.9 * 10
+    assert api._fix_span_box(sp) is None
+
+
+def test_fix_span_box_repairs_baseline_on_top_edge():
+    """The quirk: origin sits ON y0, so the whole box hangs below the glyphs."""
+    sp = _span(y0=100.0, y1=110.0, oy=100.0)
+    box = api._fix_span_box(sp)
+    assert box is not None
+    # 0.9 / -0.25 are the substituted metrics, measured against real ink.
+    assert box == (50.0, 100.0 - 9.0, 150.0, 100.0 + 2.5)
+
+
+def test_fix_span_box_is_scale_free():
+    """A 4pt footnote is judged by the same fraction as a 40pt heading."""
+    small = api._fix_span_box(_span(y0=200.0, y1=204.0, oy=200.0, size=4.0))
+    assert small == (50.0, 200.0 - 3.6, 150.0, 200.0 + 1.0)
+    # ...and a 4pt span reported correctly is still left alone, even though the
+    # 3.6pt offset would look "small" to any absolute threshold.
+    assert api._fix_span_box(_span(y0=196.4, y1=200.4, oy=200.0, size=4.0)) is None
+
+
+def test_fix_span_box_keeps_the_fonts_own_metrics_when_they_are_bigger():
+    """max/min, not a blind overwrite: a font with a deeper descender keeps it."""
+    box = api._fix_span_box(_span(y0=100.0, y1=110.0, oy=100.0, asc=1.1, desc=-0.4))
+    assert box == (50.0, 100.0 - 11.0, 150.0, 100.0 + 4.0)
+
+
+def test_fix_span_box_skips_a_squashed_box():
+    """Shorter than half the font size: a clipped mark, not a misplaced line box."""
+    assert api._fix_span_box(_span(y0=100.0, y1=103.0, oy=100.0)) is None
+
+
+def test_fix_span_box_survives_junk():
+    assert api._fix_span_box({}) is None
+    assert api._fix_span_box({"bbox": (0, 0, 1, 1)}) is None
+    assert api._fix_span_box(_span(y0=100.0, y1=110.0, oy=100.0, size=0.0)) is None
+
+
+def test_fix_text_dict_leaves_rotated_lines_alone():
+    """A vertical line's box is not built from the ascender along y at all."""
+    data = {"blocks": [{"type": 0, "lines": [
+        {"dir": (0.0, -1.0), "spans": [_span(y0=100.0, y1=110.0, oy=100.0)]},
+    ]}]}
+    assert api._fix_text_dict(data) == 0
+    assert data["blocks"][0]["lines"][0]["spans"][0]["bbox"] == (50.0, 100.0, 150.0, 110.0)
+
+
+def test_fix_text_dict_rebuilds_line_and_block_boxes():
+    """Callers read all three boxes; a mix of repaired and stale ones is worse."""
+    data = {"blocks": [{
+        "type": 0,
+        "bbox": (50.0, 100.0, 150.0, 130.0),
+        "lines": [
+            {"dir": (1.0, 0.0), "bbox": (50.0, 100.0, 150.0, 110.0),
+             "spans": [_span(y0=100.0, y1=110.0, oy=100.0)]},
+            {"dir": (1.0, 0.0), "bbox": (50.0, 120.0, 150.0, 130.0),
+             "spans": [_span(y0=120.0, y1=130.0, oy=120.0)]},
+        ],
+    }]}
+    assert api._fix_text_dict(data) == 2
+    b = data["blocks"][0]
+    assert b["lines"][0]["bbox"] == (50.0, 91.0, 150.0, 102.5)
+    assert b["lines"][1]["bbox"] == (50.0, 111.0, 150.0, 122.5)
+    assert b["bbox"] == (50.0, 91.0, 150.0, 122.5)
+
+
+def test_fix_text_dict_skips_image_blocks():
+    data = {"blocks": [{"type": 1, "bbox": (0, 0, 10, 10)}]}
+    assert api._fix_text_dict(data) == 0
+
+
+def test_fix_span_box_guard_old_behaviour_would_fail_the_grid():
+    """Rebuild the pre-fix behaviour (never repair) and demand the grid notices.
+
+    Without this a future "simplification" that returns None unconditionally
+    would leave every case above green except the two that assert a repair - and
+    it is easy to convince yourself those two are the odd ones out.
+    """
+    quirk = _span(y0=100.0, y1=110.0, oy=100.0)
+    assert api._fix_span_box(quirk) is not None, (
+        "the quirk span must be repaired; returning None here IS the shipped bug"
+    )
+
+
+
 if __name__ == "__main__":
     # No pytest in the project venv - plain runner, same style as test_export.py.
     for fn in (
@@ -242,6 +350,16 @@ if __name__ == "__main__":
         test_font_covers_builtin_gaps,
         test_font_covers_dejavu_has_vietnamese,
         test_font_covers_bad_fontfile_is_false,
+        test_fix_span_box_leaves_a_normal_font_alone,
+        test_fix_span_box_repairs_baseline_on_top_edge,
+        test_fix_span_box_is_scale_free,
+        test_fix_span_box_keeps_the_fonts_own_metrics_when_they_are_bigger,
+        test_fix_span_box_skips_a_squashed_box,
+        test_fix_span_box_survives_junk,
+        test_fix_text_dict_leaves_rotated_lines_alone,
+        test_fix_text_dict_rebuilds_line_and_block_boxes,
+        test_fix_text_dict_skips_image_blocks,
+        test_fix_span_box_guard_old_behaviour_would_fail_the_grid,
     ):
         fn()
         print(f"PASS {fn.__name__}")

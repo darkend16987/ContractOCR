@@ -1597,6 +1597,164 @@ _Ghi 2026-08-13. **Đo được, không suy luận.**_
   không nó đang test một hình dạng tài liệu mà sidecar không bao giờ sinh ra.
 ---
 
+### BI-67 · Chữ **thành nét vẽ** + lớp text vô hình: redact xoá lớp vô hình, **mực vẫn còn**
+
+- `_fix_span_box` / `_fix_text_dict` / `_page_text_dict` và bộ dò mực
+  `_probe_pixmap` / `_px_box` / `_ink_survived` / `_ring_color`
+  ([src/pdf/layout.py](../src/pdf/layout.py)); bước **1** + **1b** của `/translate-pdf`
+  ([api.py](../api.py)). Lưới: `test_helpers.py` (10 ca thuần) + `test_translate_layout.py`
+  (4 ca dựng file).
+- **Lỗi thật, người dùng báo:** bấm **Dịch**, file ra vẫn đọc được **nguyên** tiếng Việt và
+  bản tiếng Anh **nằm đè lên** — không đọc được cái nào. Thiết kế nói rõ bản gốc phải biến
+  mất.
+- **Hai lỗi ĐỘC LẬP chồng lên nhau, và vá một cái không đủ.** Đã đo trực tiếp trên file
+  người dùng gửi:
+  1. **Chữ nhìn thấy KHÔNG phải chữ.** Content stream 775 KB toàn `m/l/c/f` — 33 đường
+     **tô đặc** vẽ ra toàn bộ chữ của trang, kèm một lớp font **Type3 rỗng** chỉ để
+     `get_text` đọc được. `apply_redactions` xoá đúng lớp vô hình đó (`get_text` về **0**
+     ký tự) nhưng render **y hệt trước** — vì `graphics=PDF_REDACT_LINE_ART_NONE` (thêm ở
+     v0.2.43 để cứu gạch chân và ô bảng có nền) nói **đừng đụng vào nét vẽ**, mà mực CHÍNH
+     LÀ nét vẽ.
+  2. **bbox của span lệch xuống đúng một dòng.** MuPDF báo
+     `bbox=(56, 43, 71.6, 57) origin=(56, 43)` — **đường chân nằm trên cạnh TRÊN** của
+     hộp, trong khi mực thật ở `y 32.94..43.17`. Nên ô redact **và** ô `insert_textbox`
+     đều thấp hơn chữ một dòng.
+- **Bật lại xoá nét vẽ KHÔNG phải câu trả lời — đã thử cả ba chế độ.** `REMOVE_IF_COVERED`
+  và `REMOVE_IF_TOUCHED` chỉ xoá những sub-path heuristic của MuPDF cho là bị phủ: tiêu đề
+  quay lại **mất dấu** (“PHAM VI CÔNG VIEC”), gạch ngang trang biến mất. Vá theo hướng đó
+  là đổi một lỗi lộ lấy một lỗi bẩn.
+- **Nguồn sự thật là ĐO, không phải đoán:** render trang 72 dpi **trước** và **sau**
+  `apply_redactions`, so **đúng ô của block đó**. Không đổi **một** pixel ⇒ redact chứng
+  minh là **không xoá được gì** ⇒ chữ nhìn thấy không phải chữ ⇒ che nền. Phép thử này
+  **không** hỏi “vùng này có tối không”, nên chú thích nằm **trên ảnh** (redact xoá được
+  glyph ⇒ pixel ĐỔI) không bao giờ bị nhận nhầm.
+- **Che nền lấy màu từ dải ngay TRÊN và DƯỚI block**, không phải viền quanh: với một dòng
+  chữ, hai dải đó là khoảng cách dòng ⇒ chính là màu nền trang, còn hai bên có thể chạm cột
+  bên cạnh. Dải **không** đồng màu (ảnh, gradient) ⇒ **không vẽ gì**, đếm vào
+  `blocks_uncleaned` và báo cho người dùng: một mảng đặc đè lên ảnh phối cảnh là hỏng nặng
+  hơn một trang nói thẳng là không dọn được.
+- **Bản vá bbox nằm ở TẦNG CHUNG (`_page_text_dict`), cố ý.** `/text-spans`, `/text-find`
+  và `_page_text_blocks` là ba cửa duy nhất đọc span; đi chung một cửa thì Dịch, Sửa nội
+  dung và Tìm & Thay thế **không thể** bất đồng về chỗ của một chữ. Thêm cửa thứ tư = gọi
+  `_page_text_dict`, **không** gọi `page.get_text("dict")`.
+- **Tài liệu bình thường không thể chạm vào luật này:** với font thật MuPDF dựng
+  `y0 = origin.y - ascender*size`, nên `origin.y - y0 ≈ 0.9*size` — cách xa ngưỡng
+  `0.25*size`; ca lỗi cho đúng **0**. Ngưỡng là **phân số của cỡ chữ**, không phải số điểm
+  tuyệt đối, nên chú thích 4pt và tiêu đề 40pt cùng một luật. Chỉ áp cho **dòng ngang**
+  (`dir ≈ (1,0)`) — trên dòng dọc `origin.y - y0` mang nghĩa khác hẳn (BI-66).
+- **Số thay thế là ĐO được:** `asc = 0.9`, `desc = -0.25`. Trên file thật, dòng cao nhất cần
+  `0.89*size` trên đường chân và đuôi chữ sâu nhất xuống `0.21*size`.
+- **Vỡ khi:** dịch một brochure/catalogue xuất từ InDesign/Canva (“giữ chữ tìm được” =
+  outline + lớp vô hình) → bản dịch **đè** lên bản gốc · “Sửa nội dung” trên cùng file đó
+  tô sáng **khoảng trắng dưới** chữ · Tìm & Thay thế ghi chữ mới thấp hơn một dòng · và
+  ngược lại, nếu ngưỡng bị nới thì tài liệu Word **bình thường** bị dịch ô hộp lên trên.
+- **Luật:** đừng bao giờ đổi `graphics=` của `apply_redactions` để “cho chắc”. Câu hỏi đúng
+  là “redact có xoá được gì không”, và câu đó phải **đo**, không suy luận.
+---
+
+### BI-68 · `blocks_covered` / `pages_failed` là **kết quả**, không phải log — `success` không có nghĩa là xong
+
+- `TranslateResponse` ([api.py](../api.py)) và toast của `runTranslate`
+  ([app.js](../desktop/renderer/app.js)). Lưới:
+  `test_translate_layout.py::test_pages_the_model_gave_nothing_for_are_reported`.
+- **Lỗi thật, trong cùng một lượt báo lỗi:** file 3 trang, Gemini chỉ trả kết quả cho trang
+  1. Hai trang kia ra file **nguyên tiếng Việt** và app báo **thành công**. Code cũ:
+  `if not translations: continue` — bỏ qua **im lặng**.
+- Người dùng sắp **gửi file này cho người khác**. Một trang không dịch mà không ai nói là
+  lỗi tệ hơn một trang dịch xấu.
+- **Luật:** trong `/translate-pdf`, mọi nhánh `continue` bỏ qua công việc phải **cộng vào
+  một bộ đếm có trong response**, và toast phải đổi sang `warn` khi bộ đếm khác 0. `success`
+  chỉ có nghĩa “đã tạo được file”.
+---
+
+### BI-69 · `draw` round-trip: điểm phải **thưa hoá**, và nét phải **cùng một hình** ở cả hai đường ghi
+
+- `strokePath` / `simplifyStroke` ([annot-geom.js](../desktop/renderer/annot-geom.js));
+  nhánh `draw` của `shapeAppearance` + `serializeManaged`
+  ([managed-codec.js](../desktop/renderer/managed-codec.js)); nhánh `draw` của
+  `deserializeManaged` + `drawOneAnnot` ([editor.js](../desktop/renderer/editor.js)).
+  Lưới: `test:cloud` (14 ca hình học), `test:managed` (round-trip + thưa hoá),
+  `test:rotate` §6/§7 (`draw` + `draw flat`).
+- **Điều `draw` khác MỌI kind managed khác:** nó là kind duy nhất mà điểm **lưu vào file
+  không phải** điểm trên object. `cloudpen` là dăm góc **bấm chuột** nên ghi nguyên; `draw`
+  thêm một điểm **mỗi lần chuột di chuyển**, nên một nét chéo qua trang A4 là vài trăm điểm
+  và một chữ ký là vài nghìn — tất cả phải nằm trong chuỗi hex `/NabuData`, trên **mỗi**
+  trang, ở **mỗi** lần lưu.
+- **Thưa hoá phải LŨY ĐẲNG, và đó mới là điểm mấu chốt** — không phải tỷ lệ nén. RDP giữ
+  lại đúng những điểm cách dây cung **hơn** `tol`, nên chạy lại trên chính kết quả của nó
+  trả về y nguyên. Không có tính chất đó thì **lưu → mở lại → lưu** bào mòn đường cong thêm
+  một chút mỗi vòng và chữ ký từ từ thành đa giác — đúng lớp lỗi “dịch lại file đã dịch”.
+- **`tol = 0.3 pt ≈ 0.1 mm`**: một phần mười bề rộng nét mảnh nhất thanh công cụ cho, và
+  dưới cả độ phân giải in 600 dpi (0.042 mm/px ⇒ 2.5 px).
+- **Trần `maxPts` NỚI DUNG SAI, không cắt cụt.** Quá hạn thì `tol` nhân đôi rồi chạy lại;
+  mất **đuôi** chữ ký là hỏng nặng hơn một đường cong thô hơn.
+- **Hai đường ghi vẽ CÙNG một hình, bằng hai primitive khác nhau — và đó là chủ ý.**
+  Đường flatten vẫn là `drawLine` **từng đoạn** vì mỗi đầu mút được `map` **riêng**, thứ
+  giữ cho nét đúng trên trang `/Rotate` mà không cần `rotate:` (chính cái bẫy BI-45); `/AP`
+  là **một** `drawSvgPath`. Chúng bằng nhau **chỉ khi** cả hai bo tròn: `lineCap: Round`
+  bên flatten, `1 J` + `1 j` bên `/AP` — **một đầu bo tròn ở mỗi mối nối chính là một mối
+  nối bo tròn**. Bỏ `1 j` thì mối gấp Shift mọc **gai mitre** dài tới 10 lần bề rộng nét;
+  bỏ `lineCap` thì nét flatten có **khấc** giữa các đoạn.
+- **`1 j` phải nằm TRONG `q/Q` của form**, chèn vào sau `ops[0]` (`pushGraphicsState`) chứ
+  không đặt trước — trạng thái đồ hoạ rò ra ngoài form là lỗi không thấy được cho tới khi có
+  operator thứ hai.
+- **Nét thẳng tuyệt đối có một cạnh bằng 0** (`strokePath` trả `H = 0` cho nét ngang, đúng
+  như vậy — không fudge). `/BBox` cạnh 0 **cắt sạch** đường vẽ; thứ cứu nó là phần đệm bề
+  rộng nét của `shapeAppearance`. Ca `draw flat` trong `test:rotate` tồn tại đúng để giữ
+  phần đệm đó.
+- **`redact` sẽ KHÔNG BAO GIỜ vào `MANAGED_KINDS`.** Nó tồn tại để **phá huỷ** nội dung bên
+  dưới; một ô che sửa lại được thì không còn là ô che.
+- **Vỡ khi:** vẽ tay rồi Lưu → mở lại **không chọn được** (quên `MANAGED_KINDS`) · file
+  phình vài MB vì một chữ ký (quên thưa hoá) · nét mờ dần sau vài vòng lưu (thưa hoá không
+  lũy đẳng) · nét ngang **biến mất** sau khi lưu (`/BBox` cạnh 0) · nét bake ra **khác**
+  nét round-trip ở mối nối (thiếu `1 j` hoặc `lineCap`).
+---
+
+### BI-70 · Xoay hộp văn bản nướng vào **RASTER**, không vào `/AP` — và tâm không được dịch
+
+- `normRot` / `rotatedBox` ([annot-text.js](../desktop/renderer/annot-text.js)); nhánh xoay
+  của `renderTextPng`, `ox`/`oy` ở `drawOneAnnot` + `addManagedAnnot`, transform của
+  `renderAnnot` và `openTextEditor` ([editor.js](../desktop/renderer/editor.js)).
+  Lưới: `test:text` (13 ca thuần), `test:managed` (round-trip + toán raster trên canvas giả).
+- **Vì sao nướng vào raster.** Appearance của hộp văn bản **vốn đã** là PNG (glyph tiếng
+  Việt, không nhúng font — xem đầu file editor.js), nên xoay glyph trên canvas **không tốn
+  gì thêm** và annot vẫn là stamp **thẳng trục**. Nhờ vậy `apMatrixFor`/`apRectFor` giữ
+  nguyên **một** nghĩa duy nhất — “trang bị xoay” — tức là toàn bộ lưới BI-59 / `test:rotate`
+  không phải đụng tới. Đi đường `/Matrix` sẽ mua thêm độ nét mà hộp văn bản **không có**
+  (nó là ảnh) và trả bằng việc mở lại đúng chỗ nguy hiểm nhất của codebase.
+- **Bất biến duy nhất phải giữ: xoay KHÔNG được làm dịch TÂM raster.** Canvas phình ra để
+  chứa glyph đã xoay, và `ox`/`oy` trả lại **đúng một nửa** phần phình đó, nên tâm rơi
+  đúng chỗ tâm hộp thẳng đã ở. Chia không đều thì raster vẫn **đúng cỡ** mà chữ vẫn **sai
+  chỗ** — đo được, nhìn không ra.
+- **`ox`/`oy` KHÔNG cùng dấu.** Quay 1/4 thì hộp **phình theo một trục và co theo trục
+  kia**, nên đừng khẳng định “luôn âm”. Thứ cố định là chia đều.
+- **Ở 0° phải ra byte y hệt:** `rotatedBox(w, h, 0)` trả **đúng** `(w, h)` — không epsilon,
+  không ceil — và `ox = oy = 0`, nên mọi call site cũ không đổi một chữ. Cùng lời hứa
+  BI-59.
+- **Dấu góc:** dương = **ngược chiều kim đồng hồ** trên màn hình, cùng quy ước watermark
+  (`rotate(${-angle}deg)` trong CSS, `-angle` radian trên canvas). Hai thứ chữ xoay được
+  của app mà cãi nhau về chiều “45” là một báo lỗi riêng.
+- **Chuẩn hoá vào `(-180, 180]`:** ô nhập là số độ, người dùng gõ 350 nghĩa là “10 chiều
+  kia”, và con số này **đi vào `/NabuData`** — lưu 350 và -10 thành hai giá trị khác nhau
+  thì hai hộp trông y hệt lại so sánh không bằng nhau.
+- **KHÔNG đo lại hộp khi xoay.** `a.w`/`a.h` vẫn là cỡ hộp **thẳng**; góc chồng lên trên.
+  Đo lại thành hộp bao đã xoay thì lần xoay sau áp lên hộp **đã xoay rồi** ⇒ hộp phình
+  không giới hạn.
+- **Chọn và kéo không cần thêm phép tính nào:** hit-test ở đây là
+  `e.target.closest(".an")`, nên trình duyệt tự thử hình **đã xoay**; còn kéo là phép tịnh
+  tiến, bất biến với góc. Đây là lý do tính năng này rẻ, và nó chỉ đúng chừng nào hit-test
+  còn dựa vào DOM — chuyển sang hit-test hình học thì **phải** xoay ngược con trỏ trước.
+- **Transform của overlay là MỘT chuỗi.** `charScale` từng là writer duy nhất của
+  `el.style.transform`; thuộc tính này **không cộng dồn**, nên gán hai lần là mất cái đầu.
+  Và tâm được viết thẳng ra bằng `translate·rotate·translate` chứ **không** đổi
+  `transform-origin` sang `50% 50%`: phần tử đã bị **nới rộng** `1/charScale`, nên 50% của
+  nó không phải tâm người dùng nhìn thấy.
+- **Vỡ khi:** xoay hộp rồi Lưu → mở lại **thẳng lại** (quên `rot` trong payload) · chữ
+  xoay xong **trôi** khỏi chỗ cũ (chia `ox`/`oy` không đều) · xoay 45° rồi xoay tiếp thì hộp
+  **to dần** (đo lại hộp) · gõ lại nội dung thì ô nhập **thẳng** trong khi chữ nghiêng ·
+  hộp có `charScale` khác 1 thì xoay xong **lệch ngang**.
+---
+
 ## 4. Hàm nút thắt (đổi chữ ký = ảnh hưởng diện rộng)
 
 | Hàm | Định nghĩa | Ai gọi |

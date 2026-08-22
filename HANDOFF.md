@@ -4,7 +4,82 @@
 > [DESIGN.md](DESIGN.md) (kiến trúc), [ROADMAP.md](ROADMAP.md) (tiến độ chi tiết),
 > [SETUP.md](SETUP.md) (dựng môi trường).
 
-_Cập nhật: 2026-08-20 · v0.2.62 đã phát hành (dưới đây) · v0.2.61 là bản trước đó_
+_Cập nhật: 2026-08-23 · v0.2.63 đã phát hành (dưới đây) · v0.2.62 là bản trước đó_
+
+> **v0.2.63 — bản dịch không còn đè lên bản gốc · nét vẽ tay sửa lại được sau khi Lưu ·
+> xoay chữ trong hộp văn bản · bản phát hành chuyển sang repo riêng.**
+>
+> ---
+>
+> **1. Dịch PDF đè lên bản gốc — HAI lỗi độc lập chồng lên nhau, đã ĐO trên file người
+> dùng gửi, không suy luận.** (BI-67)
+>
+> - **1a. Chữ nhìn thấy KHÔNG phải chữ.** Content stream của trang là **775 KB** toàn
+>   `m/l/c/f` — **33 đường tô đặc** vẽ ra toàn bộ chữ, cộng một lớp font **Type3 rỗng**
+>   chỉ để `get_text` đọc được (khuôn xuất “giữ chữ tìm được” của InDesign/Canva).
+>   `apply_redactions` xoá đúng lớp vô hình đó — `get_text` về **0 ký tự** — nhưng trang
+>   render **y hệt trước**, vì `graphics=PDF_REDACT_LINE_ART_NONE` (thêm ở v0.2.43 để cứu
+>   gạch chân + ô bảng có nền) nói *đừng đụng vào nét vẽ*, mà mực **chính là** nét vẽ. Nói
+>   cách khác: đây là **hồi quy của v0.2.43** — v0.2.23 gọi `apply_redactions()` trần và
+>   file này khi đó vẫn sạch.
+> - **1b. bbox của span lệch xuống đúng một dòng.** MuPDF báo
+>   `bbox=(56, 43, 71.6, 57) origin=(56, 43)` — **đường chân nằm trên cạnh TRÊN** của hộp,
+>   trong khi mực thật ở `y 32.94..43.17`. Nên **cả** ô redact **và** ô `insert_textbox`
+>   đều thấp hơn chữ một dòng. Lỗi này cũng làm **“Sửa nội dung”** và **Tìm & Thay thế**
+>   đặt sai chỗ trên cùng loại file.
+> - **Bật lại xoá nét vẽ KHÔNG cứu được — đã thử cả ba chế độ.** `REMOVE_IF_COVERED` và
+>   `REMOVE_IF_TOUCHED` chỉ xoá những sub-path heuristic cho là bị phủ: tiêu đề quay lại
+>   **mất dấu** (“PHAM VI CÔNG VIEC”), gạch ngang trang biến mất. Đổi một lỗi lộ lấy một
+>   lỗi bẩn.
+> - **Cách vá.** (i) Sửa bbox ở **tầng chung** `_page_text_dict` — cửa duy nhất mà
+>   `/text-spans`, `/text-find` và `_page_text_blocks` cùng đi qua, nên ba tính năng không
+>   thể bất đồng về chỗ của một chữ. Luật chỉ nổ khi `origin.y - y0 < 0.25*size` trên
+>   **dòng ngang**; font thật cho ≈`0.9*size` nên tài liệu bình thường không chạm tới.
+>   (ii) **Đo** thay vì đoán: render trang **72 dpi trước và sau** `apply_redactions`;
+>   block nào **không đổi một pixel** thì redact chứng minh là không xoá được gì ⇒ che nền
+>   bằng màu lấy từ dải ngay **trên/dưới** block. Dải không đồng màu (ảnh, gradient) ⇒
+>   **không vẽ gì**, đếm vào `blocks_uncleaned` và **báo cho người dùng**.
+> - Kết quả trên chính file đã báo lỗi: **48/48 block** được che, `uncleaned = 0`, ảnh —
+>   logo — gạch ngang **còn nguyên**, không còn một chữ Việt nào lộ ra.
+>
+> **2. Trang bị bỏ qua giờ được ĐẾM (BI-68).** Cùng file đó: Gemini chỉ trả kết quả cho
+> trang 1/3, hai trang kia ra **nguyên tiếng Việt** và app báo **thành công**. `success`
+> chỉ có nghĩa “đã tạo được file”; `pages_failed` / `blocks_uncleaned` vào response và
+> toast đổi sang `warn`.
+>
+> **3. Nét vẽ tay (`draw`) vào `MANAGED_KINDS` (BI-69).** Lớp thứ hai sau bộ bốn hình học
+> của v0.2.61, `/AP` **vector** qua `drawSvgPath`. Cái mới mà không kind nào trước đó cần:
+> `draw` thêm một điểm **mỗi lần chuột di chuyển**, nên điểm phải **thưa hoá** (RDP,
+> `tol = 0.3 pt ≈ 0.1 mm`) trước khi vào `/NabuData` — và phép thưa hoá phải **lũy đẳng**,
+> nếu không thì lưu → mở lại → lưu bào mòn đường cong mỗi vòng. Hai đường ghi vẽ **cùng một
+> hình bằng hai primitive khác nhau**: flatten giữ `drawLine` từng đoạn (mỗi đầu mút `map`
+> riêng ⇒ đúng trên trang xoay mà không cần `rotate:`, đúng cái bẫy BI-45), `/AP` là một
+> polyline — chúng bằng nhau **chỉ khi** cả hai bo tròn, vì *một đầu bo tròn ở mỗi mối nối
+> chính là một mối nối bo tròn*.
+>
+> **4. Xoay chữ trong hộp văn bản, góc tự do (BI-70).** Góc nướng thẳng vào **RASTER** —
+> appearance của hộp văn bản vốn đã là PNG, nên xoay glyph trên canvas không tốn gì thêm và
+> annot vẫn là stamp **thẳng trục**: `apMatrixFor`/`apRectFor` giữ nguyên một nghĩa duy
+> nhất (“trang bị xoay”) và **toàn bộ lưới BI-59 / test:rotate không phải đụng tới**. Bất
+> biến duy nhất: xoay **không được làm dịch tâm** raster — canvas phình ra, `ox`/`oy` trả
+> lại đúng **một nửa** phần phình. Đo trong trình duyệt thật ở 0/30/90/-45/180°: lệch tâm
+> giữa overlay và raster là **3.64 px ở mọi góc, kể cả 0°** — tức là hằng số đệm PNG có
+> sẵn, xoay **không** thêm sai số nào. Chọn/kéo miễn phí vì hit-test là
+> `e.target.closest(".an")`.
+>
+> **5. Bản phát hành chuyển sang `darkend16987/NabuPDF-Releases`.** `app-update.yml` được
+> ghi **vào bên trong** bộ cài, nên máy đã cài v0.2.62 sẽ **mãi mãi** hỏi repo cũ và không
+> có cách nào báo cho nó. Vì vậy **v0.2.63 phát hành lên CẢ HAI repo** — repo cũ nhận đúng
+> một lần để những máy đó nhảy sang được — và từ v0.2.64 chỉ còn repo mới. Cùng một bộ file,
+> **không** build lại giữa hai lần đăng (nếu không `latest.yml` và `.exe` sẽ lệch sha512).
+>
+> Lưới: python **13/13** (`test_helpers` +10 ca thuần cho bbox, `test_translate_layout`
+> +4 ca dựng file cho che nền / từ chối che / đếm trang hỏng); JS
+> `test:cloud` 175→189, `test:managed` 162→215, `test:rotate` 545→645, `test:text` 105→118.
+> **Mỗi** nhóm mới có **ca canh gác**: bỏ phần che nền ra thì ca dịch báo “98% of the block
+> is still solid ink”. BI-67 · BI-68 · BI-69 · BI-70.
+
+---
 
 > **v0.2.62 — “Sửa nội dung” và chữ thay thế của Tìm & Thay thế không còn tự xoay trên bản vẽ nằm ngang.**
 > Một lớp lỗi **mới**, cùng họ với BI-45/BI-65 nhưng ở **tầng khác**: hai bản vá trước ở đường bake

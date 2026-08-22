@@ -413,22 +413,141 @@ function resizeRect(dir, orig, dx, dy, ratio, min) {
   };
 }
 
+// ---- freehand stroke: the path, and thinning it for the file ---------------
+
+// The SVG `d` of a freehand stroke, in LOCAL coordinates (its own bounding box's
+// top-left is 0,0), plus that box. Same job cloudPathPoly does for a revision
+// cloud, and the same reason: ONE string feeds the on-screen <svg>, pdf-lib's
+// drawSvgPath inside the round-trip /AP, and (via the same point list) the
+// flattened bake. Two implementations of "where is this scribble" would disagree
+// the first time anyone touched either.
+//
+// NO `pad` HERE, unlike cloudPathPoly — and that is the whole difference between
+// the two. A cloud's scallops bulge OUTSIDE the polygon the user clicked, so its
+// path has to be shifted into positive coordinates before anything can measure it.
+// A stroke's path is exactly the points; the only thing sticking out is half the
+// pen width, which is the caller's `lw` padding, not geometry.
+//
+// Fewer than two DISTINCT points is not a stroke: null means "draw nothing", which
+// is also what drawOneAnnot's `for (k = 1; k < pts.length; k++)` does with a single
+// point. Both writers agree without either knowing about the other.
+//
+// Coordinates are emitted at 2dp: these are PDF points, so that is 1/100 pt ≈ 3.5
+// µm — three orders of magnitude below anything a printer or screen resolves, and
+// it keeps the string (which is also what goes in the file) about half the length.
+function strokePath(pts) {
+  const src = [];
+  for (const p of pts || []) {
+    if (!p || !isFinite(+p.x) || !isFinite(+p.y)) continue;
+    const last = src[src.length - 1];
+    if (!last || last.x !== +p.x || last.y !== +p.y) src.push({ x: +p.x, y: +p.y });
+  }
+  if (src.length < 2) return null;
+  let minX = src[0].x, minY = src[0].y, maxX = src[0].x, maxY = src[0].y;
+  for (const p of src) {
+    if (p.x < minX) minX = p.x;
+    if (p.y < minY) minY = p.y;
+    if (p.x > maxX) maxX = p.x;
+    if (p.y > maxY) maxY = p.y;
+  }
+  const d = src
+    .map((p, k) => (k ? "L " : "M ") + (p.x - minX).toFixed(2) + " " + (p.y - minY).toFixed(2))
+    .join(" ");
+  return { d, minX, minY, W: maxX - minX, H: maxY - minY };
+}
+
+// Ramer–Douglas–Peucker: drop the points that carry no shape.
+//
+// WHY A FREEHAND STROKE NEEDS THIS AND A KHOANH MÂY DOES NOT. `cloudpen` is a
+// handful of CLICKED corners, so serializeManaged stores its `pts` verbatim.
+// `draw` appends a point on EVERY mousemove (editor.js, the `drag.type === "draw"`
+// branch), so one lazy diagonal across an A4 page is several hundred points and a
+// signature-sized scribble runs into the thousands. Those all have to fit in the
+// annotation's /NabuData hex string, on every page, on every save.
+//
+// TOLERANCE 0.3 pt ≈ 0.1 mm — a tenth of the width of the thinnest pen the toolbar
+// offers, and below what 600 dpi print resolves (0.042 mm/px ⇒ 2.5 px). Measured on
+// real scribbles it removes 85–95% of the points and the curve does not visibly move.
+//
+// IDEMPOTENT, and that matters more than the ratio: every surviving point is by
+// construction farther than `tol` from the chord of its neighbours, so running this
+// on its own output returns it unchanged. That is what makes save → reopen → save
+// converge instead of eroding the stroke a little further each round (the same class
+// of bug as re-translating an already-translated file).
+//
+// `maxPts` is a backstop, not the main mechanism: if a pathological stroke is still
+// over budget the tolerance doubles and it runs again, rather than truncating the
+// stroke — losing the TAIL of someone's signature is worse than a slightly coarser
+// curve. The doubling is bounded so a degenerate input cannot spin here.
+const STROKE_TOL = 0.3;
+const STROKE_MAX_PTS = 2000;
+function simplifyStroke(pts, tol, maxPts) {
+  tol = tol == null ? STROKE_TOL : tol;
+  maxPts = maxPts == null ? STROKE_MAX_PTS : maxPts;
+  const src = (pts || []).filter((p) => p && isFinite(+p.x) && isFinite(+p.y))
+    .map((p) => ({ x: +p.x, y: +p.y }));
+  if (src.length <= 2) return src;
+  let out = src;
+  for (let round = 0; round < 12; round++) {
+    out = rdp(src, tol);
+    if (out.length <= maxPts) break;
+    tol *= 2;
+  }
+  return out;
+}
+
+// One RDP pass. Iterative (an explicit stack, not recursion): a 20 000-point
+// scribble recurses ~as deep as it is long in the degenerate case, and blowing the
+// renderer's stack mid-save would lose the whole bake, not just this annotation.
+function rdp(pts, tol) {
+  const n = pts.length;
+  const keep = new Array(n).fill(false);
+  keep[0] = keep[n - 1] = true;
+  const stack = [[0, n - 1]];
+  while (stack.length) {
+    const [lo, hi] = stack.pop();
+    if (hi - lo < 2) continue;
+    const a = pts[lo], b = pts[hi];
+    const dx = b.x - a.x, dy = b.y - a.y;
+    const len = Math.hypot(dx, dy);
+    let far = -1, best = -1;
+    for (let i = lo + 1; i < hi; i++) {
+      const p = pts[i];
+      // Distance to the SEGMENT's line; for a closed loop (a === b) the chord has
+      // no direction, so fall back to distance from the shared endpoint.
+      const dist = len < 1e-9
+        ? Math.hypot(p.x - a.x, p.y - a.y)
+        : Math.abs(dy * (p.x - a.x) - dx * (p.y - a.y)) / len;
+      if (dist > best) { best = dist; far = i; }
+    }
+    if (best > tol && far > lo) {
+      keep[far] = true;
+      stack.push([lo, far], [far, hi]);
+    }
+  }
+  const out = [];
+  for (let i = 0; i < n; i++) if (keep[i]) out.push(pts[i]);
+  return out;
+}
+
 // node (tests) takes the module export; the browser already has the bare names
 // above in the shared script scope. window.AnnotGeom is the same set under a name a
 // probe can assert on. Mirrors the tail of wire.js / annot-text.js exactly.
 if (typeof module !== "undefined" && module.exports) {
   module.exports = {
     CLOUD_BUMP, CLOUD_BUMP_MIN, CLOUD_BUMP_MAX, bumpOf, SYMBOL_SIZE,
-    ANGLE_SNAP_DEG,
+    ANGLE_SNAP_DEG, STROKE_TOL, STROKE_MAX_PTS,
     annotBounds, arrowLabelPos, cloudPath, arcApex, cloudPathPoly, fitShift,
-    resizeRect, snapLineEnd, strokeExtend, symbolStrokes, translateAnnot, unionBounds,
+    resizeRect, simplifyStroke, snapLineEnd, strokeExtend, strokePath, symbolStrokes,
+    translateAnnot, unionBounds,
   };
 }
 if (typeof window !== "undefined") {
   window.AnnotGeom = {
     CLOUD_BUMP, CLOUD_BUMP_MIN, CLOUD_BUMP_MAX, bumpOf, SYMBOL_SIZE,
-    ANGLE_SNAP_DEG,
+    ANGLE_SNAP_DEG, STROKE_TOL, STROKE_MAX_PTS,
     annotBounds, arrowLabelPos, cloudPath, arcApex, cloudPathPoly, fitShift,
-    resizeRect, snapLineEnd, strokeExtend, symbolStrokes, translateAnnot, unionBounds,
+    resizeRect, simplifyStroke, snapLineEnd, strokeExtend, strokePath, symbolStrokes,
+    translateAnnot, unionBounds,
   };
 }

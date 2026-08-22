@@ -83,6 +83,10 @@ function normTextStyle(a) {
     indent: Math.max(0, num(a.indent, 0)), // left indent in pt
     listType: a.listType === "bullet" || a.listType === "number" ? a.listType : "none",
     opacity: Math.min(1, Math.max(0, num(a.opacity, 1))),
+    // Anti-clockwise degrees, normalised into (-180, 180] — see normRot below.
+    // A box written before rotation existed has no `rot` at all and reads 0, which
+    // is the same picture it has always drawn.
+    rot: normRot(a.rot),
   };
 }
 // Back-compat alias: the style bundle read off a text annotation is now the full
@@ -221,6 +225,46 @@ function listDisplayText(text, style) {
     .join("\n");
 }
 
+// ---- rotating a text box (v0.2.63) ---------------------------------------
+//
+// SIGN CONVENTION, decided once here so nothing has to guess: a POSITIVE angle turns
+// the text ANTI-CLOCKWISE on screen. That is the watermark's convention already
+// (editor.js renders it as `rotate(${-wm.angle}deg)`, and CSS rotate is clockwise),
+// and having the app's two rotatable pieces of text disagree about which way "45" goes
+// would be its own bug report.
+//
+// Normalised into (-180, 180]: the control is a degree field, so a user who types 350
+// means "10° the other way", and a stored 350 vs -10 would make two visually identical
+// boxes compare unequal — which matters because /NabuData round-trips the number.
+function normRot(v) {
+  let d = +v;
+  if (!isFinite(d)) return 0;
+  d = ((d % 360) + 360) % 360;
+  if (d > 180) d -= 360;
+  // -0 is a real value in JS and it survives JSON.stringify as "0" but compares
+  // unequal to 0 under Object.is. Fold it away so a payload can't carry it.
+  return d === 0 ? 0 : d;
+}
+
+// The axis-aligned box that a w×h rectangle needs after turning by `deg`.
+//
+// WHY THE BAKE NEEDS THIS AND THE OVERLAY DOES NOT. On screen the browser turns the
+// element and paints outside its box for free. In the PDF the text is a PNG placed by
+// its rectangle, so the RASTER has to be big enough to hold the turned glyphs — a 90°
+// text box needs a canvas as tall as the text was wide. Same arithmetic the watermark
+// rasteriser has done since v0.1: |w·cos| + |h·sin| across, |w·sin| + |h·cos| down.
+//
+// At 0° this returns exactly (w, h) — no epsilon, no ceil — which is what keeps an
+// unrotated text box byte-identical to what shipped before rotation existed.
+function rotatedBox(w, h, deg) {
+  const d = normRot(deg);
+  if (!d) return { w: w, h: h };
+  const r = (d * Math.PI) / 180;
+  const c = Math.abs(Math.cos(r));
+  const s = Math.abs(Math.sin(r));
+  return { w: w * c + h * s, h: w * s + h * c };
+}
+
 // node (tests) takes the module export; the browser already has the bare names
 // above in the shared script scope. window.AnnotText is the same set under a name a
 // probe can assert on. Mirrors the tail of wire.js exactly.
@@ -228,11 +272,13 @@ if (typeof module !== "undefined" && module.exports) {
   module.exports = {
     FONT_STACKS, fontFamily, textFont, normTextStyle, textStyle,
     layoutTextBox, measureCtx, measureText, listDisplayText,
+    normRot, rotatedBox,
   };
 }
 if (typeof window !== "undefined") {
   window.AnnotText = {
     FONT_STACKS, fontFamily, textFont, normTextStyle, textStyle,
     layoutTextBox, measureCtx, measureText, listDisplayText,
+    normRot, rotatedBox,
   };
 }

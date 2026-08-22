@@ -65,7 +65,8 @@ const chars = (lay) => lay.ops.map((o) => o.ch).join("");
 const D = normTextStyle();
 check("no argument → the full default bundle, never undefined fields", Object.keys(D).sort(), [
   "align", "bold", "charScale", "font", "indent", "italic", "letterSpacing",
-  "lineHeight", "listType", "opacity", "paraSpacing", "strike", "underline", "wordSpacing",
+  "lineHeight", "listType", "opacity", "paraSpacing", "rot", "strike", "underline",
+  "wordSpacing",
 ]);
 check("default font/align/listType", [D.font, D.align, D.listType], ["sans", "left", "none"]);
 check("default lineHeight is 1.3, spacings 0, charScale 1, opacity 1",
@@ -406,9 +407,80 @@ check("the input string is not mutated and markers are not idempotent-safe by ac
 check("node import exposes exactly the surface editor.js calls by bare name",
   Object.keys(A).sort(),
   ["FONT_STACKS", "fontFamily", "layoutTextBox", "listDisplayText", "measureCtx",
-   "measureText", "normTextStyle", "textFont", "textStyle"]);
+   "measureText", "normRot", "normTextStyle", "rotatedBox", "textFont", "textStyle"]);
 check("every export is callable (or the stacks table)",
   Object.keys(A).map((k) => (k === "FONT_STACKS" ? typeof A[k] === "object" : typeof A[k] === "function")).every(Boolean), true);
+
+
+// ==========================================================================
+// 7. normRot / rotatedBox - turning a text box (v0.2.63)
+// ==========================================================================
+//
+// WHY THESE TWO ARE PURE AND TESTED HERE. Text rotation is baked into the RASTER
+// (editor.js renderTextPng), not into the annotation's /AP matrix - which is what
+// let it ship without touching the placement maths BI-59 and test:rotate exist to
+// protect. What that trade costs is these two functions: the canvas has to be
+// exactly the turned box, and the placement has to move by exactly half the growth,
+// or the words drift off where the user put them. Neither can be checked by looking
+// at the app, so they are checked here.
+
+const { normRot, rotatedBox } = A;
+
+check("normRot: already in range, unchanged", [normRot(0), normRot(45), normRot(-90), normRot(180)],
+  [0, 45, -90, 180]);
+// A degree field lets someone type 350 meaning "10 the other way". Storing 350 and
+// -10 as different numbers would make two identical-looking boxes compare unequal,
+// and the number round-trips through /NabuData.
+check("normRot: wraps into (-180, 180]", [normRot(350), normRot(-350), normRot(270), normRot(-270)],
+  [-10, 10, -90, 90]);
+check("normRot: multiple turns collapse", [normRot(720), normRot(-720), normRot(450), normRot(361)],
+  [0, 0, 90, 1]);
+check("normRot: 180 stays positive (the interval is half-open at -180)",
+  [normRot(180), normRot(-180)], [180, 180]);
+check("normRot: junk is upright, and never -0",
+  [normRot(undefined), normRot(null), normRot(NaN), normRot("x"), Object.is(normRot(-360), 0)],
+  [0, 0, 0, 0, true]);
+
+// EXACTLY (w, h) at 0 - no epsilon, no ceil. This is what keeps an upright text box
+// byte-identical to what shipped before rotation existed, which is the same promise
+// apMatrixFor makes about an unrotated page.
+check("rotatedBox: 0 returns the box untouched, exactly",
+  [rotatedBox(100, 20, 0), rotatedBox(100, 20, undefined), rotatedBox(100, 20, 360)],
+  [{ w: 100, h: 20 }, { w: 100, h: 20 }, { w: 100, h: 20 }]);
+check("rotatedBox: a quarter turn swaps the sides",
+  [Math.round(rotatedBox(100, 20, 90).w), Math.round(rotatedBox(100, 20, 90).h),
+   Math.round(rotatedBox(100, 20, -90).w), Math.round(rotatedBox(100, 20, -90).h)],
+  [20, 100, 20, 100]);
+check("rotatedBox: half a turn is the same box",
+  [Math.round(rotatedBox(100, 20, 180).w), Math.round(rotatedBox(100, 20, 180).h)], [100, 20]);
+// 45 degrees is where a w-and-h mix-up cannot hide: both sides become the same
+// number, and that number is (w+h)/sqrt(2).
+check("rotatedBox: 45 gives (w+h)/sqrt(2) on both sides",
+  [Math.round(rotatedBox(100, 20, 45).w * 100) / 100,
+   Math.round(rotatedBox(100, 20, 45).h * 100) / 100],
+  [Math.round((120 / Math.SQRT2) * 100) / 100, Math.round((120 / Math.SQRT2) * 100) / 100]);
+check("rotatedBox: the box never shrinks, at any angle",
+  (() => {
+    for (let d = -180; d <= 180; d += 7) {
+      const r = rotatedBox(100, 20, d);
+      if (r.w < 20 - 1e-9 || r.h < 20 - 1e-9) return d;   // never below the short side
+      if (r.w > 120 + 1e-9 || r.h > 120 + 1e-9) return d; // never above w+h
+    }
+    return true;
+  })(),
+  true);
+check("rotatedBox: mirrored angles give the same box (|cos|, |sin|)",
+  [rotatedBox(80, 30, 30), rotatedBox(80, 30, -30)][0].w === rotatedBox(80, 30, -30).w, true);
+check("rotatedBox: it normalises its own angle (350 behaves as -10)",
+  rotatedBox(80, 30, 350), rotatedBox(80, 30, -10));
+
+// normTextStyle is the one place the rest of the app reads the angle from, so it has
+// to normalise on the way in - a hand-edited /NabuData carrying 450 must not reach
+// the rasteriser as 450.
+check("normTextStyle normalises rot on the way in",
+  [normTextStyle({ rot: 450 }).rot, normTextStyle({ rot: "-90" }).rot,
+   normTextStyle({ rot: "abc" }).rot, normTextStyle({}).rot],
+  [90, -90, 0, 0]);
 
 console.log(`\nannot-text: ${pass} pass, ${fail} fail`);
 process.exit(fail ? 1 : 0);

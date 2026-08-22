@@ -91,6 +91,15 @@
       "This PDF has no real text (it is a scan) — run \"OCR văn bản\" under Công cụ first.",
     "Thoát \"Chú thích\" trước khi dùng Tìm & Thay thế.": "Leave \"Chú thích\" before using Find & Replace.",
     "Thoát \"Sửa nội dung\" trước khi dùng Tìm & Thay thế.": "Leave \"Sửa nội dung\" before using Find & Replace.",
+    // --- Dịch PDF (AI) — the result toast, in three pieces so the two warning
+    // clauses only appear when they apply. "Đè" is deliberate in the last one:
+    // the user is about to hand this file to somebody and needs to know the
+    // original is still readable underneath the translation on those blocks.
+    "Đã dịch {b} đoạn trên {p} trang → {f}": "Translated {b} blocks on {p} pages → {f}",
+    "{n} trang KHÔNG dịch được (AI không trả kết quả) — giữ nguyên bản gốc":
+      "{n} pages could NOT be translated (the model returned nothing) — left as the original",
+    "{n} đoạn chữ gốc là nét vẽ trên nền không phẳng nên không xoá được — bản dịch nằm đè lên":
+      "{n} blocks whose original words are vector artwork on a non-flat background could not be cleared — the translation sits on top of them",
     "{i}/{n} kết quả": "{i}/{n} matches",
     "{i}/{n} kết quả · {k} vị trí không thay tự động được":
       "{i}/{n} matches · {k} cannot be replaced automatically",
@@ -225,6 +234,13 @@
     "In đậm": "Bold",
     "In nghiêng": "Italic",
     "Gạch chân": "Underline",
+    // Text-box rotation (v0.2.63). "Xoay" is already the page-rotation verb elsewhere
+    // in the app, and reusing it here is deliberate — it is the same gesture on a
+    // different object, and the control only appears while a text box is in play.
+    "Xoay": "Rotate",
+    "Xoay chữ trong hộp văn bản (độ, ngược chiều kim đồng hồ). Xoay được cả hộp đã gõ xong và hộp mở lại từ file đã lưu.":
+      "Rotate the text in a text box (degrees, anti-clockwise). Works on a box you have finished typing and on one reopened from a saved file.",
+    "Xoay thêm 90° ngược chiều kim đồng hồ": "Turn a further 90° anti-clockwise",
     "Độ dày nét vẽ / nét viền": "Stroke / outline width",
     "Nét": "Line",
     "Màu nền bên trong (khi khoanh vùng)": "Inner fill color (for regions)",

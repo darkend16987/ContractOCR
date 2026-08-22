@@ -79,7 +79,14 @@ from src.pdf.layout import (
     _cell_of,
     _fit_fontsize,
     _mask_terms,
+    _fix_span_box,
+    _fix_text_dict,
     _page_text_blocks,
+    _page_text_dict,
+    _probe_pixmap,
+    _px_box,
+    _ink_survived,
+    _ring_color,
     _run_boxes,
     _split_block_by_cells,
     _split_runs,
@@ -1710,7 +1717,9 @@ async def text_spans(req: TextSpansRequest):
         page = doc[req.page]
         spans: list[TextSpan] = []
         sid = 0
-        data = page.get_text("dict")
+        # _page_text_dict, not get_text("dict"): it repairs the "baseline on the top
+        # edge" span quirk before anything reads a box — see src/pdf/layout.py.
+        data = _page_text_dict(page)
         # get_text returns bbox in UNROTATED page space, but page.rect and the pdf.js
         # viewport are in DISPLAYED (rotation-applied) space. On a rotated CAD/Revit
         # page (/Rotate 90/270) the raw bbox lands in the wrong place and looks turned
@@ -1936,7 +1945,9 @@ def _find_build_index(doc) -> tuple[list, int]:
         # get_text returns bbox in UNROTATED page space; the overlay draws in
         # displayed space. Identity on an unrotated page, so no behaviour change.
         rot_mat = page.rotation_matrix
-        data = page.get_text("dict")
+        # The same repaired reader /text-spans uses, so a found word and an edited
+        # word are never at two different places on the page (src/pdf/layout.py).
+        data = _page_text_dict(page)
         lines: list = []
         span_idx = 0
         for block in data.get("blocks", []):
@@ -2825,6 +2836,16 @@ class TranslateResponse(BaseModel):
     pages_changed: int = 0
     blocks_translated: int = 0
     is_scan: bool = False
+    # Pages the model gave nothing usable for. They come back in the output file
+    # UNTRANSLATED, and saying so is the point: the old code returned success and
+    # let the user discover two of their three pages were still Vietnamese.
+    pages_failed: int = 0
+    # Blocks whose original words were vector outlines redaction could not remove,
+    # so the page colour was painted over them first (`blocks_covered`), and those
+    # where even that was refused because the surroundings were not a flat colour
+    # (`blocks_uncleaned`) — the translation there sits over the original.
+    blocks_covered: int = 0
+    blocks_uncleaned: int = 0
     error: str | None = None
 
 
@@ -2863,6 +2884,9 @@ async def translate_pdf(req: TranslateRequest):
 
     total_text_blocks = 0
     blocks_translated = 0
+    blocks_covered = 0
+    blocks_uncleaned = 0
+    pages_failed = 0
     pages_changed: set[int] = set()
 
     try:
@@ -2886,7 +2910,11 @@ async def translate_pdf(req: TranslateRequest):
 
             translations = _translate_blocks(agent, items, target_name, source_name)
             if not translations:
-                continue  # leave the whole page untouched on failure
+                # Leave the whole page untouched on failure — and COUNT it. The page
+                # ships in the output looking exactly like the source, so a silent
+                # skip reads to the user as "the translator ignored my document".
+                pages_failed += 1
+                continue
 
             # Resolve each block's final translated text (skip empties / no-ops).
             finals: dict[int, str] = {}
@@ -2907,6 +2935,15 @@ async def translate_pdf(req: TranslateRequest):
             #    sitting under the text (line art the box covers) and blank the
             #    image pixels behind it. Translating replaces words, not what
             #    they are drawn on top of.
+            #
+            #    The 72-dpi snapshot taken here is the BEFORE half of the ink
+            #    probe in step 1b — see src/pdf/layout.py. It has to be rendered
+            #    now, while the old words are still on the page.
+            try:
+                pm_before, probe_z = _probe_pixmap(page)
+            except Exception as pe:
+                logger.debug("ink probe (before) skipped: %s", pe)
+                pm_before = probe_z = None
             for i in finals:
                 page.add_redact_annot(fitz.Rect(*blocks[i]["bbox"]))
             try:
@@ -2919,6 +2956,33 @@ async def translate_pdf(req: TranslateRequest):
                 # back to 1.24.0). There an underline under the text is still
                 # dropped — cosmetic; the glyphs go either way, which is the job.
                 page.apply_redactions(images=fitz.PDF_REDACT_IMAGE_NONE)
+
+            # 1b. Blocks whose pixels the redaction did not touch: their visible
+            #     words are vector outlines, not text, so they are STILL THERE
+            #     and the translation would land on top of them. Cover those with
+            #     the page colour sampled beside the block. A block whose
+            #     surroundings are not one flat colour is left alone and counted
+            #     — painting an opaque patch across a photo is the worse failure.
+            if pm_before is not None:
+                try:
+                    pm_after, _ = _probe_pixmap(page)
+                except Exception as pe:
+                    logger.debug("ink probe (after) skipped: %s", pe)
+                    pm_after = None
+                if pm_after is not None:
+                    for i in finals:
+                        box = _px_box(page, pm_after, blocks[i]["bbox"], probe_z)
+                        if not _ink_survived(pm_before, pm_after, box):
+                            continue
+                        bg = _ring_color(pm_after, box)
+                        if bg is None:
+                            blocks_uncleaned += 1
+                            continue
+                        page.draw_rect(fitz.Rect(*blocks[i]["bbox"]),
+                                       color=None, fill=bg, width=0)
+                        blocks_covered += 1
+                pm_after = None
+            pm_before = None
 
             # 2. Lazily embed fonts (same scheme as /edit-text), then re-typeset.
             embedded: dict[tuple[bool, bool], tuple[str, str] | None] = {}
@@ -3050,6 +3114,9 @@ async def translate_pdf(req: TranslateRequest):
         filename=f"translated_{req.target_lang}_{ts}.pdf",
         pages_changed=len(pages_changed),
         blocks_translated=blocks_translated,
+        pages_failed=pages_failed,
+        blocks_covered=blocks_covered,
+        blocks_uncleaned=blocks_uncleaned,
     )
 
 

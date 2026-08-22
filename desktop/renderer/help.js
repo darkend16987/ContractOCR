@@ -328,6 +328,10 @@
               "**Hộp văn bản** (`T`) — bấm lên trang để thêm, gõ nội dung, `Ctrl+Enter` để xong. Bảng **Định dạng văn bản** hiện bên phải: font, cỡ, đậm / nghiêng / gạch chân, căn lề, thụt lề, danh sách, và các nút căn giữa / sát mép trang.",
               "**Text box** (`T`) — click the page to place one, type, `Ctrl+Enter` to finish. The **Định dạng văn bản** panel appears on the right: font, size, bold / italic / underline, alignment, indent, lists, plus centre-on-page and snap-to-edge buttons."
             ),
+            T(
+              "**Xoay chữ (từ v0.2.63)** — chọn một hộp văn bản rồi gõ số độ vào ô **Xoay** trên thanh công cụ, hoặc bấm **+90°**. Số dương là **ngược chiều kim đồng hồ**. Xoay được **bất cứ lúc nào**: hộp vừa gõ xong, hộp đã bấm **Xong**, và hộp mở lại từ file đã lưu — góc đi theo file nên lần sau mở ra vẫn sửa lại được. Gõ lại nội dung thì ô nhập cũng nghiêng đúng góc đó, còn cỡ hộp thì **không** đổi theo góc: chữ chỉ đổi chiều, không phình ra.",
+              "**Rotating the text (from v0.2.63)** — select a text box and type a number of degrees into the **Xoay** field on the toolbar, or press **+90°**. Positive turns **anti-clockwise**. You can rotate at **any time**: a box you have just typed, a box you already pressed **Xong** on, and a box reopened from a saved file — the angle travels with the file, so it is still adjustable next time. Retyping happens at the same angle, and the box's own size does **not** change with it: the text turns, it does not grow."
+            ),
             T("**Tô sáng** (`H`) — kéo để tô sáng một vùng.", "**Highlight** (`H`) — drag across an area."),
             T(
               "**Vẽ tay** (`D`) — giữ chuột và kéo. **Giữ thêm `Shift`** thì đoạn đang vẽ duỗi **thẳng** từ chỗ bạn nhấn Shift tới con trỏ; **thả `Shift` ra là vẽ tay tiếp** từ đúng đầu mút đó. Một nét có thể vừa thẳng vừa nguệch ngoạc, không phải đổi công cụ.",
@@ -384,12 +388,12 @@
         {
           ul: [
             T(
-              "**Đối tượng sống** — **hộp văn bản, ghi chú, mũi tên, ảnh / chữ ký**, và từ **v0.2.61** thêm **khoanh vùng chữ nhật, elip, khoanh mây và khoanh mây tự do**. Mở lại file → bấm **Chú thích** → chúng lại là đối tượng riêng: chọn, kéo di chuyển, đổi màu / nét / nền, `Delete` để xoá. Hộp chữ nhật và elip kéo 4 góc đổi cỡ được; hộp văn bản, ghi chú, mũi tên và ảnh vẫn dùng được **Áp nhiều trang**.",
-              "**Live objects** — **text boxes, notes, arrows, images / signatures**, and from **v0.2.61** also **rectangles, ellipses, revision clouds and freehand clouds**. Reopen the file, click **Chú thích**, and they are separate objects again: select, drag, restyle, `Delete`. Rectangles and ellipses resize by the corners; text boxes, notes, arrows and images still work with **Áp nhiều trang**."
+              "**Đối tượng sống** — **hộp văn bản, ghi chú, mũi tên, ảnh / chữ ký**, từ **v0.2.61** thêm **khoanh vùng chữ nhật, elip, khoanh mây và khoanh mây tự do**, và từ **v0.2.63** thêm **nét vẽ tay**. Mở lại file → bấm **Chú thích** → chúng lại là đối tượng riêng: chọn, kéo di chuyển, đổi màu / nét / nền, `Delete` để xoá. Hộp chữ nhật và elip kéo 4 góc đổi cỡ được; hộp văn bản, ghi chú, mũi tên và ảnh vẫn dùng được **Áp nhiều trang**.",
+              "**Live objects** — **text boxes, notes, arrows, images / signatures**, from **v0.2.61** also **rectangles, ellipses, revision clouds and freehand clouds**, and from **v0.2.63** **freehand pen strokes**. Reopen the file, click **Chú thích**, and they are separate objects again: select, drag, restyle, `Delete`. Rectangles and ellipses resize by the corners; text boxes, notes, arrows and images still work with **Áp nhiều trang**."
             ),
             T(
-              "**Bị dán chết** — **tô sáng, vẽ tay, ✓ / ✗, ô che, đoạn đo**. Bấm **Xong** là chúng thành hình trên trang, **không chọn lại được**. Muốn sao chép thì **copy trước khi bấm Xong**.",
-              "**Flattened** — **highlights, freehand, ✓ / ✗, redactions, dimensions**. Once you press **Xong** they become part of the page and **cannot be selected again**. If you want to copy them, **copy before applying**."
+              "**Bị dán chết** — **tô sáng, ✓ / ✗, ô che, đoạn đo**. Bấm **Xong** là chúng thành hình trên trang, **không chọn lại được**. Muốn sao chép thì **copy trước khi bấm Xong**. Riêng **ô che (redact)** sẽ luôn như vậy: nó tồn tại để **xoá hẳn** nội dung bên dưới, nên một ô che sửa lại được thì không còn là ô che nữa.",
+              "**Flattened** — **highlights, ✓ / ✗, redactions, dimensions**. Once you press **Xong** they become part of the page and **cannot be selected again**. If you want to copy them, **copy before applying**. **Redactions** will always stay this way: the tool exists to **destroy** what is underneath, and a re-editable redaction is not a redaction."
             ),
             T(
               "**Trang xoay và trang ngang cũng sửa lại được.** Trên trang có `/Rotate` — bản scan nằm ngang, bản vẽ A3, hoặc trang bạn vừa bấm **Xoay** — mọi đối tượng sống đều giữ nguyên là đối tượng sống (từ v0.2.58). File **trộn cả trang dọc lẫn trang ngang** cũng vậy: mỗi trang được tính riêng, nên **áp dụng xong không trang nào tự quay** và hình không lệch sang trang khác.",

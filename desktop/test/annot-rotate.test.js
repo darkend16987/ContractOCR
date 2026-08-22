@@ -329,6 +329,21 @@ const VECTOR_SHAPES = [
   { name: "cloud small bump", a: { id: 13, kind: "cloud", x: 30, y: 40, w: 90, h: 60, color: "#d32f2f", width: 2, bump: 6 } },
   { name: "cloudpen", a: { id: 14, kind: "cloudpen", color: "#d32f2f", width: 2, bump: 10, closed: true,
       pts: [{ x: 50, y: 50 }, { x: 160, y: 70 }, { x: 140, y: 170 }, { x: 45, y: 140 }] } },
+  // Freehand strokes (v0.2.63). The OPEN member of the family, and the only one whose
+  // /AP path and flattened path go through different pdf-lib primitives — one
+  // drawSvgPath polyline against N drawLine segments. Sections 6 and 7 are what says
+  // those two paint the same ink; if they ever diverge this is where it shows.
+  //
+  // Few enough points that the /NabuData thinning is a no-op on them, which is
+  // deliberate: this grid is about WHERE the stroke lands, and test:managed is about
+  // what the thinning does to it. Mixing the two would make a failure here ambiguous.
+  { name: "draw", a: { id: 15, kind: "draw", color: "#0000ff", width: 3,
+      pts: [{ x: 30, y: 40 }, { x: 90, y: 120 }, { x: 150, y: 70 }] } },
+  // A single straight stroke: its bounding box is one point tall in the degenerate
+  // direction, and a /BBox with a zero side CLIPS THE WHOLE PATH. The stroke padding is
+  // what saves it, so this case is the one that fails if that padding is ever removed.
+  { name: "draw flat", a: { id: 16, kind: "draw", color: "#0000ff", width: 4,
+      pts: [{ x: 40, y: 100 }, { x: 200, y: 100 }] } },
 ];
 
 (async () => {

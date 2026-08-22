@@ -39,10 +39,18 @@ extraResources:
 
 # Auto-update feed (electron-updater). Releases are published to GitHub
 # Releases; the NSIS installer self-updates from there. See RELEASE.md.
+#
+# MOVED at v0.2.63 from `NabuPDF` (the source repo) to a dedicated releases repo.
+# What this line actually controls is `app-update.yml`, which electron-builder writes
+# INTO the installer — so it is the feed every copy installed from THIS build will
+# check, forever. Copies already installed from an older build still point at the old
+# repo and cannot be told otherwise, which is why v0.2.63 itself is published to BOTH:
+# the old repo carries it once so existing installs can make the hop, and every release
+# after that goes only here. See desktop/RELEASE.md.
 publish:
   provider: github
   owner: darkend16987
-  repo: NabuPDF
+  repo: NabuPDF-Releases
 
 win:
   icon: build/icon.ico

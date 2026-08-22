@@ -21,7 +21,15 @@ trên Release mới nhất. Mỗi Release **phải** có đủ:
 - `NabuPDF-<ver>-x64.exe.blockmap` (electron-builder sinh kèm — cho update vi sai)
 - `latest.yml` (manifest electron-updater đọc)
 
-> `publish` trong `electron-builder.yml` đã trỏ `darkend16987/NabuPDF`.
+> `publish` trong `electron-builder.yml` trỏ **`darkend16987/NabuPDF-Releases`**
+> (đổi từ `darkend16987/NabuPDF` ở v0.2.63 — repo mã nguồn và repo phát hành tách đôi).
+>
+> **Máy đã cài bản cũ vẫn hỏi repo CŨ.** `app-update.yml` được electron-builder ghi vào
+> *bên trong* bộ cài, nên bản v0.2.62 đã cài trên máy người dùng sẽ mãi mãi kiểm tra
+> `darkend16987/NabuPDF` — không có cách nào báo cho nó biết. Vì vậy **v0.2.63 được phát
+> hành lên CẢ HAI repo**: repo cũ nhận đúng một lần để những máy đó nhảy sang được (bản
+> 0.2.63 chúng tải về đã trỏ repo mới), từ v0.2.64 trở đi chỉ phát hành ở repo mới.
+> Đăng thiếu repo cũ = toàn bộ máy đang cài **im lặng** ngừng nhận cập nhật.
 
 ## Quy trình cắt một bản phát hành
 

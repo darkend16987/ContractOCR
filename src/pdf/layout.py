@@ -47,6 +47,245 @@ def _unmask_terms(text: str, store: list[str]) -> str:
     return _MASK_RESTORE_RE.sub(repl, text)
 
 
+# ---------------------------------------------------------------------------
+# Span geometry repair: the "baseline on the top edge" quirk
+# ---------------------------------------------------------------------------
+#
+# WHAT IS BROKEN, MEASURED. Some real PDFs (text converted to vector outlines plus a
+# parallel *blank* Type3 font carrying the searchable text — a common "keep it
+# selectable" export) make MuPDF report a span box whose TOP edge sits exactly on the
+# baseline, i.e. the whole box hangs BELOW the text instead of enclosing it:
+#
+#     span bbox=(56.0, 43.0, 71.6, 57.0)  origin=(56.0, 43.0)  size=14  asc=0.9 desc=-0.1
+#     the ink for those glyphs is actually at y 32.94 .. 43.17
+#
+# So the reported box is off by a whole line height. Every consumer inherits that:
+# `/translate-pdf` redacts empty paper and types the translation one line low (which is
+# how the original stayed readable UNDER the translation — the reported bug), and
+# "Sửa nội dung" / "Tìm & Thay thế" highlight the gap below the word they mean.
+#
+# THE RULE, and why a normal document cannot trip it. For horizontal Latin text MuPDF
+# derives the box as [origin.y - ascender*size, origin.y - descender*size], so
+# `origin.y - y0` is `ascender*size` ≈ 0.9*size — nowhere near the 0.25*size threshold
+# below. The quirk gives exactly 0. The test is scale-free (a fraction of the font
+# size, not an absolute point count), so a 4pt footnote is judged by the same rule as a
+# 40pt heading.
+#
+# ONLY HORIZONTAL TEXT. On a rotated line the axis-aligned box is not built from the
+# ascender along y at all, and `origin.y - y0` means something else entirely — see the
+# `line["dir"]` reasoning behind BI-66. Those lines are left exactly as MuPDF reported
+# them.
+#
+# THE METRICS WE SUBSTITUTE ARE MEASURED, NOT ASSUMED. The fonts that show this quirk
+# report a suspiciously round asc=0.9 / desc=-0.1 (MuPDF's fallback pair, not the
+# font's own). Against the real ink on the sample file: the tallest line needs 0.89*size
+# above the baseline and the deepest descender reaches 0.21*size below it. 0.9 / -0.25
+# covers both with a hair to spare, and over-covering is the safe direction here — the
+# box's job is to say "the old glyphs are in here", and it is redrawn afterwards anyway.
+_BASELINE_TOP_FRAC = 0.25   # origin.y - y0 below this share of the size ⇒ quirk
+_QUIRK_ASCENDER = 0.9
+_QUIRK_DESCENDER = -0.25
+
+
+def _fix_span_box(sp: dict) -> tuple[float, float, float, float] | None:
+    """Corrected bbox for one span, or None when MuPDF's is already right.
+
+    Pure: reads the span dict, writes nothing. `_fix_text_dict` is what applies it.
+    """
+    try:
+        x0, y0, x1, y1 = (float(v) for v in sp["bbox"])
+        oy = float(sp["origin"][1])
+        size = float(sp.get("size", 0.0) or 0.0)
+    except (KeyError, TypeError, ValueError, IndexError):
+        return None
+    if size <= 0 or not (y1 > y0):
+        return None
+    # Baseline well below the top edge ⇒ an ordinary, correctly-reported box.
+    if (oy - y0) >= _BASELINE_TOP_FRAC * size:
+        return None
+    # A box far shorter than the font size is a clipped/degenerate mark, not a line
+    # box that happens to be misplaced. Leave those to the callers' own filters.
+    if (y1 - y0) < 0.5 * size:
+        return None
+    asc = float(sp.get("ascender", 0.0) or 0.0)
+    desc = float(sp.get("descender", 0.0) or 0.0)
+    asc = max(asc, _QUIRK_ASCENDER)
+    desc = min(desc, _QUIRK_DESCENDER)
+    return (x0, oy - asc * size, x1, oy - desc * size)
+
+
+def _fix_text_dict(data: dict) -> int:
+    """Repair the quirk in a `get_text("dict")` result IN PLACE; return spans fixed.
+
+    Line and block boxes are recomputed from the corrected spans, because callers
+    read all three (`_page_text_blocks` redacts the BLOCK box, `_visual_lines` groups
+    on the SPAN box) and a mixture of repaired and stale boxes is worse than either.
+    """
+    fixed = 0
+    for block in data.get("blocks", []):
+        if block.get("type", 0) != 0:
+            continue
+        bx0 = by0 = bx1 = by1 = None
+        touched_block = False
+        for line in block.get("lines", []):
+            d = line.get("dir", (1.0, 0.0))
+            try:
+                horizontal = abs(float(d[1])) <= 1e-3 and float(d[0]) > 0
+            except (TypeError, ValueError, IndexError):
+                horizontal = False
+            lx0 = ly0 = lx1 = ly1 = None
+            touched_line = False
+            for sp in line.get("spans", []):
+                box = _fix_span_box(sp) if horizontal else None
+                if box is not None:
+                    sp["bbox"] = box
+                    fixed += 1
+                    touched_line = True
+                try:
+                    sx0, sy0, sx1, sy1 = (float(v) for v in sp["bbox"])
+                except (KeyError, TypeError, ValueError):
+                    continue
+                lx0 = sx0 if lx0 is None else min(lx0, sx0)
+                ly0 = sy0 if ly0 is None else min(ly0, sy0)
+                lx1 = sx1 if lx1 is None else max(lx1, sx1)
+                ly1 = sy1 if ly1 is None else max(ly1, sy1)
+            if touched_line and lx0 is not None:
+                line["bbox"] = (lx0, ly0, lx1, ly1)
+                touched_block = True
+            if lx0 is not None:
+                bx0 = lx0 if bx0 is None else min(bx0, lx0)
+                by0 = ly0 if by0 is None else min(by0, ly0)
+                bx1 = lx1 if bx1 is None else max(bx1, lx1)
+                by1 = ly1 if by1 is None else max(by1, ly1)
+        if touched_block and bx0 is not None:
+            block["bbox"] = (bx0, by0, bx1, by1)
+    return fixed
+
+
+def _page_text_dict(page) -> dict:
+    """`page.get_text("dict")` with the baseline-on-top quirk repaired.
+
+    THE ONE ENTRY POINT. Every place that parses a page's spans goes through here —
+    `/text-spans`, `/text-find`'s index and `_page_text_blocks` — so the three
+    features can never disagree about where a word is. Adding a fourth reader means
+    calling this, not `page.get_text("dict")`.
+    """
+    data = page.get_text("dict")
+    _fix_text_dict(data)
+    return data
+
+
+# ---------------------------------------------------------------------------
+# Did the redaction actually remove the old glyphs?
+# ---------------------------------------------------------------------------
+#
+# WHY THIS EXISTS. `/translate-pdf` redacts a block and types the translation into the
+# same box. That works because redaction deletes the show-text operators that painted
+# the words. On a PDF whose text was CONVERTED TO OUTLINES, the words are filled vector
+# paths and the text layer is a blank parallel font: redaction deletes the (invisible)
+# text layer and the visible words stay exactly where they were, so the translation is
+# typed ON TOP of a Vietnamese page nobody can now read. That is the shipped bug this
+# answers, reproduced and measured on the reporter's own file.
+#
+# WHY NOT JUST TURN LINE-ART REMOVAL BACK ON. v0.2.23 did redact line art (the plain
+# `apply_redactions()` default) and v0.2.43 deliberately stopped, because that also
+# drops the underline under the text and the shading behind it. Measured on the sample
+# file, turning it back on does not even fix this: MuPDF removes only the sub-paths its
+# heuristic thinks are covered, so headings come back with their diacritics shaved off.
+# Both branches of that trade are bad; neither is the answer.
+#
+# THE SIGNAL, and why it cannot fire on an ordinary document. Render the page at 72 dpi
+# BEFORE and AFTER `apply_redactions`, and compare the block's own pixels. If not one
+# pixel changed, the redaction provably removed nothing visible from that block — the
+# only way that happens for a block we KNOW holds text is that the visible words are
+# not text. On any normal PDF the glyphs disappear, so the two renders differ and this
+# stays out of the way entirely. Note what the test is NOT: it never asks "is this
+# region dark" or "does it look like a photo", so a caption over a photograph (where
+# redaction does clear the glyph pixels) is never mistaken for outlined text.
+#
+# WHAT WE DO ABOUT IT. Paint the block over with the page colour sampled from the band
+# just above and below it, then typeset the translation on the fresh ground. If that
+# band is NOT one flat colour — text sitting on a photo or a gradient — no rectangle is
+# painted at all: an opaque patch across a rendering is a worse outcome than a page
+# that reports it could not be cleaned. The caller counts both cases and tells the user.
+_INK_PROBE_DPI = 72
+_COVER_RING_PX = 3       # band sampled above/below the block for the page colour
+_COVER_MODAL_MIN = 0.6   # share of that band that must agree before we trust a colour
+
+
+def _probe_pixmap(page, dpi: int = _INK_PROBE_DPI):
+    """(pixmap, zoom) for `page` at probe resolution — RGB, no alpha."""
+    fitz = _require_fitz()
+    z = dpi / 72.0
+    return page.get_pixmap(matrix=fitz.Matrix(z, z), colorspace=fitz.csRGB, alpha=False), z
+
+
+def _px_box(page, pm, rect, z) -> tuple[int, int, int, int] | None:
+    """An UNROTATED-space page rect as an integer pixel box inside `pm`.
+
+    The rect goes through `page.rotation_matrix` first: `get_text` reports boxes in
+    unrotated space while `get_pixmap` renders the page as DISPLAYED, and on a
+    /Rotate 90 sheet those are different places. Verified against rendered ink at all
+    four quarter turns. Returns None when the box falls outside the pixmap.
+    """
+    fitz = _require_fitz()
+    r = fitz.Rect(rect) * page.rotation_matrix
+    r.normalize()
+    # pm.x / pm.y, not pm.irect.x0 — `irect` is a bare tuple on some PyMuPDF
+    # builds, and `.x0` on it is an AttributeError at run time, not import time.
+    x0 = max(0, int(r.x0 * z) - pm.x)
+    y0 = max(0, int(r.y0 * z) - pm.y)
+    x1 = min(pm.width, int(r.x1 * z) + 1 - pm.x)
+    y1 = min(pm.height, int(r.y1 * z) + 1 - pm.y)
+    if x1 <= x0 or y1 <= y0:
+        return None
+    return (x0, y0, x1, y1)
+
+
+def _box_bytes(pm, box) -> bytes:
+    """The pixel rows of `box` concatenated — one slice per row, no per-pixel work."""
+    x0, y0, x1, y1 = box
+    n = pm.n
+    stride = pm.stride
+    s = pm.samples
+    return b"".join(s[y * stride + x0 * n: y * stride + x1 * n] for y in range(y0, y1))
+
+
+def _ink_survived(pm_before, pm_after, box) -> bool:
+    """True when redaction changed NOT ONE pixel of `box` — the glyphs are still there."""
+    if box is None:
+        return False
+    return _box_bytes(pm_before, box) == _box_bytes(pm_after, box)
+
+
+def _ring_color(pm, box, ring: int = _COVER_RING_PX) -> tuple[float, float, float] | None:
+    """Modal RGB (0..1) of the band just above and below `box`, or None if it varies.
+
+    Above/below rather than a full frame: for a line of text those bands are the
+    inter-line gap, which is the page colour by construction, while the left and right
+    edges may butt against a neighbouring column.
+    """
+    x0, y0, x1, y1 = box
+    n = pm.n
+    stride = pm.stride
+    s = pm.samples
+    counts: dict[bytes, int] = {}
+    total = 0
+    for band in (range(max(0, y0 - ring), y0), range(y1, min(pm.height, y1 + ring))):
+        for y in band:
+            row = s[y * stride + x0 * n: y * stride + x1 * n]
+            for i in range(0, len(row), n):
+                px = row[i:i + 3]
+                counts[px] = counts.get(px, 0) + 1
+                total += 1
+    if not total:
+        return None
+    best, hits = max(counts.items(), key=lambda kv: kv[1])
+    if hits / total < _COVER_MODAL_MIN:
+        return None  # not one flat colour — refuse to paint over it
+    return (best[0] / 255.0, best[1] / 255.0, best[2] / 255.0)
+
+
 def _fit_fontsize(font, text: str, width: float, height: float,
                   start: float, min_size: float = 5.0) -> float:
     """Largest font size (≤ start) at which `text` wraps within width×height.
@@ -307,7 +546,7 @@ def _page_text_blocks(page) -> list[dict]:
     """
     cells = _table_cells(page)
     out: list[dict] = []
-    data = page.get_text("dict")
+    data = _page_text_dict(page)
     for b in data.get("blocks", []):
         if b.get("type", 0) != 0:  # skip image blocks
             continue

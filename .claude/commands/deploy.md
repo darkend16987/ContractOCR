@@ -22,7 +22,8 @@ of the current `desktop/package.json` version.
 1. Read current version from [desktop/package.json](desktop/package.json). Compute
    the new version from `$ARGUMENTS` or patch-bump.
 2. `git status --porcelain` — note the working tree. Confirm the new version is
-   **greater** than every published tag (`gh release list`); OTA only upgrades when
+   **greater** than every published tag
+   (`gh release list --repo darkend16987/NabuPDF-Releases`); OTA only upgrades when
    `version` is higher.
 3. Confirm `gh auth status` is logged in. Capture a token for electron-builder:
    in PowerShell `$env:GH_TOKEN = (gh auth token)`.
@@ -86,9 +87,14 @@ stale binary (see [memory] sidecar-stale-build-guard).
 
 ## 7. Publish the new release, delete the old one
 
+> **Releases live in `darkend16987/NabuPDF-Releases`, not in this repo** (moved at
+> v0.2.63 — see [desktop/RELEASE.md](desktop/RELEASE.md)). Every `gh release` command
+> below therefore needs `--repo darkend16987/NabuPDF-Releases`; without it `gh` targets
+> the source repo, the assets land where nothing looks for them, and OTA quietly stalls.
+
 1. Create the release with all OTA assets attached:
    ```
-   gh release create v<ver> \
+   gh release create v<ver> --repo darkend16987/NabuPDF-Releases \
      --title "Nabu PDF v<ver> — <summary>" \
      --notes "<changelog>" \
      desktop/dist-app/NabuPDF-<ver>-x64.exe \
@@ -98,11 +104,37 @@ stale binary (see [memory] sidecar-stale-build-guard).
    ```
    `latest.yml` + the NSIS `.exe` + `.blockmap` **must** be present or OTA breaks.
    No portable `.exe` is built or attached anymore.
-2. Delete the **previous** release (the version that was Latest before this run):
-   `gh release delete v<prev> --yes`. Leave its git tag unless the user asked to
-   remove it (`--cleanup-tag` also deletes the tag). Only delete the single prior
-   release by default — do not wipe older history unless asked.
-3. Confirm: `gh release list` shows v<ver> as Latest with the 4 assets.
+   (The tag is created in the RELEASES repo. It does not exist in the source repo, so
+   `git tag` here stays empty — expected, not a failure.)
+2. Delete the **previous** release in the releases repo:
+   `gh release delete v<prev> --repo darkend16987/NabuPDF-Releases --yes`. Leave its
+   git tag unless the user asked to remove it (`--cleanup-tag` also deletes the tag).
+   Only delete the single prior release by default — do not wipe older history unless asked.
+3. Confirm: `gh release list --repo darkend16987/NabuPDF-Releases` shows v<ver> as
+   Latest with the 4 assets.
+
+## 7b. One-time bridge for the old repo — v0.2.63 ONLY
+
+Skip this from v0.2.64 onwards. It is written down because getting it wrong is silent.
+
+`app-update.yml` is written INTO the installer at build time, so every copy installed
+from v0.2.62 or earlier checks `darkend16987/NabuPDF` forever and cannot be redirected.
+v0.2.63 is therefore published to the OLD repo as well, so those machines see it, update
+to it, and land on a build that points at the new repo from then on:
+
+```
+gh release create v0.2.63 --repo darkend16987/NabuPDF \
+  --title "Nabu PDF v0.2.63 — <summary>" \
+  --notes "<changelog + a line saying releases have moved to NabuPDF-Releases>" \
+  desktop/dist-app/NabuPDF-0.2.63-x64.exe \
+  desktop/dist-app/NabuPDF-0.2.63-x64.exe.blockmap \
+  desktop/dist-app/latest.yml \
+  desktop/dist-app/SHA256SUMS.txt
+```
+
+The SAME files, byte for byte — do NOT rebuild between the two publishes, or the two
+repos would serve different binaries under one version number and `latest.yml`'s sha512
+would disagree with whichever `.exe` a user happened to fetch.
 
 ## 8. Report
 
