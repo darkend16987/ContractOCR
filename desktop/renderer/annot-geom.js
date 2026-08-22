@@ -489,7 +489,7 @@ function simplifyStroke(pts, tol, maxPts) {
   if (src.length <= 2) return src;
   let out = src;
   for (let round = 0; round < 12; round++) {
-    out = rdp(src, tol);
+    out = strokeRdp(src, tol);
     if (out.length <= maxPts) break;
     tol *= 2;
   }
@@ -499,7 +499,15 @@ function simplifyStroke(pts, tol, maxPts) {
 // One RDP pass. Iterative (an explicit stack, not recursion): a 20 000-point
 // scribble recurses ~as deep as it is long in the degenerate case, and blowing the
 // renderer's stack mid-save would lose the whole bake, not just this annotation.
-function rdp(pts, tol) {
+//
+// `strokeRdp`, not `rdp`, and the prefix is load-bearing rather than decorative: this
+// file is a CLASSIC SCRIPT, so every top-level name here lands in the scope SHARED by
+// app.js, editor.js and a dozen others — even one that is never exported. A second
+// top-level `rdp` anywhere in renderer/ would be two `function` declarations of one
+// name in one scope, and the whole app goes white with a SyntaxError that no node test
+// can see. That is BI-14, and the cheapest defence against it is not owning a
+// three-letter generic noun in the global namespace.
+function strokeRdp(pts, tol) {
   const n = pts.length;
   const keep = new Array(n).fill(false);
   keep[0] = keep[n - 1] = true;
