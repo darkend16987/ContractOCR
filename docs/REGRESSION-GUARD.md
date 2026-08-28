@@ -21,6 +21,7 @@ tài liệu này chỉ có giá trị nếu được cập nhật.
 | `desktop/renderer/editor.js` — ba nhánh `/AP` của `addManagedAnnot` | ~120 dòng | Cùng loại rủi ro im lặng như hàng trên, ở **đường annotation** thay vì đường dán cứng: viewer tự co giãn appearance cho khít `/Rect` (PDF §12.5.5) nên `/Rect` sai không làm con dấu lệch mà làm nó **méo**, và chỉ thấy trên trang xoay. `test:rotate` §5 đo lại đúng cùng một câu hỏi ("rơi vào đâu trên màn hình") bằng cách so với đường dán cứng đang ship, kèm **ca canh gác** → xem BI-59. |
 | `desktop/src/main.js` + `src/tabs.js` | — | Tầng cửa sổ/tab — **hệ con mới nhất, ít va đập thực tế nhất** (ra mắt v0.2.41). Có lưới tự động `npm run test:tabs` cho phần logic thuần. |
 | `desktop/renderer/page-move.js` | ~330 | Chuyển trang giữa hai tài liệu đang mở. Rủi ro **trung bình** nhưng hậu quả **cao nhất về dữ liệu**: nhánh MOVE **xoá trang ở tài liệu nguồn**. Nửa số học có lưới `npm run test:pagedrop`; nửa cử chỉ **máy không test được** (Chromium bỏ qua input tổng hợp trong đường kéo–thả, `TABS-2B-DESIGN.md` §2.2) nên chỉ có test tay + assertion trên source trong cùng lưới đó → xem BI-55, BI-56, BI-57, BI-58. |
+| `desktop/renderer/page-vault.js` | ~330 | Trang ẩn có khoá (v0.2.64). Rủi ro **trung bình** (thuần, DOM-free, có lưới `npm run test:vault` từ commit đầu tiên) nhưng **hậu quả cao nhất có thể có**: sai ở đây là **mất hẳn một trang hợp đồng**, không lỗi, không cảnh báo. Bốn cạm bẫy đều đã đo và đều nằm trong lưới → xem BI-72, BI-73, BI-74. |
 | `desktop/renderer/page-range.js` | ~170 | Số học khoảng trang. Rủi ro **thấp** vì có lưới `npm run test:pages`, nhưng hậu quả sai là **mất trang tài liệu** → xem BI-27. |
 | `desktop/renderer/pan.js` | ~380 | Bàn tay/pan. Rủi ro **trung bình**: nó giành sự kiện chuột **trên cùng phần tử** với `editor.js`/`capture.js`. Nửa logic có lưới `npm run test:pan`; nửa DOM thì không → xem BI-30/31. |
 | `desktop/renderer/find-replace.js` | ~700 | Tìm & Thay thế. Rủi ro **trung bình** nhưng hậu quả **cao và im lặng**: nó **ghi vào chữ gốc** của tài liệu hàng loạt. Nửa số học có lưới `npm run test:find`; nửa DOM chỉ có **assertion trên source** trong cùng lưới đó → xem BI-50, BI-51. |
@@ -98,8 +99,8 @@ tài liệu này chỉ có giá trị nếu được cập nhật.
 
 ## 2. Kiến trúc phải nhớ trước khi sửa
 
-- 13 file JS của renderer (`i18n, page-range, wire, annot-text, annot-geom, managed-codec,
-  app, pan, editor, text-edit, compare, capture, sign`) nạp bằng `<script>` **classic**, dùng
+- 14 file JS của renderer (`i18n, page-range, wire, annot-text, annot-geom, managed-codec,
+  page-vault, app, pan, editor, text-edit, compare, capture, sign`) nạp bằng `<script>` **classic**, dùng
   chung **một scope**. `state`,
   `toast`, `sidecarFetch`, `showOverlay`… là biến toàn cục dùng chéo, **không phải
   module** → đổi tên một hàm trong `app.js` có thể làm `editor.js` chết mà không hề có
@@ -130,6 +131,11 @@ tài liệu này chỉ có giá trị nếu được cập nhật.
     trắng. Bọc IIFE cho binding thành private, publish bề mặt bằng `Object.assign` — bare
     name vẫn phân giải khi *đọc*, mà không thể trùng khai báo. **Đây là khuôn phải dùng cho
     mọi file mới có destructure từ thư viện.** Xem BI-14 (nửa sau).
+  - `page-vault.js` (v0.2.64) — **IIFE bắt buộc** (destructure pdf-lib, đúng bẫy BI-14) nhưng
+    phơi ra ở **mức `page-range.js`**: chỉ `window.PageVault`, **không** `Object.assign(window, …)`,
+    không một tên trần nào. Làm được vì đây là code **mới**, không có call site cũ để giữ —
+    và đó chính là tiêu chí: giữ tên trần chỉ đáng khi nó **xoá được** hàng chục chỗ sửa tay
+    trong file diff lớn nhất repo. Đây là **khuôn cho mọi file mới** kể từ nay.
 - **Mỗi tab = một renderer riêng** (`WebContentsView`, process riêng). `state` **không**
   chia sẻ giữa các tab. Cái chia sẻ là: main process, sidecar Python, thư mục recovery.
   → Mọi singleton ở main process là nguy cơ xung đột đa tab.
@@ -1753,6 +1759,96 @@ _Ghi 2026-08-13. **Đo được, không suy luận.**_
   xoay xong **trôi** khỏi chỗ cũ (chia `ox`/`oy` không đều) · xoay 45° rồi xoay tiếp thì hộp
   **to dần** (đo lại hộp) · gõ lại nội dung thì ô nhập **thẳng** trong khi chữ nghiêng ·
   hộp có `charScale` khác 1 thì xoay xong **lệch ngang**.
+### BI-71 · Nền hộp văn bản: khung `<div>` và khung PNG **lệch nhau đúng `pad`** — đừng dùng `el.style.background`
+- `editor.js` `renderAnnot` (nhánh `text`, khối `.an-text-bg`) ghi phía màn hình;
+  `renderTextPng` ghi phía PDF. `app.css` `.an-text { z-index: 0 }` + `.an-text-bg`.
+- **Số đo, đừng suy luận lại** (chạy trên chính `annot-text.js`, chữ 16pt):
+  ```
+  element box (màn hình) : left = a.x + 0.00   w = 93.00   tâm = a.x + 46.50
+  raster  box (PNG bake) : left = a.x − 2.40   w = 93.33   tâm = a.x + 44.27
+  ```
+  Cùng **kích thước**, lệch đúng `pad = fontSize × 0.15`. Lý do: chữ trên màn hình vẽ từ
+  **góc trên-trái** của `<div>` (`.an-text` không có padding), còn trong PNG chữ thụt vào
+  `pad` cả 4 phía và bake bù bằng cách đặt ảnh ở `a.x − padPt`.
+- **Vì thế nền là một `<div>` LÓT đặt ở `(−pad, −pad)` cỡ `a.w × a.h`**, không phải
+  `el.style.background`. Đo lại toàn bộ trên Chromium thật: sai lệch **tệ nhất 0.333pt**
+  (đúng bằng 1/RS — hạt của phép `ceil`), tức mắt thường không thấy.
+- **Ba chi tiết không được bỏ:**
+  · `z-index: -1` chỉ nằm yên trong hộp chữ vì `.an-text` có `z-index: 0` → nó **tự tạo
+  stacking context**; bỏ dòng đó thì nền chui xuống dưới canvas trang và **biến mất**.
+  · Dưới `charScale`, cả `left` lẫn `width` của lớp lót phải **chia trước** cho charScale
+  (phần tử cha đang bị `scaleX`).
+  · Trong raster, `globalAlpha = s.opacity` phải đặt **trước** `fillRect`, và độ mờ của
+  nền đi trong chuỗi `rgba()` — hai cái **nhân nhau**, vì trên màn hình `el.style.opacity`
+  làm mờ **cả** chữ lẫn nền.
+- **`text` vào `FILLABLE_KINDS`, TUYỆT ĐỐI KHÔNG vào `isVectorKind`** — cái sau lái sang
+  `shapeAppearance()` (appearance vector); nền hộp chữ nằm trong PNG.
+- **Bố cục chữ không được biết đến cái nền.** `normTextStyle` dựng object từ danh sách
+  trường cố định nên nó **rơi** `fill`/`fillOpacity` — đó là thứ bảo đảm một mảng nền
+  không bao giờ đẩy được một glyph (BI-40). Có ca canh gác trong `test:text`.
+- **Vỡ khi:** mép nền trên màn hình lệch ~3px so với file PDF · nền biến mất hẳn (mất
+  `z-index: 0`) · nền đặc trong khi chữ mờ · hộp có `charScale` thì nền thừa/thiếu bề ngang
+  · file cũ mở ra tự mọc nền đen (ghi `fill: "none"` vào `/NabuData` thay vì bỏ khoá).
+- Lưới: `npm run test:managed` (rect nền trong raster + round-trip `/NabuData`) ·
+  `npm run test:text` (nền không đụng layout) · `npm run test:defaults` (hộp mới **không**
+  nền, và ba handler đi qua `fillSlotFor`).
+
+### BI-72 · Kho trang ẩn: `/NabuVault` trên **PAGE DICT** — không bao giờ `/NabuKind`, không bao giờ catalog
+- `renderer/page-vault.js`; UI ở `app.js` (`scanVaultPages`, `hidePagesWithPassword`,
+  `unhidePagesWithPassword`, `exportWithoutHiddenPages`).
+- **Đo được trên pdf-lib 1.17.1 — bảng này là lý do tồn tại của thiết kế:**
+
+  | Nơi cất blob | save→load | **reorder trang** | xoá trang khác | ghép/chèn |
+  |---|---|---|---|---|
+  | catalog (`/Root`) | ✅ | ❌ **MẤT** | ✅ | ✅ |
+  | page dict | ✅ | ✅ | ✅ | ✅ |
+
+  Cột giữa là `reorderPages()` (`app.js`) — nó dựng lại tài liệu bằng
+  `PDFDocument.create()` + `copyPages()` và **bỏ lại catalog cũ**. Tức là kéo-thả sắp xếp
+  một cái là bay sạch trang ẩn, không một dòng lỗi nào.
+- **Không được đặt tên khoá là `/NabuKind`:** `stripManagedFromPage` xoá **mọi** annotation
+  mang khoá đó, và nó chạy ở **mỗi lần bấm Áp dụng**. Chú thích lên trang giữ chỗ là mất
+  kho. Vì thế kho nằm trên **page dict** (không phải annotation) với **namespace riêng**.
+- **1 trang ẩn = 1 trang giữ chỗ.** Số trang **không đổi** — đó là thứ giữ cho blob **đi
+  theo trang của nó** qua reorder/ghép/tách/chuyển tab, và giữ cho “trang 7/12” vẫn là 7/12.
+- **Vỡ khi:** kéo sắp xếp trang xong thì không bỏ ẩn được nữa · chú thích lên trang giữ chỗ
+  rồi Áp dụng thì trang ẩn biến mất · badge 🔒 hiện sai thumbnail sau khi xoá/ghép trang.
+- Lưới: `npm run test:vault` (V4 = reorder, V5 = removePage, V6 = merge, V7 =
+  `stripManagedAnnots`).
+
+### BI-73 · Đường đọc kho trang ẩn **phải chịu được `/Filter /FlateDecode`** — luật BI-37 không áp dụng ở đây
+- `page-vault.js` `readVaultBytes`.
+- **Đo được:** ta ghi stream **không filter**; sau **bất kỳ** vòng sidecar nào
+  (`/add-page-numbers`, `/edit-text`, `/compress`, Tìm & Thay thế — tất cả đều
+  `doc.tobytes(deflate=True)`) nó quay về là
+  `<< /NabuFmt /vault /Length n /Filter /FlateDecode >>`.
+- BI-37 dạy “có `/Filter` ⇒ không tin, bỏ qua”. Ở **ảnh** thì hậu quả là “ảnh thành chỉ
+  đọc” — chấp nhận được. Ở **trang ẩn** thì hậu quả là **mất trang vĩnh viễn**. Nên ở đây
+  phải **tự giải nén** bằng `DecompressionStream("deflate")` (đã đo là có trong renderer
+  `file://` lẫn node). Filter **lạ** thì báo lỗi rõ và **không xoá gì**.
+- **Luật chung rút ra:** “không đọc được ⇒ để nguyên”, không bao giờ “không đọc được ⇒ dọn đi”.
+- **Vỡ khi:** ẩn trang → Đánh số trang → không bỏ ẩn được nữa.
+- Lưới: `npm run test:vault` V8 (Flate) + V9 (filter lạ, phải giữ nguyên trang giữ chỗ).
+
+### BI-74 · Ẩn trang phải **xoá lịch sử hoàn tác và ghi đè bản phục hồi** — nếu không, bản rõ vẫn nằm trên đĩa
+- `app.js` `hidePagesWithPassword` → `resetHistory()` + `scrubRecoverySnapshot()`.
+- `pushUndo()` giữ snapshot bytes **trước khi ẩn** trong RAM, và `autosaveTick` đã có thể
+  **ghi nó xuống thư mục recovery**. Ẩn xong mà không dọn thì trang “đã ẩn” vẫn còn nguyên
+  bản rõ ở hai chỗ — với một tính năng bán ra dưới chữ “mật khẩu” thì đó là lỗi, không phải
+  chi tiết.
+- **Đây là ngoại lệ có chủ ý của BI-3.** Mọi thay đổi `state.bytes` khác đều phải qua
+  `pushUndo()` trước; đường này **cố ý không**, và bù lại bằng `markDirty` thủ công
+  (`state.dirty = true` + `updateDirtyIndicator()`) để chấm ●, guard đóng và autosave vẫn
+  biết file đã đổi. Hộp thoại **nói trước** rằng Ctrl+Z sẽ không hoàn tác được.
+- **Bỏ ẩn thì ngược lại**: nó đưa bản rõ trở lại **có chủ đích**, nên `pushUndo()` chạy
+  bình thường, đúng BI-3.
+- **Ngoài tầm với, phải nói thật với người dùng:** file gốc trên đĩa (chưa lưu đè), Windows
+  shadow copy, bản in.
+- **Vỡ khi:** ẩn trang xong, mở file recovery trong `userData` vẫn thấy trang gốc · ẩn xong
+  bấm Ctrl+Z ra lại trang gốc.
+- Lưới: máy không kiểm được — probe renderer (`vault-drive.js` mẫu ở phiên v0.2.64) khẳng
+  định `#btn-undo` bị vô hiệu và `recovery.save` đã chạy lại sau khi ẩn.
+
 ---
 
 ## 4. Hàm nút thắt (đổi chữ ký = ảnh hưởng diện rộng)
@@ -1786,6 +1882,8 @@ _Ghi 2026-08-13. **Đo được, không suy luận.**_
 | Cột trang theo trang đang đọc (`syncThumbFocus`, `nearestScrollDelta`, `.thumb.current`) | `npm run test:geom` · cuộn tài liệu → thumbnail sáng đúng trang & tự trượt vào khung nhìn · **tick chọn vài trang rồi cuộn đi đâu đó → Xoá trang vẫn xoá đúng các trang đã tick** (BI-39, BI-26) · đang kéo sắp xếp trang thì cột **không nhảy** (BI-33) · thu sidebar (F4) rồi cuộn → không lỗi console · F11 → dải trang vẫn sáng đúng trang |
 | Ảnh round-trip (`addManagedAnnot` nhánh image, `managedSrcBytes`, `collectManagedChain`, `freeManagedTrash`, `MANAGED_KINDS`) | `cd desktop ; npm run test:managed` · chèn 1 ảnh → Áp dụng → Lưu → **mở lại** → Chỉnh sửa → ảnh **kéo/đổi cỡ/xoá được**, “Áp nhiều trang” vẫn dùng được · lưu 3–4 lần liên tiếp → **cỡ file không phình** · áp 1 chữ ký cho 20 trang → file ~1 lần cỡ ảnh, không 20 · ảnh trên trang **đã xoay** → **cũng sửa lại được** kể từ v0.2.58, xem hàng dưới (BI-59) · xoá ảnh round-trip rồi **thêm ô redact trên chính trang đó** → Áp dụng: ảnh **không** quay lại thành pixel, và ảnh còn lại **không nhân đôi** (BI-37, BI-38) |
 | Chữ nhật / elip / **khoanh mây** round-trip (`shapeAppearance`, `VECTOR_KINDS`, nhánh vector của `addManagedAnnot` · `serializeManaged` · `deserializeManaged`, `MANAGED_KINDS`) | `cd desktop ; npm run test:managed ; npm run test:rotate ; npm run test:defaults` · vẽ 1 chữ nhật **viền không nền** + 1 elip **có nền mờ** + 1 **khoanh mây hộp** + 1 **khoanh mây vẽ tay** → Áp dụng → Lưu → **mở lại** → Chú thích → cả hai **chọn/kéo/đổi cỡ/đổi màu/đổi nét/xoá được**, elip vẫn **mờ đúng độ mờ đã lưu** · zoom 400% → viền **nét, không rỗ** (vector, không phải PNG) · so **viền có bị gọt** không ở cả 4 cạnh với nét dày 8pt · lặp trên trang **đã xoay 90/180/270** → không méo, không lệch · Lưu 3–4 lần liên tiếp → **cỡ file không phình** · mở file đã bake bằng **Foxit + Acrobat + Chrome** → thấy đúng chỗ, đúng màu (BI-64) |
+| Nền hộp văn bản (`FILLABLE_KINDS`, `fillSlotFor`/`FILL_SLOTS`, `ed.textFill*`, khối `.an-text-bg` trong `renderAnnot`, `fillRect` trong `renderTextPng`, `.an-text { z-index: 0 }`) | `cd desktop ; npm run test:text ; npm run test:managed ; npm run test:defaults` · hộp chữ **nền vàng 100%** trên nền trắng → Áp dụng → Lưu → mở file bằng viewer khác: **mép nền trùng** đúng chỗ trên màn hình · nền **30%** → xuyên thấy nội dung trang, PDF **giống hệt** màn hình · nền + **Mờ chữ 50%** → cả chữ **và** nền cùng mờ ở cả hai nơi · nền + **xoay 45°** → nền quay theo, **không trôi** khỏi chữ · nền + `charScale 60%` → nền ôm đúng bề ngang · Áp dụng → Chỉnh sửa lại → sửa chữ → **nền còn** · Áp dụng → **Đánh số trang** (qua sidecar) → mở lại → nền còn · trang `/Rotate 90` → nền **không méo** · file **cũ** (trước v0.2.64) → hộp chữ vẫn trong suốt, **không tự mọc nền** · chọn hình chữ nhật rồi chọn hộp chữ → ô **Nền** hiện đúng giá trị **của từng loại** (slot riêng) · in (Ctrl+P) → nền in ra (BI-71) |
+| Trang ẩn có khoá (`renderer/page-vault.js`, `scanVaultPages`, `hidePagesWithPassword`, `unhidePagesWithPassword`, `exportWithoutHiddenPages`, `#vault-modal`) | `cd desktop ; npm run test:vault` · **ba ca không được phép đỏ**: ẩn → **kéo thả sắp xếp trang** → bỏ ẩn được (BI-72) · ẩn → **chú thích lên trang giữ chỗ → Áp dụng** → bỏ ẩn được (BI-72) · ẩn xong mở thư mục recovery trong `userData` → **không còn bản rõ** (BI-74) · ẩn → Lưu → đóng app → mở lại → bỏ ẩn được · ẩn → **Đánh số trang** → bỏ ẩn được (BI-73) · ẩn → **Nén file** → bỏ ẩn được · ẩn → khoá cả file bằng mật khẩu (`/encrypt`) → mở khoá → bỏ ẩn được · ẩn → **In** → in ra trang giữ chỗ, không phải nội dung gốc · mở file có trang ẩn bằng **Acrobat/Chrome** → thấy trang giữ chỗ, **không đọc được** nội dung, file không lỗi · tách/trích trang giữ chỗ ra file mới → bỏ ẩn được ở file mới · chuyển trang giữ chỗ **sang tab khác** → blob đi theo · sai mật khẩu → hỏi lại, **tài liệu không đổi** · badge 🔒 và dòng “N trang đang ẩn” đúng sau mỗi lần xoá/ghép/sắp xếp trang |
 | Tay nắm đổi cỡ (`resizeRect`, `RESIZABLE_KINDS`, `.handle.h-*`) | `npm run test:geom` · kéo **cả 4 góc** của ảnh/tô sáng/redact/chữ nhật/elip → góc đối diện **đứng yên** · **giữ Shift** → không méo · Esc giữa lúc kéo → về đúng vị trí+cỡ cũ · Ctrl+Z sau khi đổi cỡ · bấm vào tay nắm rồi **không kéo** → không tạo bước undo rỗng |
 | `editor.js` bake | Chú thích → Xong → sửa lại được · số trang không đổi · comment panel còn đúng (BI-5) |
 | Cổng bake (`exit()`, `bakePending()`, `hasUnsaved`, `ed._importedManaged`) hay `openTextEditor` | `cd desktop ; npm run test:managed` · **đường xoá, làm trên tài liệu chỉ có ĐÚNG MỘT chú thích** (đó là ca vỡ): tạo hộp văn bản → Xong → Lưu → vào Chú thích → `Delete` → Xong → hộp **mất thật**, mở lại file vẫn mất · lặp lại nhưng thay `Delete` bằng **xoá trắng nội dung rồi bấm ra ngoài** → hộp mất, chữ cũ **không** hiện lại · lặp lại nhưng bấm **Ctrl+S** thay vì Xong → cũng mất · xoá hết rồi **đóng app** → **có** hỏi lưu · xoá 1 trong 2 hộp → hộp còn lại **nguyên vẹn**, không nhân đôi (BI-60) |

@@ -482,5 +482,29 @@ check("normTextStyle normalises rot on the way in",
    normTextStyle({ rot: "abc" }).rot, normTextStyle({}).rot],
   [90, -90, 0, 0]);
 
+// ---- a text box's background must never touch the LAYOUT (v0.2.64) ----------
+//
+// A text box can now carry `fill` + `fillOpacity` (the wash behind its words). Those two
+// live on the ANNOT, are painted by renderTextPng and by renderAnnot's underlay, and must
+// be invisible to everything in this file. The reason is BI-40: `layoutTextBox` positions
+// every glyph for BOTH the on-screen box and the baked PNG, so if a background could nudge
+// a single advance, a box would wrap differently in the saved file than on screen — and
+// nothing would report it. normTextStyle building a fresh object from a fixed field list
+// is what makes that impossible; these cases are the guard on that property.
+const BG = { fill: "#ffeb3b", fillOpacity: 0.4 };
+check("normTextStyle drops fill/fillOpacity entirely",
+  ["fill" in normTextStyle(BG), "fillOpacity" in normTextStyle(BG)], [false, false]);
+check("… so a styled box normalises to exactly the same style with or without a background",
+  normTextStyle(Object.assign({ bold: true, align: "center", rot: 30 }, BG)),
+  normTextStyle({ bold: true, align: "center", rot: 30 }));
+check("measureText returns the identical box with a background applied",
+  measureText("Nghiem thu\nlan 2", 16, Object.assign({ charScale: 0.8 }, BG), flat()),
+  measureText("Nghiem thu\nlan 2", 16, { charScale: 0.8 }, flat()));
+check("layoutTextBox places every glyph identically with a background applied",
+  JSON.stringify(layoutTextBox("Nghiem thu", BG, flat(), 48, 3).ops),
+  JSON.stringify(layoutTextBox("Nghiem thu", {}, flat(), 48, 3).ops));
+check("textFont ignores a background too (it is not a font property)",
+  textFont(14, BG), textFont(14, {}));
+
 console.log(`\nannot-text: ${pass} pass, ${fail} fail`);
 process.exit(fail ? 1 : 0);

@@ -315,9 +315,9 @@
       </label>
       <button id="ed-arrow-reverse" data-ctl="arrowrev" title="Đảo chiều mũi tên đang chọn — mũi nhọn sang đầu kia (nhãn đi theo mũi nhọn)">Đảo chiều</button>
       <label class="ctl" data-ctl="cloudsize" title="Cỡ vòng mây: kéo nhỏ để mây ken đặc, sát viền hơn">Cỡ mây <input type="range" id="ed-cloudsize" min="6" max="28" step="1" value="12" /><span id="ed-cloudsize-val" class="readout">12</span></label>
-      <label class="ctl" data-ctl="fill" title="Màu nền bên trong (khi khoanh vùng)">Nền <input type="color" id="ed-fill" value="#ffffff" /></label>
+      <label class="ctl" data-ctl="fill" title="Màu nền: bên trong hình khoanh vùng, hoặc phía sau chữ của hộp văn bản">Nền <input type="color" id="ed-fill" value="#ffffff" /></label>
       <label class="ctl" data-ctl="fill" title="Không tô nền — để trong suốt"><input type="checkbox" id="ed-fill-none" checked /> Trong suốt</label>
-      <label class="ctl" data-ctl="fill" title="Độ mờ nền: 0% = trong suốt hoàn toàn, 100% = đặc kín">Mờ nền <input type="range" id="ed-fill-opacity" min="0" max="100" step="1" value="100" /><span id="ed-fill-opacity-val" class="readout">100%</span></label>
+      <label class="ctl" data-ctl="fill" title="Độ mờ nền: 0% = trong suốt hoàn toàn, 100% = đặc kín. Hộp văn bản và hình khoanh vùng nhớ riêng hai bộ giá trị">Mờ nền <input type="range" id="ed-fill-opacity" min="0" max="100" step="1" value="100" /><span id="ed-fill-opacity-val" class="readout">100%</span></label>
       <button id="ed-img-pages" data-ctl="imgpages" title="Sao chép ảnh/chữ ký đang chọn sang nhiều trang (cùng vị trí)">Áp nhiều trang</button>
       <button id="ed-recalibrate" data-ctl="measure" title="Quên tỷ lệ hiện tại — kéo đoạn đã biết kích thước để hiệu chuẩn lại">Hiệu chuẩn lại</button>
       <div class="sep"></div>
@@ -517,6 +517,9 @@
       <span id="sb-page"></span>
       <span class="sb-sep"></span>
       <span id="sb-size"></span>
+      <!-- Filled by updateStatusBar when the document carries hidden pages; hidden
+           otherwise, so an ordinary document's status bar looks exactly as before. -->
+      <span id="sb-vault" class="sb-vault" hidden></span>
       <span class="sb-spacer"></span>
       <span id="sb-zoom"></span>
       <span class="sb-sep"></span>
@@ -665,7 +668,9 @@
       <div class="modal-card">
         <button type="button" class="modal-x" title="Đóng" aria-label="Đóng">✕</button>
         <h3>PDF có mật khẩu</h3>
-        <p class="cmp-note">File này được bảo vệ bằng mật khẩu. Nhập mật khẩu để mở.</p>
+        <!-- id so i18n's SKIP_IDS can exempt it: "Bỏ ẩn trang" swaps this line for the
+             password HINT stored in the file (BI-10). -->
+        <p class="cmp-note" id="pw-note">File này được bảo vệ bằng mật khẩu. Nhập mật khẩu để mở.</p>
         <label>Mật khẩu
           <span class="key-row">
             <input id="pw-input" type="password" placeholder="Nhập mật khẩu mở file…" autocomplete="off" spellcheck="false" />
@@ -675,6 +680,41 @@
         <div class="modal-actions">
           <button id="pw-cancel" data-modal-close>Hủy</button>
           <button id="pw-ok" class="primary">Mở khoá</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Ẩn trang: set the password the hidden pages will be sealed with. Separate from
+         #pw-modal above (which OPENS an encrypted file) because this one has to confirm
+         the password and warn about what cannot be undone. -->
+    <div class="modal" id="vault-modal" hidden>
+      <div class="modal-card">
+        <button type="button" class="modal-x" title="Đóng" aria-label="Đóng">✕</button>
+        <h3 id="vault-title">Ẩn trang bằng mật khẩu</h3>
+        <p class="cmp-note" id="vault-sub">Trang được mã hoá AES-256 và thay bằng một trang giữ chỗ có khoá.</p>
+        <label>Mật khẩu
+          <span class="key-row">
+            <input id="vault-pw" type="password" placeholder="Đặt mật khẩu mở lại trang…" autocomplete="new-password" spellcheck="false" />
+            <button id="vault-toggle" type="button" class="ghost" title="Hiện / ẩn mật khẩu">👁</button>
+          </span>
+        </label>
+        <label>Nhập lại mật khẩu
+          <input id="vault-pw2" type="password" placeholder="Gõ lại đúng mật khẩu trên…" autocomplete="new-password" spellcheck="false" />
+        </label>
+        <label>Gợi ý (tuỳ chọn, ai mở file cũng đọc được)
+          <input id="vault-hint" type="text" placeholder="Ví dụ: tên dự án viết tắt" spellcheck="false" />
+        </label>
+        <!-- Split into two single-text-node paragraphs on purpose: i18n registers whole
+             text nodes by exact dictionary match, so inline <b> inside one sentence would
+             shatter it into fragments that could never be translated as a unit. -->
+        <div class="cmp-note vault-warn">
+          <p><b>⚠️ Mất mật khẩu là mất trang — không có cách khôi phục.</b></p>
+          <p>Chỉ Nabu PDF mở lại được trang ẩn; phần mềm khác chỉ thấy trang giữ chỗ. Ẩn xong, lịch sử hoàn tác sẽ bị xoá để bản gốc không còn nằm lại trong bộ nhớ hay trong file phục hồi.</p>
+        </div>
+        <p class="cmp-note" id="vault-err" hidden></p>
+        <div class="modal-actions">
+          <button id="vault-cancel" data-modal-close>Hủy</button>
+          <button id="vault-ok" class="primary">Ẩn trang</button>
         </div>
       </div>
     </div>
@@ -1386,6 +1426,10 @@
     <!-- managed-codec.js: after pdf-lib (needs window.PDFLib at load), after wire.js
          and annot-text.js (pushB64Chunks / normTextStyle), before editor.js. -->
     <script src="managed-codec.js"></script>
+    <!-- page-vault.js: after pdf-lib (needs window.PDFLib at load), before app.js
+         (which reads window.PageVault while rendering thumbnails). Publishes ONE
+         global and no bare names — the page-range.js tier. -->
+    <script src="page-vault.js"></script>
     <script src="app.js"></script>
     <!-- pan.js must load AFTER app.js ($ / state / isTyping come from it) and
          BEFORE editor.js / capture.js, so its capture-phase viewer listener is

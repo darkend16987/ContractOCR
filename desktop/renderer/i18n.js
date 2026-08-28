@@ -243,8 +243,31 @@
     "Xoay thêm 90° ngược chiều kim đồng hồ": "Turn a further 90° anti-clockwise",
     "Độ dày nét vẽ / nét viền": "Stroke / outline width",
     "Nét": "Line",
-    "Màu nền bên trong (khi khoanh vùng)": "Inner fill color (for regions)",
+    "Màu nền: bên trong hình khoanh vùng, hoặc phía sau chữ của hộp văn bản":
+      "Fill colour: inside a drawn region, or behind a text box's words",
     "Nền": "Fill",
+    // ---- Trang ẩn có khoá (page vault) ----
+    "Ẩn trang bằng mật khẩu": "Hide pages with a password",
+    "Nhập lại mật khẩu": "Re-enter the password",
+    "Đặt mật khẩu mở lại trang…": "Set the password that reopens the page…",
+    "Gõ lại đúng mật khẩu trên…": "Type the same password again…",
+    "Gợi ý (tuỳ chọn, ai mở file cũng đọc được)":
+      "Hint (optional — anyone who opens the file can read it)",
+    "Ví dụ: tên dự án viết tắt": "e.g. the project's short name",
+    "⚠️ Mất mật khẩu là mất trang — không có cách khôi phục.":
+      "⚠️ Lose the password and the page is lost — there is no recovery.",
+    "Chỉ Nabu PDF mở lại được trang ẩn; phần mềm khác chỉ thấy trang giữ chỗ. Ẩn xong, lịch sử hoàn tác sẽ bị xoá để bản gốc không còn nằm lại trong bộ nhớ hay trong file phục hồi.":
+      "Only Nabu PDF can reopen a hidden page; other software sees the placeholder sheet. Once hidden, the undo history is cleared so the original does not linger in memory or in the crash-recovery file.",
+    "Ẩn trang": "Hide pages",
+    "Ẩn trang này bằng mật khẩu…": "Hide this page with a password…",
+    "Ẩn các trang đang chọn bằng mật khẩu…": "Hide the selected pages with a password…",
+    "Bỏ ẩn trang này…": "Unhide this page…",
+    "Bỏ ẩn các trang đang chọn…": "Unhide the selected pages…",
+    "Xuất bản sao KHÔNG kèm trang ẩn…": "Export a copy WITHOUT the hidden pages…",
+    "Trang đã ẩn — chuột phải để mở lại bằng mật khẩu":
+      "Hidden page — right-click to reopen it with the password",
+    "Chuột phải lên trang có 🔒 để mở lại bằng mật khẩu":
+      "Right-click a page marked 🔒 to reopen it with the password",
     "Không tô nền — để trong suốt": "No fill — transparent",
     "Trong suốt": "Transparent",
     "Đóng dấu mờ lên mọi trang": "Stamp a watermark on every page",
@@ -304,8 +327,8 @@
     // --- edit toolbar: cloud-pen / fill-opacity / image multi-page ---
     "Khoanh mây tự do — vẽ bút (giữ chuột kéo) hoặc bấm từng điểm":
       "Freehand revision cloud — draw with the pen (drag) or click point by point",
-    "Độ mờ nền: 0% = trong suốt hoàn toàn, 100% = đặc kín":
-      "Fill opacity: 0% = fully transparent, 100% = fully opaque",
+    "Độ mờ nền: 0% = trong suốt hoàn toàn, 100% = đặc kín. Hộp văn bản và hình khoanh vùng nhớ riêng hai bộ giá trị":
+      "Fill opacity: 0% = fully transparent, 100% = fully opaque. Text boxes and drawn regions remember separate values",
     "Mờ nền": "Fill opacity",
     "Sao chép ảnh/chữ ký đang chọn sang nhiều trang (cùng vị trí)":
       "Copy the selected image/signature to multiple pages (same position)",
@@ -720,6 +743,15 @@
     // "Xoá cả 3 bản, không hỏi lại" — the count comes from the caller), so it must never
     // be captured into the registry (BI-10).
     "confirm-third",
+    // Live "🔒 N trang đang ẩn", rewritten by updateStatusBar on every render (BI-10).
+    "sb-vault",
+    // The Ẩn trang dialog's per-call subtitle ("3 trang sẽ được mã hoá…") and its
+    // validation line ("Hai lần nhập không khớp"), both written per call (BI-10).
+    "vault-sub", "vault-err",
+    // #pw-modal's explanatory line is swapped for the vault password HINT the file
+    // carries, so capturing it would freeze one document's hint into the registry and
+    // then show it on every later prompt (BI-10).
+    "pw-note",
   ]);
 
   let lang = "vi";

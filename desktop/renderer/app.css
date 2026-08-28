@@ -317,6 +317,32 @@ body.presenting .sidebar-resizer { display: none; }
 }
 .thumb:hover .thumb-check,
 .thumb-check:checked { opacity: 1; }
+/* Trang ẩn (page vault). The placeholder sheet renders as a near-blank page, so without
+   a marker it is indistinguishable from a genuinely blank one. Top-RIGHT, clear of the
+   select checkbox (top-left) and the page number (bottom). */
+.thumb-lock {
+  position: absolute;
+  top: 6px; right: 6px;
+  z-index: 2;
+  font-size: 14px;
+  line-height: 1;
+  padding: 2px 4px;
+  border-radius: 4px;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  pointer-events: none;
+}
+.thumb.vaulted canvas { opacity: 0.75; }
+.statusbar .sb-vault { color: var(--warn); font-weight: 600; }
+/* The irreversible-consequences paragraph in the Ẩn trang dialog. Loud on purpose:
+   losing the password loses the page, and there is no recovery path to fall back on. */
+.vault-warn {
+  border-left: 3px solid var(--warn);
+  padding-left: 8px;
+  line-height: 1.45;
+}
+.vault-warn p { margin: 0 0 4px; }
+.vault-warn p:last-child { margin-bottom: 0; }
 .thumb .num {
   position: absolute;
   bottom: 6px; right: 6px;
@@ -652,7 +678,16 @@ body.editing .annot-layer { pointer-events: auto; cursor: crosshair; }
 body.editing .annot-layer .an { cursor: move; }
 
 .annot-layer .an { position: absolute; box-sizing: border-box; }
-.an-text { white-space: pre; line-height: 1.3; }
+/* `z-index: 0` is load-bearing, not decoration: it makes the text box its OWN stacking
+   context so `.an-text-bg` below (z-index: -1) is clamped inside it. Without it a
+   negative-z child escapes past the annot layer and paints behind the page canvas —
+   i.e. the background silently disappears. 0 (not a positive value) keeps text boxes
+   painting in tree order with every other `.an`, so nothing restacks. */
+.an-text { white-space: pre; line-height: 1.3; z-index: 0; }
+/* Wash behind the glyphs of a text box. Geometry (the −pad offset that lines it up with
+   the baked PNG) is set inline by renderAnnot — see the comment there before touching it.
+   `pointer-events: none` so the wash never steals a click from the box itself. */
+.an-text-bg { position: absolute; z-index: -1; pointer-events: none; }
 .an-highlight { mix-blend-mode: multiply; opacity: 0.4; }
 .an-redact { background: #000; }
 .an-image img { width: 100%; height: 100%; display: block; }

@@ -75,6 +75,17 @@
   // The ✓ / ✗ stamps. Grouped because six places have to treat them alike, and an
   // inline `||` chain in each is how those places drift apart (see RESIZABLE_KINDS).
   const SYMBOL_KINDS = new Set(["check", "cross"]);
+  // Kinds that carry an interior fill (`a.fill` + `a.fillOpacity`) and therefore show
+  // the three "Nền / Trong suốt / Mờ nền" controls. The list used to be spelled out
+  // inline in THREE places (syncControls, applyFillToSel, TOOL_CTLS/KIND_CTLS) — the
+  // exact drift the RESIZABLE_KINDS comment above warns about, and adding `text` to it
+  // is what made the drift real.
+  //
+  // NOT the same set as `isVectorKind` (managed-codec.js), and the difference is
+  // load-bearing: isVectorKind routes a kind to `shapeAppearance()`, a VECTOR /AP.
+  // A text box's fill is painted into its raster PNG by renderTextPng, so `text`
+  // belongs here and must never be added there.
+  const FILLABLE_KINDS = new Set(["box", "ellipse", "cloud", "cloudpen", "text"]);
   // Which remembered default colour a tool/kind draws with. Four kinds keep their OWN
   // slot because their colour carries meaning rather than preference: ✓ = đúng (green),
   // ✗ = sai (red), tô sáng = highlighter yellow, che thông tin = black. Every other kind
@@ -97,6 +108,24 @@
   ]);
   function colorSlotFor(k) {
     return COLOR_SLOTS.get(k) || "color";
+  }
+  // Same idea as COLOR_SLOTS, for the interior fill: which remembered slot a kind draws
+  // its background from. A text box keeps its OWN slot because the two uses pull in
+  // opposite directions — a text background is a light wash that makes words readable
+  // over busy artwork, a shape fill is a solid block of the review colour. Sharing one
+  // slot meant setting "nền trắng 60%" on a text box and then having the next rectangle
+  // come out white 60% too.
+  //
+  // Property NAMES rather than a prefix to concatenate: `ed.textFillColor` written out
+  // in full is greppable, and a typo in a built-up key would read `undefined` instead of
+  // failing loudly. Same TDZ reasoning as COLOR_SLOTS — declared up here, read only from
+  // functions that run after init.
+  const SHAPE_FILL_SLOT = { color: "fillColor", on: "fillOn", opacity: "fillOpacity" };
+  const FILL_SLOTS = new Map([
+    ["text", { color: "textFillColor", on: "textFillOn", opacity: "textFillOpacity" }],
+  ]);
+  function fillSlotFor(k) {
+    return FILL_SLOTS.get(k) || SHAPE_FILL_SLOT;
   }
   // MANAGED_KINDS / isManagedKind / the /Nabu* keys / sniffImage / strToBytes /
   // makeMap / pageRotate / serializeManaged / pushPageAnnot / managedSrcBytes /
@@ -183,6 +212,14 @@
     fillColor: "#ffffff", // interior fill for box / ellipse / cloud / cloudpen
     fillOn: false, // false → transparent interior (the default for revision clouds)
     fillOpacity: 1, // 0..1 interior-fill opacity (0 = fully transparent, 1 = solid)
+    // --- text-box background (own slot — see FILL_SLOTS / fillSlotFor) ---
+    // OFF by default: a box drawn before this existed has no background, and turning one
+    // on for everybody would repaint documents nobody asked to repaint. White at 80% is
+    // what the control offers the first time it is switched on — enough of a wash to make
+    // words readable over artwork without hiding what is underneath.
+    textFillColor: "#ffffff",
+    textFillOn: false,
+    textFillOpacity: 0.8,
     cloudBump: 12, // scallop size for new revision clouds (denser than the old fixed 16)
     annots: {}, // pageIndex -> [annot]
     watermark: null, // { text, size, angle, opacity, color }
@@ -375,6 +412,12 @@
       paraSpacing: ed.paraSpacing, letterSpacing: ed.letterSpacing,
       wordSpacing: ed.wordSpacing, charScale: ed.charScale, indent: ed.indent,
       listType: ed.listType, opacity: ed.textOpacity, rot: ed.textRot,
+      // Background. It rides along in this bundle because the create path spreads the
+      // whole thing onto the new annot (`...stNew`), so one line here is all it takes.
+      // `normTextStyle` builds a fresh object from a fixed field list and simply drops
+      // these two, which is why passing the bundle to measureText/layoutTextBox stays
+      // exactly as safe as before: a background can never move a glyph.
+      fill: effFill("text"), fillOpacity: effFillOpacity("text"),
     };
   }
 
@@ -454,11 +497,18 @@
     });
   }
 
-  // Effective interior fill for a newly created box/ellipse/cloud: a hex colour
-  // when the fill toggle is on, otherwise "none" (transparent — the usual choice
-  // for a revision cloud so the marked-up content stays visible).
-  function effFill() {
-    return ed.fillOn ? ed.fillColor : "none";
+  // Effective interior fill for a newly created object of kind `k`: a hex colour when
+  // that kind's fill toggle is on, otherwise "none" (transparent — the usual choice for
+  // a revision cloud so the marked-up content stays visible, and the historical default
+  // for a text box). `k` picks the remembered slot; see fillSlotFor.
+  function effFill(k) {
+    const slot = fillSlotFor(k);
+    return ed[slot.on] ? ed[slot.color] : "none";
+  }
+  // The three fill numbers for a new object of kind `k`, as the annot stores them.
+  // One helper so the four create paths cannot disagree about which slot they read.
+  function effFillOpacity(k) {
+    return ed[fillSlotFor(k).opacity];
   }
 
   // "#rgb" / "#rrggbb" + alpha (0..1) → CSS rgba() for the overlay fill preview.
@@ -836,6 +886,37 @@
         el.style.transformOrigin = "left top";
         el.style.transform = tf.join(" ");
       }
+      // Background — a separate UNDERLAY element, deliberately NOT `el.style.background`,
+      // and this is the one piece of geometry in the feature that has to be exact.
+      //
+      // The on-screen box and the baked PNG do NOT sit on the same rectangle. On screen
+      // the glyphs start at the element's top-left corner (`.an-text` has no padding);
+      // in the raster renderTextPng insets them by `pad` on all four sides and the bake
+      // compensates by putting the image down at `a.x - pad` (drawOneAnnot /
+      // addManagedAnnot). Measured on a 16pt box: element spans [a.x, a.x+93.00], raster
+      // spans [a.x-2.40, a.x+90.93] — same size, shifted by pad. So `el.style.background`
+      // would paint the wash 2.4pt (~3px) away from where the saved file has it. A glyph
+      // 2.4pt out is invisible; the EDGE of a block of colour is not. BI-40 in miniature.
+      //
+      // Placing the underlay at (-pad, -pad) with the box's own size reproduces the
+      // raster's rectangle exactly. Two details it has to survive:
+      //   · charScale — the parent carries scaleX(), which multiplies a child's left and
+      //     width, so both are pre-divided here (the same trick el.style.width uses);
+      //   · rotation — the underlay is a CHILD, so it turns with the glyphs and cannot
+      //     drift away from its own text, which is what the raster does too (background
+      //     and glyphs share one rotated canvas there).
+      // Appended LAST: `el.textContent` above wipes children, so any earlier insert dies.
+      if (a.fill && a.fill !== "none") {
+        const padPx = a.fontSize * 0.15 * s;
+        const bg = document.createElement("div");
+        bg.className = "an-text-bg";
+        bg.style.left = -padPx / st.charScale + "px";
+        bg.style.top = -padPx + "px";
+        bg.style.width = (a.w * s) / st.charScale + "px";
+        bg.style.height = a.h * s + "px";
+        bg.style.background = hexToRgba(a.fill, a.fillOpacity != null ? a.fillOpacity : 1);
+        el.appendChild(bg);
+      }
     } else if (a.kind === "redact") {
       el.style.background = a.color || "#000";
     } else if (a.kind === "highlight") {
@@ -1188,7 +1269,7 @@
       $("ed-cloudsize").value = String(b);
       $("ed-cloudsize-val").textContent = String(b);
     }
-    if (["box", "ellipse", "cloud", "cloudpen"].includes(a.kind)) {
+    if (FILLABLE_KINDS.has(a.kind)) {
       const none = !a.fill || a.fill === "none";
       $("ed-fill-none").checked = none;
       if (!none) $("ed-fill").value = a.fill;
@@ -1363,8 +1444,8 @@
       const col = ed[colorSlotFor(ed.tool)];
       const a = { id: ed.seq++, kind: ed.tool, x: p.x, y: p.y, w: 1, h: 1, color: col, width: ed.penWidth };
       if (ed.tool === "box" || ed.tool === "ellipse" || ed.tool === "cloud") {
-        a.fill = effFill();
-        a.fillOpacity = ed.fillOpacity;
+        a.fill = effFill(ed.tool);
+        a.fillOpacity = effFillOpacity(ed.tool);
       }
       if (ed.tool === "cloud") a.bump = ed.cloudBump;
       pushEdUndo(); // dropped again if the shape ends up tiny/cancelled
@@ -1467,8 +1548,8 @@
         closed: false,
         color: ed.color,
         width: ed.penWidth,
-        fill: effFill(),
-        fillOpacity: ed.fillOpacity,
+        fill: effFill("cloudpen"),
+        fillOpacity: effFillOpacity("cloudpen"),
         bump: ed.cloudBump,
       };
       pushEdUndo();
@@ -2262,6 +2343,27 @@
       cx.rotate((-s.rot * Math.PI) / 180);
       cx.translate(-cw / 2, -chh / 2);
     }
+    // Background wash, before any glyph and INSIDE the rotated frame so it turns with the
+    // text. `cw x chh` is the whole unrotated canvas — padding included on all four sides
+    // — which is exactly the rectangle the overlay's underlay draws (see renderAnnot).
+    //
+    // Read off `opts` (the annot) rather than `s`: normTextStyle builds a fresh object
+    // from a fixed field list and drops fill/fillOpacity by design, which is also what
+    // keeps a background from ever reaching layoutTextBox and moving a glyph.
+    //
+    // globalAlpha carries s.opacity and the rectangle's own alpha rides in the rgba()
+    // colour, so the two multiply. That is not a flourish: on screen the element's
+    // `opacity` (applyTextCss) dims background and glyphs together, so a raster that
+    // painted the wash at full strength would look right on screen and wrong in the
+    // saved file — BI-40. save/restore keeps the rotation for the glyph loop below.
+    const bgFill = opts && opts.fill && opts.fill !== "none" ? opts.fill : null;
+    if (bgFill) {
+      cx.save();
+      cx.globalAlpha = s.opacity;
+      cx.fillStyle = hexToRgba(bgFill, opts.fillOpacity != null ? opts.fillOpacity : 1);
+      cx.fillRect(0, 0, cw, chh);
+      cx.restore();
+    }
     cx.font = textFont(fpx, s);
     cx.fillStyle = colorHex;
     cx.strokeStyle = colorHex;
@@ -2436,7 +2538,7 @@
       if (!data.text) return null;
       // normTextStyle fills defaults for any field an older file didn't store.
       const s = normTextStyle(data);
-      return { id: ed.seq++, kind: "text", x: +data.x || 0, y: +data.y || 0,
+      const a = { id: ed.seq++, kind: "text", x: +data.x || 0, y: +data.y || 0,
                w: +data.w || 1, h: +data.h || 1, text: String(data.text),
                font: data.font || "sans", fontSize: +data.fontSize || 16,
                color: data.color || "#000000", bold: !!data.bold,
@@ -2449,6 +2551,15 @@
                // written before rotation existed has no `rot` and reads 0.
                rot: s.rot,
                _managed: true };
+      // Background. Left OFF the object entirely when the payload has no `fill`, rather
+      // than set to "none" — renderAnnot and renderTextPng both test
+      // `a.fill && a.fill !== "none"`, and an absent key is the shape a box written
+      // before backgrounds existed has. Same arm the vector branch below uses.
+      if (data.fill && data.fill !== "none") {
+        a.fill = data.fill;
+        a.fillOpacity = data.fillOpacity != null ? +data.fillOpacity : 1;
+      }
+      return a;
     }
     if (data.k === "arrow") {
       return { id: ed.seq++, kind: "arrow",
@@ -3328,7 +3439,7 @@
 
   // Which palette controls (data-ctl) are relevant per drawing tool.
   const TOOL_CTLS = {
-    text: ["color", "font", "fontsize", "biu", "textrot"],
+    text: ["color", "font", "fontsize", "biu", "textrot", "fill"],
     highlight: ["color"],
     draw: ["color", "penwidth"],
     box: ["color", "penwidth", "fill"],
@@ -3349,7 +3460,7 @@
   // by the Select tool so the palette shows only what the *selected* item needs
   // (nothing when the selection is empty) instead of every control at once.
   const KIND_CTLS = {
-    text: ["color", "font", "fontsize", "biu", "textrot"],
+    text: ["color", "font", "fontsize", "biu", "textrot", "fill"],
     highlight: ["color"],
     draw: ["color", "penwidth"],
     box: ["color", "penwidth", "fill"],
@@ -3411,6 +3522,12 @@
     // show the angle the NEXT box will get, not whatever the last SELECTED box had.
     const rpick = $("ed-textrot");
     if (rpick && tool === "text") rpick.value = String(ed.textRot || 0);
+    // Third instance of the same rule: the three fill controls are shared DOM but a text
+    // box and a rectangle remember DIFFERENT backgrounds (FILL_SLOTS), so the controls
+    // have to be re-pointed at the new tool's slot or the user reads one value and gets
+    // another. Before text boxes had a background this was a no-op nobody needed, because
+    // all four fillable kinds drew from one slot.
+    syncFillCtls(tool);
     syncCtlVisibility(tool);
     // #ed-hint used to hold a per-tool instruction sentence for all 15 tools. Those
     // moved to Trợ giúp → Hướng dẫn sử dụng; the slot is now cleared on every tool
@@ -4009,35 +4126,60 @@
       }
     }
   };
+  // Which kind the three fill controls are currently editing: the selected object under
+  // the Select tool, otherwise the active drawing tool. One helper because the handlers
+  // below must write the SAME remembered slot the create path will read — a text box and
+  // a rectangle keep separate ones (FILL_SLOTS), so guessing here would mean typing on a
+  // white wash and then drawing a white rectangle.
+  function fillCtlKind() {
+    if (ed.tool !== "select") return ed.tool;
+    const hit = ed.sel != null ? findAnnot(ed.sel) : null;
+    return hit ? hit.a.kind : null;
+  }
+  // Push the remembered slot for `kind` into the three DOM controls. Called when the tool
+  // changes, for the same reason setTool re-points the colour picker: switching to Hộp văn
+  // bản has to SHOW the background the next box will get, not the one the last rectangle
+  // had. A kind with no fill hides the controls anyway, so `null` is a no-op.
+  function syncFillCtls(kind) {
+    if (!kind || !FILLABLE_KINDS.has(kind)) return;
+    const slot = fillSlotFor(kind);
+    const pct = Math.round((ed[slot.opacity] != null ? ed[slot.opacity] : 1) * 100);
+    $("ed-fill").value = ed[slot.color];
+    $("ed-fill-none").checked = !ed[slot.on];
+    $("ed-fill-opacity").value = String(pct);
+    $("ed-fill-opacity-val").textContent = pct + "%";
+  }
   // Interior fill: picking a colour turns fill on (and clears the transparent
   // toggle); the toggle turns it back off. Both update the selected shape live.
   function applyFillToSel() {
     if (ed.sel == null) return;
     const hit = findAnnot(ed.sel);
-    if (hit && ["box", "ellipse", "cloud", "cloudpen"].includes(hit.a.kind)) {
+    if (hit && FILLABLE_KINDS.has(hit.a.kind)) {
       pushEdUndo("fill:" + ed.sel);
-      hit.a.fill = effFill();
-      hit.a.fillOpacity = ed.fillOpacity;
+      hit.a.fill = effFill(hit.a.kind);
+      hit.a.fillOpacity = effFillOpacity(hit.a.kind);
       syncOverlays();
     }
   }
   $("ed-fill").oninput = (e) => {
-    ed.fillColor = e.target.value;
-    ed.fillOn = true;
+    const slot = fillSlotFor(fillCtlKind());
+    ed[slot.color] = e.target.value;
+    ed[slot.on] = true;
     $("ed-fill-none").checked = false;
     applyFillToSel();
   };
   $("ed-fill-none").onchange = (e) => {
-    ed.fillOn = !e.target.checked;
+    ed[fillSlotFor(fillCtlKind()).on] = !e.target.checked;
     applyFillToSel();
   };
   $("ed-fill-opacity").oninput = (e) => {
+    const slot = fillSlotFor(fillCtlKind());
     const pct = Math.min(100, Math.max(0, +e.target.value || 0));
-    ed.fillOpacity = pct / 100;
+    ed[slot.opacity] = pct / 100;
     $("ed-fill-opacity-val").textContent = pct + "%";
     // Adjusting opacity implies a fill is wanted — turn transparency off.
-    if (ed.fillOn === false && pct > 0) {
-      ed.fillOn = true;
+    if (ed[slot.on] === false && pct > 0) {
+      ed[slot.on] = true;
       $("ed-fill-none").checked = false;
     }
     applyFillToSel();

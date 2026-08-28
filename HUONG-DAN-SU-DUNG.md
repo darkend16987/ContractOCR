@@ -92,6 +92,7 @@ Chỉ cần **một file duy nhất**:
 | Xem · ghép · tách · chèn · xoay · xóa · sắp xếp · **Lưu** | ❌ Không | Chạy hoàn toàn offline, không cần engine OCR. |
 | Chỉnh sửa overlay: chú thích, khoanh vùng, mũi tên (kèm nhãn), ghi chú (kèm bình luận), watermark, redact, điền form | ❌ Không | Offline. |
 | **Sửa chữ gốc** · **Nén PDF** | ❌ Không | Offline (dùng thư viện PDF gói sẵn). |
+| **Ẩn trang bằng mật khẩu** (mục 5) | ❌ Không | Offline hoàn toàn, **không cần cả engine OCR**: mã hoá chạy ngay trong app. Mật khẩu không rời máy bạn và không được lưu ở đâu cả. |
 | **Ký số** bằng USB token (mục 5.1) | ⚠️ Chỉ TSA | Bản thân việc ký chạy offline (token + kho chứng thư Windows). Chỉ **dấu thời gian (TSA)** cần mạng — để trống ô đó thì ký offline hoàn toàn. |
 | **So sánh** 2 PDF · **So sánh & Chồng lớp bản vẽ** (CAD/Revit) | ⚠️ Cần engine | Cần engine bật (badge OCR). Bản vẽ chạy offline; PDF scan cần tải model OCR như mục 3.3. |
 | **Chuyển đổi**: Khoá file (đặt mật khẩu) · Xuất ảnh trong PDF · Trang PDF → ảnh · Ảnh → PDF | ❌ Không | Offline (thư viện PDF gói sẵn). Gom trong nút **Chuyển đổi** trên thanh công cụ + menu "Chuyển đổi". |
@@ -276,6 +277,33 @@ của Word. Mở bằng `Ctrl+H` hoặc nút **⇄** ở cuối ô *Tìm trong t
 >   ảnh thì vẫn là đối tượng sống nên copy được cả sau khi Lưu và mở lại.
 > - Nếu clipboard hệ điều hành đang có **ảnh** (copy từ app khác) thì Ctrl+V vẫn là **dán ảnh vào
 >   trang** như trước — hai đường không lẫn nhau.
+
+> **Nền cho hộp văn bản (từ v0.2.64):** hộp văn bản vốn **trong suốt**, nên đặt lên ảnh scan hay bản
+> vẽ nhiều nét thì chữ lẫn vào hình. Chọn công cụ **Hộp văn bản** (hoặc chọn một hộp đã có) → trên
+> thanh chú thích bỏ tick **Trong suốt**, chọn **Nền** và kéo **Mờ nền**:
+> - **100%** = che kín phần dưới; khoảng **70–85%** = vẫn thấy mờ mờ nội dung bên dưới, đủ để chữ nổi lên.
+> - Nền **ôm sát chữ**, **quay theo** khi bạn xoay hộp, và **đi theo file** — mở lại vẫn sửa được.
+> - **Hộp văn bản và hình khoanh vùng nhớ riêng hai bộ màu nền**, nên đặt nền trắng cho chữ không làm
+>   khung chữ nhật bạn vẽ sau đó cũng trắng.
+
+> 🔒 **Ẩn trang bằng mật khẩu (từ v0.2.64):** chuột phải một trang trong **cột trang** →
+> **Ẩn trang này bằng mật khẩu…** (chọn nhiều trang trước thì ẩn cả loạt bằng một mật khẩu).
+> - Nội dung trang được **mã hoá AES-256** và thay bằng một **trang giữ chỗ** in dòng "🔒 TRANG ĐÃ ẨN".
+>   Thumbnail của nó mang dấu 🔒, và thanh trạng thái dưới cùng đếm "🔒 N trang đang ẩn".
+> - **Mở lại:** chuột phải trang có 🔒 → **Bỏ ẩn trang…** → nhập mật khẩu. Trang gốc quay lại **đúng
+>   vị trí cũ**, nguyên vẹn cả chú thích lẫn chiều xoay.
+> - **Số trang không đổi.** Ẩn trang 7 của 12 thì tài liệu vẫn 12 trang và trang 7 vẫn là trang 7 — mục
+>   lục, tham chiếu chéo và số trang đã đánh không lệch. Trang ẩn cũng **đi theo trang của nó** khi bạn
+>   sắp xếp lại, ghép thêm file, tách file hay chuyển trang sang tài liệu khác.
+> - **Gửi ra ngoài:** chuột phải → **Xuất bản sao KHÔNG kèm trang ẩn…** — bản sao bỏ hẳn những trang
+>   đó, kể cả phần đã mã hoá; file đang mở không đổi.
+> - ⚠️ **Phải biết trước khi dùng:**
+>   - **Mất mật khẩu là mất trang.** Không có đường khôi phục, kể cả với nhà phát triển.
+>   - **Chỉ Nabu PDF mở lại được.** Phần mềm khác (Acrobat, Foxit, Chrome…) chỉ thấy trang giữ chỗ.
+>   - **File không nhỏ đi** — bản mã hoá của trang vẫn nằm trong đó.
+>   - **Ẩn xong `Ctrl+Z` không hoàn tác được.** Đó là chủ ý: lịch sử hoàn tác và file tự-lưu-phục-hồi
+>     đều giữ một bản **trước khi ẩn**, để nguyên thì bản gốc của trang vừa ẩn vẫn nằm đó. Nabu xoá cả
+>     hai ngay sau khi ẩn. Muốn trang trở lại, dùng chính mật khẩu vừa đặt.
 
 > **Ghi chú dạng chuỗi (thêm bình luận vào ghi chú):** bấm đúp một ghi chú 💬 để mở bảng — phần trên là
 > nội dung gốc + các bình luận đã có (chỉ đọc), ô dưới để **Thêm bình luận** (không xoá nội dung cũ). Nút

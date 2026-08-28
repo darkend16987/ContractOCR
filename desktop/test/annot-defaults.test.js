@@ -237,6 +237,58 @@ check(
   /^\s*highlightColor: "#ffd54a"/m.test(edBlock)
 );
 
+// ---- 4a. the FILL slots (v0.2.64) -----------------------------------------
+//
+// Exactly the same failure as a typo'd colour slot, one step quieter: a missing fill slot
+// reads `undefined`, `ed[slot.on]` is falsy, and the background silently never appears —
+// the control moves, nothing happens, and no other test notices. The text box keeps its
+// OWN slot so that switching between Hộp văn bản and Khung chữ nhật does not carry a
+// white wash across; collapsing the two back into one is a canh-gác failure here.
+
+group("the fill slots exist and the text box keeps its own");
+for (const s of ["fillColor", "fillOn", "fillOpacity",
+                 "textFillColor", "textFillOn", "textFillOpacity"]) {
+  check(`ed.${s} is declared`, new RegExp("^\\s*" + s + ":", "m").test(edBlock));
+}
+check(
+  "a NEW text box has no background — an old document must not repaint itself",
+  /^\s*textFillOn: false,/m.test(edBlock),
+  "textFillOn must default to false"
+);
+check(
+  "shapes still default to a transparent interior",
+  /^\s*fillOn: false,/m.test(edBlock)
+);
+check(
+  "FILL_SLOTS gives `text` its own slot (not the shared one)",
+  /FILL_SLOTS = new Map\(\[\s*\n\s*\["text",\s*\{ color: "textFillColor", on: "textFillOn", opacity: "textFillOpacity" \}\],/.test(
+    EDITOR_SRC
+  ),
+  "the text row of FILL_SLOTS was renamed or removed"
+);
+check(
+  "FILLABLE_KINDS includes text (or the Nền controls never show for a text box)",
+  /const FILLABLE_KINDS = new Set\(\[[^\]]*"text"[^\]]*\]\)/.test(EDITOR_SRC)
+);
+// The vector /AP path must NOT grow a text arm: isVectorKind routes to shapeAppearance,
+// and a text box's wash is painted into its raster PNG instead.
+check(
+  "FILLABLE_KINDS is NOT wired into isVectorKind",
+  !/VECTOR_KINDS[^\n]*"text"/.test(
+    require("fs").readFileSync(require("path").join(ROOT, "renderer", "managed-codec.js"), "utf8")
+  )
+);
+{
+  // The three #ed-fill* handlers must resolve their slot through fillSlotFor, or the
+  // text box writes the rectangle's memory again and the split is undone.
+  const uses = (EDITOR_SRC.match(/fillSlotFor\(fillCtlKind\(\)\)/g) || []).length;
+  check(
+    "all three fill handlers resolve through fillSlotFor(fillCtlKind())",
+    uses >= 3,
+    `${uses} use(s)`
+  );
+}
+
 // ---- 4b. multi-kind creation paths go through colorSlotFor ----------------
 //
 // The branches that serve SEVERAL kinds must resolve the colour through the map, or a

@@ -98,6 +98,10 @@ const lift = (name) => eval("(" + fnSource(name) + ")");
 // The shape branch of addManagedAnnot converts its colours with this; the note branch
 // does too. Lifted rather than re-implemented so a change to the hex parser is felt here.
 const hexRgb = lift("hexRgb");
+// The overlay/raster colour converter. Lifted (not re-implemented) for the same reason
+// hexRgb is: renderTextPng paints a text box's background with it, and this grid asserts
+// the exact rgba() string that reaches the canvas.
+const hexToRgba = lift("hexToRgba");
 const dataUrlToBytes = lift("dataUrlToBytes");
 const deserializeManaged = lift("deserializeManaged");
 const addManagedAnnot = lift("addManagedAnnot");
@@ -859,6 +863,43 @@ function readManaged(doc) {
     check("the stored box is the upright one, whatever the angle",
       [serializeManaged(txt({ rot: 90 })).w, serializeManaged(txt({ rot: 90 })).h], [120, 20]);
 
+    // ---- the background survives the file (v0.2.64) --------------------------
+    //
+    // Same shape as the box/ellipse fill above and for the same reason: the keys appear
+    // ONLY when there is a background, so /NabuData for a plain text box is byte-for-byte
+    // what the pre-background writer produced, and a file written before this feature
+    // keeps reading as "trong suốt" rather than acquiring a black wash.
+    check("serializeManaged(text) writes NO fill key when there is no background",
+      ["fill" in serializeManaged(txt()), "fillOpacity" in serializeManaged(txt())],
+      [false, false]);
+    check("serializeManaged(text+fill) adds exactly fill + fillOpacity",
+      [serializeManaged(txt({ fill: "#ffeb3b", fillOpacity: 0.4 })).fill,
+       serializeManaged(txt({ fill: "#ffeb3b", fillOpacity: 0.4 })).fillOpacity],
+      ["#ffeb3b", 0.4]);
+    check("… a background with no opacity stored reads as fully opaque",
+      serializeManaged(txt({ fill: "#ffffff" })).fillOpacity, 1);
+    check("fill:\"none\" (the Trong suốt tick) serialises as NO background",
+      "fill" in serializeManaged(txt({ fill: "none" })), false);
+    {
+      const back = deserializeManaged(serializeManaged(txt({ fill: "#ffeb3b", fillOpacity: 0.4 })), null);
+      check("deserializeManaged brings the background back on the live object",
+        [back.fill, back.fillOpacity], ["#ffeb3b", 0.4]);
+      // Left OFF the object, not set to "none": renderAnnot and renderTextPng both test
+      // `a.fill && a.fill !== "none"`, and an absent key is the shape a freshly-typed box
+      // with the Trong suốt tick has.
+      const plain = deserializeManaged({ k: "text", x: 1, y: 2, w: 3, h: 4, text: "a" }, null);
+      check("… and a payload written BEFORE backgrounds existed has no fill key at all",
+        ["fill" in plain, "fillOpacity" in plain], [false, false]);
+    }
+    // The background must never reach the layout engine: normTextStyle builds a fresh
+    // object from a fixed field list, which is what guarantees a wash cannot move a
+    // glyph or re-wrap a line (BI-40). Asserted here as well as in test:text because
+    // serializeManaged's text branch is the one place both meet.
+    check("normTextStyle drops fill/fillOpacity, so layout cannot see a background",
+      ["fill" in normTextStyle(txt({ fill: "#ffeb3b", fillOpacity: 0.4 })),
+       "fillOpacity" in normTextStyle(txt({ fill: "#ffeb3b", fillOpacity: 0.4 }))],
+      [false, false]);
+
     // ---- the RASTER half, on a stub canvas -----------------------------------
     //
     // renderTextPng needs a canvas, which is why the rest of the text path is not
@@ -887,8 +928,19 @@ function readManaged(doc) {
       const stubCtx = {
         font: "", _calls: [],
         measureText: (str) => ({ width: str.length * 0.6 * (parseFloat(stubCtx.font) || 1) }),
-        save() {}, restore() {}, fillText() {}, beginPath() {}, moveTo() {}, lineTo() {},
+        save() {}, restore() {}, beginPath() {}, moveTo() {}, lineTo() {},
         stroke() {}, scale() {},
+        // Recorded so the grid can prove the wash goes down BEFORE the first glyph.
+        // Appended after the pivot's translate/rotate/translate, so the `_calls[0..2]`
+        // assertions in the rotation cases below are unaffected.
+        fillText() { this._calls.push(["fillText"]); },
+        // Records the background wash: WHAT rectangle, in WHICH colour, at WHICH alpha.
+        // fillStyle/globalAlpha are read at call time because that is when the real
+        // canvas reads them too — setting them in the wrong order is a live failure mode.
+        fillRect(x, y, w, h) {
+          this._calls.push(["fillRect", +x.toFixed(4), +y.toFixed(4), +w.toFixed(4), +h.toFixed(4),
+                            this.fillStyle, this.globalAlpha]);
+        },
         translate(x, y) { this._calls.push(["translate", +x.toFixed(4), +y.toFixed(4)]); },
         rotate(r) { this._calls.push(["rotate", +r.toFixed(6)]); },
       };
@@ -960,6 +1012,74 @@ function readManaged(doc) {
         check("rot 360 is upright: same raster, no rotation",
           [full.wPt, full.hPt, full.ox, full.oy, stubCtx._calls.some((c) => c[0] === "rotate")],
           [up.wPt, up.hPt, 0, 0, false]);
+
+        // ---- the background wash (v0.2.64) ---------------------------------
+        //
+        // WHY THIS IS HERE AND NOT ONLY ON SCREEN: the overlay <div> and this PNG are the
+        // two pictures that must agree, and they are built by different code from
+        // different geometry — the classic BI-40 pair. The screen half cannot run in node,
+        // so what is pinned here is every number the raster half contributes: the wash is
+        // the WHOLE padded box, it goes down before any glyph, and its alpha is the
+        // product of the two opacities.
+        const RECT = (calls) => calls.filter((c) => c[0] === "fillRect");
+        stubCtx._calls.length = 0;
+        renderTextPng("Nghiem thu", FS, "#000000", style);
+        check("no background ⇒ not a single fillRect, so an old box rasterises unchanged",
+          RECT(stubCtx._calls).length, 0);
+        stubCtx._calls.length = 0;
+        renderTextPng("Nghiem thu", FS, "#000000", Object.assign({ fill: "none" }, style));
+        check("fill:\"none\" (Trong suốt) rasterises with no wash either",
+          RECT(stubCtx._calls).length, 0);
+
+        stubCtx._calls.length = 0;
+        renderTextPng("Nghiem thu", FS, "#000000",
+          Object.assign({ fill: "#ffeb3b", fillOpacity: 0.4 }, style));
+        {
+          const rects = RECT(stubCtx._calls);
+          // The rectangle is the whole canvas at rotation 0 — padding on all four sides
+          // included. That is precisely the box renderAnnot's underlay draws at
+          // (−pad, −pad) with the annot's own w/h, which is how the two line up.
+          check("one wash, covering the entire padded box",
+            [rects.length, rects[0][1], rects[0][2],
+             +(rects[0][3] / RS).toFixed(6), +(rects[0][4] / RS).toFixed(6)],
+            [1, 0, 0, +up.wPt.toFixed(6), +up.hPt.toFixed(6)]);
+          check("… in the requested colour, alpha carried by the rgba() string",
+            rects[0][5], hexToRgba("#ffeb3b", 0.4));
+          check("… and under the glyphs, not over them",
+            stubCtx._calls.findIndex((c) => c[0] === "fillRect") <
+              stubCtx._calls.findIndex((c) => c[0] === "fillText"), true);
+        }
+        // The two opacities MULTIPLY. On screen the element's `opacity` (applyTextCss)
+        // dims wash and glyphs together, so a raster that painted the wash at full
+        // strength would look right on screen and wrong in the saved file.
+        stubCtx._calls.length = 0;
+        renderTextPng("Nghiem thu", FS, "#000000",
+          Object.assign({ fill: "#ffeb3b", fillOpacity: 0.5, opacity: 0.5 }, style));
+        check("text opacity multiplies the wash: globalAlpha carries it at fill time",
+          RECT(stubCtx._calls)[0][6], 0.5);
+
+        // A turned box: the wash is drawn INSIDE the rotated frame, so it stays the
+        // upright box's size even though the canvas grew to hold the corners. Filling
+        // the grown canvas instead would paint a rectangle that is not the text box.
+        stubCtx._calls.length = 0;
+        const turned = renderTextPng("Nghiem thu", FS, "#000000",
+          Object.assign({ rot: 30, fill: "#ffeb3b", fillOpacity: 1 }, style));
+        {
+          const r0 = RECT(stubCtx._calls)[0];
+          // The `hPt` comparison is the part that makes this case mean something: it
+          // proves the canvas really did grow, so "the wash is the upright size" is a
+          // measurement rather than a coincidence. Deliberately NOT `wPt` — turning a
+          // wide, flat box by 30° makes its bounding box TALLER but slightly NARROWER
+          // (w·cos30 + h·sin30 < w), so a width check here would fail for the right
+          // reason and teach the next reader the wrong lesson.
+          check("rot 30: the wash is the UPRIGHT box, not the grown canvas",
+            [+(r0[3] / RS).toFixed(6), +(r0[4] / RS).toFixed(6), turned.hPt > up.hPt],
+            [+up.wPt.toFixed(6), +up.hPt.toFixed(6), true]);
+          // …and it happens after the pivot, i.e. in the turned frame with the glyphs.
+          check("rot 30: it is laid down after the pivot, so it turns with the text",
+            stubCtx._calls.findIndex((c) => c[0] === "fillRect") >
+              stubCtx._calls.findIndex((c) => c[0] === "rotate"), true);
+        }
       } finally {
         delete global.document;
       }

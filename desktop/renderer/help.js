@@ -243,6 +243,35 @@
             T("**Đánh số trang…** — xem trước ngay trên trang, và `Ctrl+Z` hoàn tác được trước khi Lưu.", "**Add page numbers…** — previewed right on the page, and `Ctrl+Z` undoes it before you save."),
           ],
         },
+        { h: T("Ẩn trang bằng mật khẩu (từ v0.2.64)", "Hiding pages behind a password (from v0.2.64)") },
+        {
+          ul: [
+            T(
+              "**Cách dùng** — chuột phải lên trang trong cột trang → **Ẩn trang này bằng mật khẩu…**. Đặt mật khẩu, nhập lại cho chắc, và có thể thêm một **gợi ý**. Trang biến thành một **trang giữ chỗ** in dòng “🔒 TRANG ĐÃ ẨN”, và thumbnail của nó mang dấu 🔒. Thanh trạng thái dưới cùng đếm “🔒 N trang đang ẩn”.",
+              "**How** — right-click a page in the page list → **Ẩn trang này bằng mật khẩu…**. Set a password, confirm it, and optionally add a **hint**. The page becomes a **placeholder sheet** reading “🔒 TRANG ĐÃ ẨN”, its thumbnail gets a 🔒 badge, and the status bar counts “🔒 N trang đang ẩn”."
+            ),
+            T(
+              "**Mở lại** — chuột phải lên trang có 🔒 → **Bỏ ẩn trang…**, nhập mật khẩu. Trang gốc quay lại **đúng vị trí cũ**, nguyên vẹn cả chú thích lẫn chiều xoay. Chọn nhiều trang cùng một mật khẩu thì mở lại một lượt.",
+              "**Reopening** — right-click a page marked 🔒 → **Bỏ ẩn trang…** and type the password. The original comes back **in its own slot**, annotations and rotation intact. Select several pages sharing one password to reopen them in one go."
+            ),
+            T(
+              "**Số trang không đổi.** Ẩn trang 7 của 12 thì tài liệu vẫn có 12 trang và trang 7 vẫn là trang 7 — mục lục, tham chiếu chéo và số trang đã đánh không lệch đi. Đây cũng là thứ giữ cho trang ẩn **đi theo trang của nó** khi bạn sắp xếp lại, ghép thêm file, tách file hay chuyển trang sang tài liệu khác.",
+              "**The page count does not change.** Hide page 7 of 12 and the document still has 12 pages, with page 7 still at 7 — tables of contents, cross-references and stamped page numbers all stay true. It is also what keeps a hidden page **travelling with its own sheet** when you reorder, merge, split, or move pages to another document."
+            ),
+            T(
+              "**Bảo mật thật, và giới hạn thật.** Nội dung trang được mã hoá **AES-256-GCM**, khoá dẫn xuất từ mật khẩu (PBKDF2-SHA256). Không có mật khẩu thì **không phần mềm nào** đọc được, kể cả Nabu. Đổi lại: **mất mật khẩu là mất trang**, không có đường khôi phục; **chỉ Nabu PDF** mở lại được (phần mềm khác chỉ thấy trang giữ chỗ); và **file không nhỏ đi**, vì bản mã hoá vẫn nằm trong đó.",
+              "**Real protection, and real limits.** The page is encrypted with **AES-256-GCM** under a key derived from your password (PBKDF2-SHA256). Without the password **no software** can read it, Nabu included. In exchange: **lose the password and the page is lost**, with no recovery path; **only Nabu PDF** can reopen one (other software just sees the placeholder); and **the file does not get smaller**, because the encrypted copy still lives inside it."
+            ),
+            T(
+              "**Ẩn xong thì `Ctrl+Z` không hoàn tác được** — đó là chủ ý. Lịch sử hoàn tác giữ một bản sao tài liệu **trước khi ẩn**, và file tự-lưu-phục-hồi cũng vậy; để nguyên thì bản gốc của trang bạn vừa ẩn vẫn nằm đó. Nên ẩn xong app xoá lịch sử và ghi đè bản phục hồi. Muốn trang trở lại, dùng chính mật khẩu vừa đặt.",
+              "**After hiding, `Ctrl+Z` will not undo it** — deliberately. The undo history holds a copy of the document **from before the hide**, and so does the crash-recovery file; leaving either in place would keep the original of the page you just hid lying around. So the history is cleared and the recovery snapshot rewritten. To get the page back, use the password you just set."
+            ),
+            T(
+              "**Gửi file ra ngoài mà không mang theo trang ẩn** — chuột phải → **Xuất bản sao KHÔNG kèm trang ẩn…**. Bản sao bỏ hẳn những trang đó, kể cả phần đã mã hoá; file đang mở không đổi.",
+              "**Sending the file on without the hidden pages** — right-click → **Xuất bản sao KHÔNG kèm trang ẩn…**. The copy drops those pages entirely, ciphertext and all; the document you have open is untouched."
+            ),
+          ],
+        },
         { h: T("Chuyển trang sang tài liệu khác", "Moving pages to another document") },
         {
           ul: [
@@ -331,6 +360,10 @@
             T(
               "**Xoay chữ (từ v0.2.63)** — chọn một hộp văn bản rồi gõ số độ vào ô **Xoay** trên thanh công cụ, hoặc bấm **+90°**. Số dương là **ngược chiều kim đồng hồ**. Xoay được **bất cứ lúc nào**: hộp vừa gõ xong, hộp đã bấm **Xong**, và hộp mở lại từ file đã lưu — góc đi theo file nên lần sau mở ra vẫn sửa lại được. Gõ lại nội dung thì ô nhập cũng nghiêng đúng góc đó, còn cỡ hộp thì **không** đổi theo góc: chữ chỉ đổi chiều, không phình ra.",
               "**Rotating the text (from v0.2.63)** — select a text box and type a number of degrees into the **Xoay** field on the toolbar, or press **+90°**. Positive turns **anti-clockwise**. You can rotate at **any time**: a box you have just typed, a box you already pressed **Xong** on, and a box reopened from a saved file — the angle travels with the file, so it is still adjustable next time. Retyping happens at the same angle, and the box's own size does **not** change with it: the text turns, it does not grow."
+            ),
+            T(
+              "**Nền hộp văn bản (từ v0.2.64)** — hộp văn bản vốn trong suốt, nên đặt lên ảnh scan hay bản vẽ nhiều nét thì chữ lẫn vào hình. Bỏ tick **Trong suốt**, chọn **Nền** và kéo **Mờ nền** để lót một mảng màu phía sau chữ; để 100% là che kín, khoảng 70–85% thì vẫn thấy mờ mờ nội dung bên dưới. Nền ôm sát chữ, quay theo khi bạn xoay hộp, và **đi theo file** — mở lại vẫn sửa được. Hộp văn bản và hình khoanh vùng **nhớ riêng hai bộ màu nền**, nên đặt nền trắng cho chữ không làm khung chữ nhật vẽ sau đó cũng trắng.",
+              "**Text-box background (from v0.2.64)** — a text box is transparent by default, so words placed over a scan or a busy drawing get lost in the artwork. Untick **Trong suốt**, pick a **Nền** colour and drag **Mờ nền** to lay a wash behind the text: 100% hides what is underneath, around 70–85% still lets it show through faintly. The wash hugs the text, turns with the box when you rotate it, and **travels with the file** — reopen and it is still editable. Text boxes and shapes **remember two separate fill colours**, so setting a white wash for text does not make the next rectangle white too."
             ),
             T("**Tô sáng** (`H`) — kéo để tô sáng một vùng.", "**Highlight** (`H`) — drag across an area."),
             T(

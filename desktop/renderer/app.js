@@ -29,6 +29,10 @@ const state = {
   dragSrc: null,
   dirty: false, // true when the canonical bytes have changed since the last real save
   docId: null, // per-open-document id keying its crash-recovery snapshot slot
+  // 0-based indices of the "trang ẩn" placeholder pages in the CURRENT document order.
+  // Refreshed by scanVaultPages() on every renderAll, which is cheap because it only
+  // parses when PageVault.looksLikeVaultFile says the file has one at all.
+  vaultPages: new Set(),
 };
 
 // Find-in-document state. `docItems` caches each page's text runs (str + folded
@@ -584,16 +588,23 @@ async function unlockEncrypted(u8) {
 }
 
 // Modal password prompt. Resolves to the entered string, or null if cancelled.
-function promptPassword() {
+// `note` replaces the dialog's explanatory line — used by "Bỏ ẩn trang" to show the hint
+// the person who hid the page left behind. Restored on close, so the encrypted-file path
+// that passes nothing keeps its own wording.
+const PW_NOTE_DEFAULT = "File này được bảo vệ bằng mật khẩu. Nhập mật khẩu để mở.";
+function promptPassword(note) {
   return new Promise((resolve) => {
     const modal = $("pw-modal");
     const input = $("pw-input");
+    const sub = $("pw-note");
+    if (sub) sub.textContent = note || PW_NOTE_DEFAULT;
     input.value = "";
     input.type = "password";
     modal.hidden = false;
     input.focus();
     const done = (val) => {
       modal.hidden = true;
+      if (sub) sub.textContent = PW_NOTE_DEFAULT; // never leave a hint on screen for the next caller
       $("pw-ok").onclick = null;
       $("pw-cancel").onclick = null;
       input.onkeydown = null;
@@ -628,6 +639,11 @@ async function renderAll() {
     );
     state.numPages = state.pdf.numPages;
     if (state.selected.size === 0 && state.numPages > 0) state.selected.add(0);
+    // BEFORE renderThumbs, because the thumbnails draw the 🔒 badge from this set. It has
+    // to be recomputed here rather than cached across edits: reorder, delete and merge all
+    // move a hidden page's index, and a badge on the wrong thumbnail is an invitation to
+    // type a password at a page that has none.
+    await scanVaultPages();
     await renderThumbs();
     await renderViewer();
     $("empty-state").style.display = "none";
@@ -683,6 +699,16 @@ async function renderThumbs() {
     num.className = "num";
     num.textContent = String(i + 1);
     div.appendChild(num);
+    // A hidden page renders as an ordinary (blank-looking) placeholder sheet, so without
+    // this badge the only way to tell one from a genuinely blank page is to right-click it.
+    if (state.vaultPages.has(i)) {
+      div.classList.add("vaulted");
+      const lock = document.createElement("span");
+      lock.className = "thumb-lock";
+      lock.textContent = "🔒";
+      lock.title = "Trang đã ẩn — chuột phải để mở lại bằng mật khẩu";
+      div.appendChild(lock);
+    }
     wireThumb(div);
     wrap.appendChild(div);
   }
@@ -1650,6 +1676,34 @@ function openThumbMenu(e, i) {
         ]
       : []),
     { separator: true },
+    // Ẩn / Bỏ ẩn. The two are mutually exclusive on any given selection, so only the one
+    // that can actually run is offered — a menu that lists "Bỏ ẩn" for an ordinary page
+    // teaches the user that the command is broken.
+    ...(window.PageVault && sel.some((i) => !state.vaultPages.has(i))
+      ? [
+          {
+            label: many ? tr("Ẩn các trang đang chọn bằng mật khẩu…") : tr("Ẩn trang này bằng mật khẩu…"),
+            // Refused by hidePagesWithPassword anyway; greyed out here so the user is not
+            // invited to type a password for an operation that cannot complete.
+            enabled: sel.filter((i) => !state.vaultPages.has(i)).length < state.numPages,
+            onClick: () => hidePagesWithPassword(sel),
+          },
+        ]
+      : []),
+    ...(window.PageVault && sel.some((i) => state.vaultPages.has(i))
+      ? [
+          {
+            label: sel.filter((i) => state.vaultPages.has(i)).length > 1
+              ? tr("Bỏ ẩn các trang đang chọn…")
+              : tr("Bỏ ẩn trang này…"),
+            onClick: () => unhidePagesWithPassword(sel),
+          },
+        ]
+      : []),
+    ...(state.vaultPages.size
+      ? [{ label: tr("Xuất bản sao KHÔNG kèm trang ẩn…"), onClick: () => exportWithoutHiddenPages() }]
+      : []),
+    { separator: true },
     {
       label: many ? tr("Xoá các trang đang chọn") : tr("Xoá trang này"),
       enabled: canDelete,
@@ -1740,6 +1794,267 @@ async function deleteSelected() {
     return;
   }
   await deletePages([...state.selected]);
+}
+
+// ---- trang ẩn có khoá (page vault) ---------------------------------------
+//
+// The PDF surgery and the crypto live in renderer/page-vault.js, which is DOM-free and
+// has its own grid (`npm run test:vault`). Everything below is the part that needs the
+// app: the menu, the dialogs, the badge, and the one thing the grid cannot check —
+// scrubbing the plaintext out of undo and out of the crash-recovery file.
+
+// Refresh state.vaultPages from the canonical bytes. Called from renderAll, so it runs
+// after every structural edit and every undo — which is what keeps the badge honest when
+// pages move around. The cheap marker scan means an ordinary document never pays for a
+// pdf-lib parse here (measured: ~53 ms on a 200-page file, far too much per render).
+async function scanVaultPages() {
+  state.vaultPages = new Set();
+  const PV = window.PageVault;
+  if (!PV || !state.bytes || !PV.looksLikeVaultFile(state.bytes)) return;
+  try {
+    const doc = await PDFDocument.load(state.bytes);
+    for (const i of PV.vaultPageIndices(doc)) state.vaultPages.add(i);
+  } catch (_) {
+    // A document pdf-lib cannot parse is one the rest of the app cannot edit either;
+    // the viewer still works, so degrade to "no badge" rather than failing the render.
+  }
+}
+
+// The "🔒 Trang này đã được ẩn" sheet, rasterised. Vietnamese needs diacritics, and
+// pdf-lib's built-in fonts are Latin-1 only, so the choice is embedding a font subset or
+// drawing on a canvas. A canvas is what every other Vietnamese-text-into-PDF path in this
+// app already does (renderTextPng), and it keeps page-vault.js node-testable by leaving
+// the drawing out of it entirely. Its own canvas, never the viewer's — BI-4.
+function vaultLabelPng() {
+  const RS = 3;
+  const W = 460 * RS;
+  const H = 150 * RS;
+  const c = document.createElement("canvas");
+  c.width = W;
+  c.height = H;
+  const cx = c.getContext("2d");
+  cx.textAlign = "center";
+  cx.fillStyle = "#3a3a3a";
+  cx.font = `700 ${34 * RS}px system-ui, "Segoe UI", Arial, sans-serif`;
+  cx.fillText("🔒 TRANG ĐÃ ẨN", W / 2, 48 * RS);
+  cx.fillStyle = "#666";
+  cx.font = `${17 * RS}px system-ui, "Segoe UI", Arial, sans-serif`;
+  cx.fillText("Nội dung trang này được mã hoá và cần mật khẩu để xem.", W / 2, 90 * RS);
+  cx.fillText("Mở bằng Nabu PDF: chuột phải lên trang → Bỏ ẩn trang.", W / 2, 118 * RS);
+  return b64ToU8(c.toDataURL("image/png").split(",")[1]);
+}
+
+// Modal for SETTING a vault password (password + confirmation + hint). Resolves to
+// { password, hint } or null. Separate from promptPassword() above, which asks for the
+// password of an already-encrypted FILE and has nothing to confirm.
+function promptVaultPassword(nPages) {
+  return new Promise((resolve) => {
+    const modal = $("vault-modal");
+    const pw = $("vault-pw");
+    const pw2 = $("vault-pw2");
+    const hint = $("vault-hint");
+    const err = $("vault-err");
+    pw.value = "";
+    pw2.value = "";
+    hint.value = "";
+    pw.type = "password";
+    pw2.type = "password";
+    err.hidden = true;
+    $("vault-sub").textContent =
+      nPages > 1
+        ? `${nPages} trang sẽ được mã hoá AES-256 và thay bằng trang giữ chỗ có khoá.`
+        : "Trang được mã hoá AES-256 và thay bằng một trang giữ chỗ có khoá.";
+    modal.hidden = false;
+    pw.focus();
+    const done = (val) => {
+      modal.hidden = true;
+      $("vault-ok").onclick = null;
+      $("vault-cancel").onclick = null;
+      $("vault-toggle").onclick = null;
+      pw.onkeydown = null;
+      pw2.onkeydown = null;
+      resolve(val);
+    };
+    const submit = () => {
+      // Refusing an empty password here rather than in page-vault.js as well is not
+      // duplication: this one can point at the field, and the library one is the guard
+      // for every other caller.
+      if (!pw.value) {
+        err.textContent = "Hãy đặt một mật khẩu.";
+        err.hidden = false;
+        pw.focus();
+        return;
+      }
+      if (pw.value !== pw2.value) {
+        err.textContent = "Hai lần nhập không khớp — gõ lại cho chắc.";
+        err.hidden = false;
+        pw2.focus();
+        pw2.select();
+        return;
+      }
+      done({ password: pw.value, hint: hint.value.trim() });
+    };
+    $("vault-ok").onclick = submit;
+    $("vault-cancel").onclick = () => done(null);
+    $("vault-toggle").onclick = () => {
+      const show = pw.type === "password";
+      pw.type = pw2.type = show ? "text" : "password";
+    };
+    const key = (e) => {
+      if (e.key === "Enter") submit();
+      else if (e.key === "Escape") done(null);
+    };
+    pw.onkeydown = key;
+    pw2.onkeydown = key;
+    hint.onkeydown = key;
+  });
+}
+
+// Hide `indices` behind a password.
+//
+// THE UNDO HISTORY IS DROPPED ON PURPOSE, and it is the reason this cannot live in
+// page-vault.js. pushUndo() keeps a snapshot of the bytes BEFORE the hide in memory, and
+// autosaveTick writes snapshots into the crash-recovery folder on disk. Leaving either in
+// place would mean the plaintext of a page the user just hid is still sitting there —
+// which is the sort of thing a security feature must not do quietly. So the timeline is
+// reset and the recovery slot is rewritten from the sealed bytes. The user loses Ctrl+Z
+// for this one action; they get the page back with the password they just typed, and the
+// dialog says so before they commit.
+async function hidePagesWithPassword(indices) {
+  if (gateProFeature()) return false;
+  const PV = window.PageVault;
+  if (!PV) {
+    toast("Không nạp được page-vault.js — khởi động lại app.", "bad");
+    return false;
+  }
+  const list = [...new Set(indices)].filter((i) => Number.isInteger(i) && !state.vaultPages.has(i));
+  if (!list.length) {
+    toast("Không có trang nào để ẩn (trang đang chọn đã ẩn rồi?).", "bad");
+    return false;
+  }
+  if (list.length >= state.numPages) {
+    toast("Không thể ẩn toàn bộ trang — phải chừa lại ít nhất một trang.", "bad");
+    return false;
+  }
+  const got = await promptVaultPassword(list.length);
+  if (!got) return false;
+  showOverlay("Đang mã hoá và ẩn trang…");
+  try {
+    const doc = await PDFDocument.load(state.bytes);
+    const n = await PV.hidePages(doc, list, got.password, {
+      hint: got.hint,
+      labelPng: vaultLabelPng(),
+    });
+    if (!n) {
+      toast("Không ẩn được trang nào.", "bad");
+      return false;
+    }
+    state.bytes = await doc.save();
+    // NOT pushUndo(): see the note above. markDirty still has to run so the ● indicator,
+    // the close guard and the (rewritten) recovery snapshot all know the file changed.
+    resetHistory();
+    state.dirty = true;
+    updateDirtyIndicator();
+    await scrubRecoverySnapshot();
+    state.selected.clear();
+    await renderAll();
+    toast(
+      n > 1 ? `Đã ẩn ${n} trang. Không hoàn tác được — dùng mật khẩu để mở lại.`
+            : "Đã ẩn 1 trang. Không hoàn tác được — dùng mật khẩu để mở lại.",
+      "good"
+    );
+    return true;
+  } catch (err) {
+    toast("Ẩn trang lỗi: " + (err && err.message ? err.message : err), "bad");
+    return false;
+  } finally {
+    hideOverlay();
+  }
+}
+
+// Overwrite the crash-recovery slot with the CURRENT (sealed) bytes, so the pre-hide
+// plaintext that autosave may already have written is gone. Best-effort by design: this
+// is a scrub, and a failure to scrub must never block the hide that just succeeded.
+async function scrubRecoverySnapshot() {
+  try {
+    if (!state.docId || !window.desktop.recovery) return;
+    lastAutosaveLen = -1; // force the next tick to write rather than skip on an equal length
+    await window.desktop.recovery.save({
+      docId: state.docId,
+      name: state.name,
+      path: state.path,
+      bytes: state.bytes,
+    });
+  } catch (_) {
+    /* best effort */
+  }
+}
+
+// Bring hidden pages back.
+//
+// DELIBERATELY NOT GATED behind the licence. Hiding is a Pro action; getting your own
+// pages back is not something to hold hostage if an activation lapses.
+async function unhidePagesWithPassword(indices) {
+  const PV = window.PageVault;
+  if (!PV) return false;
+  const list = [...new Set(indices)].filter((i) => state.vaultPages.has(i));
+  if (!list.length) {
+    toast("Trang đang chọn không phải trang đã ẩn.", "bad");
+    return false;
+  }
+  // Show the hint the file carries, if the person who hid it left one.
+  let hint = "";
+  try {
+    const probe = await PDFDocument.load(state.bytes);
+    const info = PV.vaultInfo(probe, probe.getPage(list[0]));
+    hint = info && info.hint ? info.hint : "";
+  } catch (_) { /* the prompt just goes without a hint */ }
+
+  for (;;) {
+    const pw = await promptPassword(hint ? "Gợi ý: " + hint : "");
+    if (pw == null) return false;
+    showOverlay("Đang giải mã trang ẩn…");
+    try {
+      const doc = await PDFDocument.load(state.bytes);
+      const n = await PV.unhidePages(doc, list, pw);
+      // BI-3: the undo step goes in BEFORE the bytes move. Unlike hiding, restoring puts
+      // plaintext back on purpose, so there is nothing to scrub and undo is welcome.
+      pushUndo();
+      state.bytes = await doc.save();
+      state.selected.clear();
+      await renderAll();
+      toast(n > 1 ? `Đã mở lại ${n} trang ẩn.` : "Đã mở lại trang ẩn.", "good");
+      return true;
+    } catch (err) {
+      if (err && err.code === "BAD_PASSWORD") {
+        toast("Sai mật khẩu — thử lại.", "bad");
+        continue; // the document was not touched; page-vault.js reads before it writes
+      }
+      toast("Không mở được trang ẩn: " + (err && err.message ? err.message : err), "bad");
+      return false;
+    } finally {
+      hideOverlay();
+    }
+  }
+}
+
+// "Xuất bản sao không kèm trang ẩn" — the copy to send outside, with the ciphertext left
+// behind entirely. Offered only when the document actually has hidden pages.
+async function exportWithoutHiddenPages() {
+  const PV = window.PageVault;
+  if (!PV || !state.vaultPages.size) return;
+  showOverlay("Đang tạo bản sao…");
+  try {
+    const doc = await PDFDocument.load(state.bytes);
+    const { bytes, dropped } = await PV.exportWithoutVaults(doc);
+    const base = state.name.replace(/\.pdf$/i, "");
+    const res = await window.desktop.savePdf(bytes, `${base}_khong_trang_an.pdf`);
+    if (res.saved) toast(`Đã lưu bản sao (bỏ ${dropped} trang ẩn): ` + res.path, "good");
+  } catch (err) {
+    toast("Xuất bản sao lỗi: " + (err && err.message ? err.message : err), "bad");
+  } finally {
+    hideOverlay();
+  }
 }
 
 // Modal position picker shared by Merge + Insert. Resolves to a 0-based insertion
@@ -2325,6 +2640,16 @@ function updateStatusBar() {
     sz.textContent = `${wmm} × ${hmm} mm`;
   } else if (sz) {
     sz.textContent = "";
+  }
+  // Hidden pages are, by design, hard to notice — a placeholder sheet looks like a blank
+  // page. Saying so once in the status bar is what stops someone sending a contract out
+  // believing it is complete.
+  const vb = $("sb-vault");
+  if (vb) {
+    const n = state.vaultPages.size;
+    vb.hidden = !n;
+    vb.textContent = n ? `🔒 ${n} trang đang ẩn` : "";
+    vb.title = n ? "Chuột phải lên trang có 🔒 để mở lại bằng mật khẩu" : "";
   }
 }
 

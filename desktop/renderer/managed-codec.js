@@ -373,14 +373,24 @@
   function serializeManaged(a) {
     if (a.kind === "text") {
       const s = _normTextStyle(a);
-      return { k: "text", x: a.x, y: a.y, w: a.w, h: a.h, text: a.text,
-               font: a.font, fontSize: a.fontSize, color: a.color,
-               bold: !!a.bold, italic: !!a.italic, underline: !!a.underline,
-               strike: s.strike, align: s.align, lineHeight: s.lineHeight,
-               paraSpacing: s.paraSpacing, letterSpacing: s.letterSpacing,
-               wordSpacing: s.wordSpacing, charScale: s.charScale,
-               indent: s.indent, listType: s.listType, opacity: s.opacity,
-               rot: s.rot };
+      const o = { k: "text", x: a.x, y: a.y, w: a.w, h: a.h, text: a.text,
+                  font: a.font, fontSize: a.fontSize, color: a.color,
+                  bold: !!a.bold, italic: !!a.italic, underline: !!a.underline,
+                  strike: s.strike, align: s.align, lineHeight: s.lineHeight,
+                  paraSpacing: s.paraSpacing, letterSpacing: s.letterSpacing,
+                  wordSpacing: s.wordSpacing, charScale: s.charScale,
+                  indent: s.indent, listType: s.listType, opacity: s.opacity,
+                  rot: s.rot };
+      // Background, written exactly like the vector kinds below: the keys appear ONLY
+      // when there is a background. An absent key reads back as "trong suốt", which is
+      // also what every text box written before this existed must keep meaning — and it
+      // keeps /NabuData byte-identical to the old writer for a box with no background.
+      // Not routed through `s`: normTextStyle drops these two on purpose.
+      if (a.fill && a.fill !== "none") {
+        o.fill = a.fill;
+        o.fillOpacity = a.fillOpacity != null ? a.fillOpacity : 1;
+      }
+      return o;
     }
     if (a.kind === "arrow") {
       return { k: "arrow", x1: a.x1, y1: a.y1, x2: a.x2, y2: a.y2,

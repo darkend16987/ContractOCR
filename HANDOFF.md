@@ -4,7 +4,77 @@
 > [DESIGN.md](DESIGN.md) (kiến trúc), [ROADMAP.md](ROADMAP.md) (tiến độ chi tiết),
 > [SETUP.md](SETUP.md) (dựng môi trường).
 
-_Cập nhật: 2026-08-23 · v0.2.63 đã phát hành (dưới đây) · v0.2.62 là bản trước đó_
+_Cập nhật: 2026-08-28 · v0.2.64 đã phát hành (dưới đây) · v0.2.63 là bản trước đó_
+
+> **v0.2.64 — ẩn trang bằng mật khẩu · nền phía sau chữ trong hộp văn bản.**
+>
+> Cả hai bắt đầu bằng một **nghiên cứu khả thi** trước khi viết dòng code nào:
+> [docs/RESEARCH-2026-08-28-hide-pages-textbg.md](docs/RESEARCH-2026-08-28-hide-pages-textbg.md).
+> Bốn probe chạy thật (pdf-lib 1.17.1, PyMuPDF 1.27.2.3, Electron thật, và chính
+> `annot-text.js`) đã quyết định gần như toàn bộ thiết kế. Các bất biến mới: **BI-71 →
+> BI-74** trong [docs/REGRESSION-GUARD.md](docs/REGRESSION-GUARD.md).
+>
+> ---
+>
+> **1. Ẩn trang có khoá — `renderer/page-vault.js` (mới) + `npm run test:vault` (66 ca).**
+>
+> Ẩn trang _i_ = bóc trang ra thành PDF 1 trang → **AES-256-GCM** (khoá PBKDF2-SHA256,
+> salt + IV riêng cho từng trang) → **thay** bằng một trang giữ chỗ cùng khổ giấy, cùng
+> `/Rotate`, in dòng “🔒 TRANG ĐÃ ẨN” → ciphertext cất trong stream thô treo vào **page
+> dict** của chính trang giữ chỗ, khoá `/NabuVault`.
+>
+> **Bốn quyết định đều là kết quả ĐO, không phải khẩu vị:**
+>
+> - **Cất ở catalog là mất trang.** `reorderPages()` (`app.js`) dựng lại tài liệu bằng
+>   `PDFDocument.create()` + `copyPages()`; probe in ra `MISSING` cho khoá catalog và
+>   `PAGE-BLOB` cho khoá page-dict. Tức là **kéo thả sắp xếp một cái là bay sạch trang
+>   ẩn** — không lỗi, không cảnh báo. (BI-72, lưới V4.)
+> - **Đặt tên khoá `/NabuKind` cũng là mất trang.** `stripManagedFromPage` xoá **mọi**
+>   annot mang khoá đó, và nó chạy ở mỗi lần bấm Áp dụng. Namespace riêng, trên page dict
+>   chứ không phải annotation. (BI-72, lưới V7.)
+> - **`/Filter /FlateDecode` phải ĐỌC, không được từ chối.** Đo được: sidecar của chính
+>   app (`doc.tobytes(deflate=True)` trong `/add-page-numbers`, `/edit-text`, `/compress`,
+>   Tìm & Thay thế) nén lại stream ta ghi ra. Luật BI-37 (“có filter ⇒ bỏ qua”) đúng cho
+>   **ảnh** — hậu quả là ảnh chỉ đọc — nhưng ở đây hậu quả là **mất trang vĩnh viễn**. Nên
+>   `readVaultBytes` tự giải nén bằng `DecompressionStream("deflate")`. (BI-73, lưới V8/V9.)
+> - **Bản rõ còn nằm trong undo + file recovery.** `pushUndo()` giữ snapshot trước-khi-ẩn
+>   trong RAM và `autosaveTick` đã có thể ghi nó xuống đĩa. Nên ẩn xong: `resetHistory()`
+>   + ghi đè bản recovery. Đánh đổi: **Ctrl+Z không hoàn tác được thao tác ẩn** — hộp thoại
+>   nói trước. Đây là **ngoại lệ có chủ ý của BI-3**. (BI-74.)
+>
+> **Không cần sidecar, không cần main process:** đo được rằng renderer `file://` dưới
+> `sandbox: true` **là secure context**, nên `crypto.subtle` (AES-GCM + PBKDF2) và
+> `DecompressionStream` đều chạy — cùng một đoạn code chạy trong app và trong lưới node.
+>
+> **1 trang ẩn = 1 trang giữ chỗ**, nên **số trang không đổi**: “trang 7/12” vẫn là 7/12,
+> và blob **đi theo trang của nó** qua reorder / ghép / tách / chuyển tab.
+>
+> ---
+>
+> **2. Nền phía sau chữ trong hộp văn bản — và cái bẫy hình học đã suýt dính.**
+>
+> Cả hai đường bake của hộp chữ (dán cứng `drawOneAnnot` **và** `/AP` của
+> `addManagedAnnot`) đều gọi chung `renderTextPng`, nên phía PDF chỉ phải sửa **một chỗ**.
+> Phía màn hình thì **không** dùng `el.style.background` — đo được:
+>
+> ```
+> element box (màn hình) : left = a.x + 0.00   w = 93.00
+> raster  box (PNG bake) : left = a.x − 2.40   w = 93.33
+> ```
+>
+> Cùng kích thước, lệch đúng `pad = fontSize × 0.15`, vì chữ trên màn hình vẽ từ góc
+> trên-trái của `<div>` còn trong PNG nó thụt vào `pad` cả 4 phía. Chữ lệch 2.4pt thì
+> không ai thấy; **mép một mảng màu lệch 2.4pt thì thấy ngay**. Nên nền là một `<div>`
+> **lót** đặt ở `(−pad, −pad)`; đo lại trên Chromium thật: sai lệch **tệ nhất 0.333pt**.
+> Chụp pixel để chứng minh nền **nằm dưới** chữ và không tràn ra ngoài. (BI-71.)
+>
+> Hộp văn bản có **slot màu nền riêng** (`ed.textFill*`, `FILL_SLOTS`) — đặt nền trắng cho
+> chữ không làm khung chữ nhật vẽ sau đó cũng trắng.
+>
+> ---
+>
+> **Lưới:** 18/18 lưới renderer xanh (thêm `npm run test:vault` — 66 ca, trong đó V4–V7 là
+> bốn ca sống-sót nói trên) · 13/13 file test Python xanh.
 
 > **v0.2.63 — bản dịch không còn đè lên bản gốc · nét vẽ tay sửa lại được sau khi Lưu ·
 > xoay chữ trong hộp văn bản · bản phát hành chuyển sang repo riêng.**
