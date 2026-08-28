@@ -330,6 +330,8 @@
     "Độ mờ nền: 0% = trong suốt hoàn toàn, 100% = đặc kín. Hộp văn bản và hình khoanh vùng nhớ riêng hai bộ giá trị":
       "Fill opacity: 0% = fully transparent, 100% = fully opaque. Text boxes and drawn regions remember separate values",
     "Mờ nền": "Fill opacity",
+    "Xem trước nền: đúng màu và đúng độ mờ đang đặt, trên ô kẻ caro nên 30% trông ra 30%":
+      "Fill preview: the exact colour and opacity set, over a checkerboard so 30% looks like 30%",
     "Sao chép ảnh/chữ ký đang chọn sang nhiều trang (cùng vị trí)":
       "Copy the selected image/signature to multiple pages (same position)",
     "Áp nhiều trang": "Apply to pages",

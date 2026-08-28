@@ -289,6 +289,120 @@ check(
   );
 }
 
+// ---- 4a-bis. the fill controls must stay USABLE mid-typing (v0.2.65) -------
+//
+// v0.2.64 shipped the background correct and unverifiable. Everything below is a
+// canh-gác case for the four reasons it felt broken on the FIRST run — each one silent,
+// each one invisible to every other test in the repo:
+//
+//  F1 the three Nền controls are ordinary <input>s, so mousedown on them blurred the
+//     inline textarea, `commit()` ran, and the box was created with the background from
+//     BEFORE the change. The value only reached the NEXT box.
+//  F2 nothing painted the wash on the textarea, and app.css gives it a near-opaque white
+//     — so "trong suốt" and "trắng 30%" both looked like solid white while typing.
+//  F3 syncControls only pushed a colour into #ed-fill when the annot HAD one, so
+//     unticking "Trong suốt" handed back the slot colour, not the one on display.
+//  F4 no composite preview: <input type=color> shows the hue with no alpha.
+//
+// The mousedown-preventDefault trick the B/I/U buttons use is NOT the fix and must not be
+// "restored" here: on a range input it kills the drag, on a colour input it can stop the
+// picker opening. The blur handler is where this belongs.
+
+group("the Nền controls survive an open text editor (v0.2.65)");
+check(
+  "F1 · the textarea's blur does NOT commit when focus moves into the palette",
+  /ta\.addEventListener\("blur",\s*\(e\)\s*=>\s*\{\s*\n\s*if \(inPalette\(e\.relatedTarget\)\) return;/.test(EDITOR_SRC),
+  "a bare `blur -> commit` is back: picking a background commits the box with the OLD one"
+);
+check(
+  "F1 · the palette selector spares #ed-tools / Copy / Dán / Áp dụng",
+  /PALETTE_KEEP_SEL = "#edit-bar \[data-ctl\], #fmt-panel"/.test(EDITOR_SRC),
+  'widening this to "#edit-bar" loses the typing on every tool change (#ed-tools is INSIDE #edit-bar)'
+);
+check(
+  "F1 · renderLayer carries an open inline editor across the innerHTML wipe (BI-75)",
+  /const keep = layer\.querySelector\("\.annot-text-edit, \.annot-note-panel"\);[\s\S]{0,400}?layer\.innerHTML = "";[\s\S]{0,400}?layer\.appendChild\(keep\)/.test(
+    EDITOR_SRC
+  ),
+  "without this, any syncOverlays() from a palette control deletes the words being typed — no blur, no undo, no error"
+);
+check(
+  "F1 · … and restores the caret, not just the focus",
+  /setSelectionRange\(caret\[0\], caret\[1\]\)/.test(EDITOR_SRC),
+  "focus() alone drops the caret to the end of the text"
+);
+check(
+  "F1 · the Nền controls target the box being retyped, not a stale selection",
+  /function fillTargetAnnot\(\)[\s\S]{0,600}?if \(ed\._taCommit\) return ed\._taAnnot \|\| null;/.test(EDITOR_SRC),
+  "openTextEditor does not select the box it opens, so ed.sel is either null or a DIFFERENT object"
+);
+check(
+  "F1 · applyFillToSel refuses a target whose kind is not the one on display",
+  /if \(a\.kind !== kind\) return;/.test(EDITOR_SRC),
+  "a rectangle left selected under the Hộp văn bản tool used to eat an undo step per slider move"
+);
+check(
+  "F2 · the inline textarea previews the background",
+  /function taFillPreview\(/.test(EDITOR_SRC) && /taFillPreview\(ta, existing\)/.test(EDITOR_SRC),
+  "colour + opacity go back to being unverifiable until the box is committed"
+);
+check(
+  "F2 · the repaint RE-READS its source (a snapshot taken at open would freeze)",
+  /const paint = \(\) => \{[\s\S]{0,500}?taFillPreview\(ta, existing\);\s*\n\s*\};/.test(EDITOR_SRC) &&
+    /ed\._taPreview = paint;/.test(EDITOR_SRC),
+  "hoisting fs/st out of paint() puts the open-time values back and the preview stops tracking the palette"
+);
+check(
+  "F2 · no fill ⇒ the inline background is CLEARED, not painted transparent",
+  /ta\.style\.background = on \? hexToRgba\([\s\S]{0,80}?\) : "";/.test(EDITOR_SRC),
+  'a truly see-through field over dark artwork is a box you cannot read your own typing in — app.css\'s white has to stand'
+);
+check(
+  "F2 · the preview is NOT pre-multiplied by the text opacity",
+  !/taFillPreview[\s\S]{0,700}?\*\s*(s\.opacity|st\.opacity|ed\.textOpacity)/.test(EDITOR_SRC),
+  "the element already carries opacity (applyTextCss); multiplying again makes the preview darker than the result"
+);
+check(
+  "F3 · syncControls falls back to the slot colour when the annot has no fill",
+  /\$\("ed-fill"\)\.value = none \? ed\[fillSlotFor\(a\.kind\)\.color\] : a\.fill;/.test(EDITOR_SRC),
+  "`if (!none)` is back: the swatch shows one colour and effFill hands back another"
+);
+check(
+  "F4 · the composite preview chip exists in the markup, inside the fill row",
+  /data-ctl="fill"[^\n]*id="ed-fill-swatch"[^\n]*>\s*<i><\/i>/.test(INDEX_SRC),
+  "the chip must live in a data-ctl=fill label or it stays visible for kinds with no fill"
+);
+check(
+  "F4 · the chip reads the CONTROLS, not ed.* — one source of truth",
+  /function refreshFillSwatch\(\)[\s\S]{0,600}?\$\("ed-fill-none"\)\.checked[\s\S]{0,300}?\$\("ed-fill"\)\.value/.test(
+    EDITOR_SRC
+  ),
+  "reading ed.* lets the chip disagree with the numbers printed beside it"
+);
+{
+  // Three repaint sites: the tool change, the selection change, and any palette move.
+  // Miss one and the chip goes stale exactly when it matters.
+  const uses = (EDITOR_SRC.match(/refreshFillSwatch\(\);/g) || []).length;
+  check("F4 · refreshFillSwatch is called from every place the controls change", uses >= 4, `${uses} call(s)`);
+}
+check(
+  "the palette repaint is ONE delegated listener, not a call per handler",
+  /document\.querySelectorAll\("#edit-bar, #fmt-panel"\)\.forEach/.test(EDITOR_SRC),
+  "twenty handlers each remembering to repaint is the drift FILLABLE_KINDS exists to prevent"
+);
+check(
+  "the caret is handed back on `change`, never on `input`",
+  /if \(evt === "change" && ed\._taFocus\) ed\._taFocus\(\);/.test(EDITOR_SRC),
+  "refocusing on `input` fights a slider drag for the mouse"
+);
+check(
+  "all four inline-editor hooks are cleared together",
+  /function clearTaHooks\(\)[\s\S]{0,300}?_taCommit = null;[\s\S]{0,200}?_taAnnot = null;[\s\S]{0,200}?_taPreview = null;[\s\S]{0,200}?_taFocus = null;/.test(
+    EDITOR_SRC
+  ),
+  "a stale _taAnnot silently redirects the Nền controls at a box nobody is editing"
+);
+
 // ---- 4b. multi-kind creation paths go through colorSlotFor ----------------
 //
 // The branches that serve SEVERAL kinds must resolve the colour through the map, or a

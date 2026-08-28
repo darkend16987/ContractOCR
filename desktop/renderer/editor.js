@@ -127,6 +127,24 @@
   function fillSlotFor(k) {
     return FILL_SLOTS.get(k) || SHAPE_FILL_SLOT;
   }
+  // Which parts of the chrome are "the palette": the style controls an inline editor's
+  // text is allowed to KEEP being edited from. Focus landing in here does not commit the
+  // open textarea (see openTextEditor's blur handler) — before v0.2.65 it did, and that
+  // is the whole reason picking a background felt broken: mousedown on #ed-fill blurred
+  // the textarea, the box was committed with the PREVIOUS background, and the value the
+  // user had just chosen only reached the NEXT box. The three Nền controls are ordinary
+  // <input>s, so the mousedown-preventDefault trick the B/I/U buttons use is not
+  // available: preventDefault on a range's mousedown kills the drag, and on a colour
+  // input it can stop the picker opening.
+  //
+  // `#edit-bar [data-ctl]` and NOT `#edit-bar`: #ed-tools lives INSIDE #edit-bar
+  // (index.html), and so do Copy/Dán/Áp dụng. Every one of those must still commit
+  // first — switching tool or baking with an open editor and no commit would drop the
+  // typing. Only the data-ctl style controls and the format panel are exempt.
+  const PALETTE_KEEP_SEL = "#edit-bar [data-ctl], #fmt-panel";
+  function inPalette(node) {
+    return !!(node && node.nodeType === 1 && node.closest && node.closest(PALETTE_KEEP_SEL));
+  }
   // MANAGED_KINDS / isManagedKind / the /Nabu* keys / sniffImage / strToBytes /
   // makeMap / pageRotate / serializeManaged / pushPageAnnot / managedSrcBytes /
   // managedSrcDataUrl / collectManagedChain / freeManagedTrash /
@@ -252,6 +270,11 @@
     _dimPending: null, // drag awaiting the calibration modal: { id, page, layer, pdfDist }
     _dirty: false, // true once the user actually changed something this session
     _taCommit: null, // commit/close fn of the open inline editor (text/note/label), or null
+    // The other three hooks of an open TEXT-box editor. All four are cleared together by
+    // clearTaHooks(); see openTextEditor for why each exists.
+    _taAnnot: null, // the box being retyped (null for a new one) — the Nền controls' target
+    _taPreview: null, // repaint the textarea's style + background wash, or null
+    _taFocus: null, // hand the caret back to the textarea, or null
     _exiting: false, // guards bakePending's re-import while we're leaving edit mode
     _managedPages: new Set(), // pages that hold (or held) round-trip text/notes → always repaint on bake
     // How many round-trip annots importManaged() took OWNERSHIP of from the file this
@@ -440,6 +463,30 @@
       [s.underline && "underline", s.strike && "line-through"].filter(Boolean).join(" ") || "none";
   }
 
+  // Live background wash on the inline <textarea>, so "màu nền + % mờ" can be JUDGED
+  // while the words are being typed instead of only after the box exists. `a` is the box
+  // being retyped, or null for a new one (then the remembered text slot decides).
+  //
+  // NOT the −pad underlay renderAnnot builds, and deliberately so: the textarea is a
+  // fixed TA_ROWS x TA_COLS slab with no relation to the box's real rectangle (see
+  // openTextEditor), so there is no rectangle to line up with here. This previews the
+  // COLOUR and the OPACITY — the two things the palette cannot show and the two things
+  // the user was guessing at. Geometry stays BI-71's business.
+  //
+  // No fill ⇒ clear the inline value and let app.css's near-opaque white stand. A truly
+  // transparent field over dark artwork is a box you cannot read your own typing in, and
+  // the editor still has to be usable over a photo.
+  //
+  // Not pre-multiplied by the text opacity: the element already carries `opacity`
+  // (applyTextCss) and it dims this background exactly as it dims the on-screen underlay
+  // and as globalAlpha dims the raster's fillRect (renderTextPng). Multiplying here would
+  // make the preview darker than the result at every opacity below 100%.
+  function taFillPreview(ta, a) {
+    const src = a || { fill: effFill("text"), fillOpacity: effFillOpacity("text") };
+    const on = src.fill && src.fill !== "none";
+    ta.style.background = on ? hexToRgba(src.fill, src.fillOpacity != null ? src.fillOpacity : 1) : "";
+  }
+
   function hexRgb(hex) {
     const m = /^#?([0-9a-f]{6})$/i.exec(hex || "");
     if (!m) return rgb(0, 0, 0);
@@ -554,11 +601,37 @@
     document.body.classList.toggle("editing", ed.active);
   }
 
+  // An open inline editor (the text/label textarea, the note panel) is a CHILD of the
+  // annot layer, so `innerHTML = ""` below destroys it. Removing a focused element fires
+  // NO blur in Chromium, which means the commit-on-blur never runs: the words being typed
+  // are gone with no annot, no undo step and no error. Before v0.2.65 nothing hit this,
+  // because every route out of the textarea committed first. Now that focus may move into
+  // the palette WITHOUT committing (see PALETTE_KEEP_SEL / openTextEditor), any
+  // syncOverlays() triggered from a palette control lands here mid-typing — so the editor
+  // has to be carried across the rebuild instead of wiped. BI-75.
+  //
+  // `innerHTML = ""` only DETACHES: the node, its value, its selection range and its
+  // listeners all survive as long as this reference does. Focus does not, hence the
+  // explicit restore — without it the caret silently jumps to <body> and the next
+  // keystroke goes nowhere.
   function renderLayer(layer, i) {
+    const keep = layer.querySelector(".annot-text-edit, .annot-note-panel");
+    const act = document.activeElement;
+    const focused = keep && act && (act === keep || keep.contains(act)) ? act : null;
+    const caret = focused && focused.selectionStart != null ? [focused.selectionStart, focused.selectionEnd] : null;
     layer.innerHTML = "";
     const s = state.scale;
     for (const a of annotsFor(i)) layer.appendChild(renderAnnot(a, s));
     if (ed.watermark) layer.appendChild(renderWatermarkEl());
+    if (keep) {
+      layer.appendChild(keep);
+      if (focused) {
+        focused.focus();
+        // Restoring the caret is not cosmetic: focus() alone drops the selection to the
+        // end, so a mid-word palette tweak would push the rest of the typing to the tail.
+        if (caret) { try { focused.setSelectionRange(caret[0], caret[1]); } catch (_) {} }
+      }
+    }
   }
 
   // Flatten a note + its replies into one text block (tooltip + PDF Contents).
@@ -1277,10 +1350,17 @@
     if (FILLABLE_KINDS.has(a.kind)) {
       const none = !a.fill || a.fill === "none";
       $("ed-fill-none").checked = none;
-      if (!none) $("ed-fill").value = a.fill;
+      // With no fill there is no colour ON the annot, and the old `if (!none)` left the
+      // swatch showing whatever the last object happened to have — very likely another
+      // kind's, since the three controls are shared DOM. Untick "Trong suốt" from there and
+      // effFill hands back the remembered SLOT colour, not the one the swatch was showing:
+      // you read one colour and got another. Fall back to the slot the create path reads,
+      // so the control cannot promise something else.
+      $("ed-fill").value = none ? ed[fillSlotFor(a.kind).color] : a.fill;
       const op = a.fillOpacity != null ? a.fillOpacity : 1;
       $("ed-fill-opacity").value = String(Math.round(op * 100));
       $("ed-fill-opacity-val").textContent = Math.round(op * 100) + "%";
+      refreshFillSwatch();
     }
   }
   function setFmtBtn(id, on) {
@@ -1876,13 +1956,28 @@
     // not from this element. So this is free to tune — BI-40 is not in play.
     ta.rows = TA_ROWS;
     ta.cols = TA_COLS;
-    const fs = existing ? existing.fontSize : ed.fontSize;
-    const st = existing ? normTextStyle(existing) : edTextStyle();
+    const st = existing ? normTextStyle(existing) : edTextStyle(); // for the rot block below
     ta.style.left = p.x * state.scale + "px";
     ta.style.top = p.y * state.scale + "px";
-    ta.style.fontSize = fs * state.scale + "px";
-    ta.style.color = existing ? existing.color : ed.color;
-    applyTextCss(ta, st, state.scale); // live-preview the full paragraph style
+    // Every visual the palette can change, in ONE place, RE-READ from its source on each
+    // call. Called at open and again from the palette listener (via ed._taPreview), so a
+    // style tweak mid-typing shows up in the field instead of being a promise about a box
+    // that does not exist yet — which is what made choosing a background guesswork.
+    //
+    // Source depends on which box this is, and the two are not interchangeable: a NEW box
+    // takes the live palette state (that is literally what commit will spread onto it),
+    // a retyped one takes the box's OWN stored style (the palette does not rewrite a
+    // placed box's font from here — only the Nền controls reach it, via _taAnnot).
+    // `fontSize`/`color` are set directly because applyTextCss owns neither, and
+    // taFillPreview is separate because a background is not a text style (normTextStyle
+    // drops it on purpose — BI-40).
+    const paint = () => {
+      ta.style.fontSize = (existing ? existing.fontSize : ed.fontSize) * state.scale + "px";
+      ta.style.color = existing ? existing.color : ed.color;
+      applyTextCss(ta, existing ? normTextStyle(existing) : edTextStyle(), state.scale);
+      taFillPreview(ta, existing);
+    };
+    paint();
     ta.value = existing ? existing.text : "";
     layer.appendChild(ta);
     // Retyping a TURNED box types at the same angle, so the words never jump between
@@ -1910,7 +2005,7 @@
     const commit = () => {
       if (done) return;
       done = true;
-      ed._taCommit = null;
+      clearTaHooks();
       const text = ta.value.replace(/\s+$/, "");
       ta.remove();
       if (existing) {
@@ -1955,17 +2050,44 @@
       renderLayer(layer, i);
     };
     ed._taCommit = commit; // outside clicks route here before any re-render
-    ta.addEventListener("blur", commit);
+    // The box this editor is retyping (null for a new one). Read by the fill controls so
+    // "Nền" applies to the box under the cursor: openTextEditor does NOT select the box
+    // it opens, so `ed.sel` is null here and applyFillToSel had nothing to write to —
+    // moving the slider while retyping a box was a silent no-op.
+    ed._taAnnot = existing || null;
+    // Repaint hook for the palette (wired once, next to the fill handlers): any style
+    // control moving has to redraw this preview or the wash on screen goes stale the
+    // moment it becomes verifiable.
+    ed._taPreview = paint;
+    ed._taFocus = () => ta.focus();
+    // Focus moving into the palette must NOT commit — see PALETTE_KEEP_SEL. `relatedTarget`
+    // is the element gaining focus; it is null for a click on the page background or on
+    // anything unfocusable, which is exactly the "clicked away, I'm done" case that still
+    // has to commit. Committing here (not on the palette's mousedown) keeps the range
+    // slider draggable and the colour picker openable.
+    ta.addEventListener("blur", (e) => {
+      if (inPalette(e.relatedTarget)) return;
+      commit();
+    });
     ta.addEventListener("keydown", (e) => {
       e.stopPropagation();
       if (e.key === "Escape") {
         done = true;
-        ed._taCommit = null;
+        clearTaHooks();
         ta.remove();
       } else if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
         commit();
       }
     });
+  }
+  // Drop every reference to a closed inline text editor in one place. Four hooks now
+  // instead of one, and a stale `_taPreview` would paint a detached node while a stale
+  // `_taAnnot` would silently redirect the Nền controls at a box nobody is editing.
+  function clearTaHooks() {
+    ed._taCommit = null;
+    ed._taAnnot = null;
+    ed._taPreview = null;
+    ed._taFocus = null;
   }
 
   // ---- note editor (comment anchored to a point) ---------------------------
@@ -3682,7 +3804,7 @@
     ed.pendingImage = null;
     ed._poly = null;
     ed._dirty = false;
-    ed._taCommit = null;
+    clearTaHooks();
     ed._managedPages = new Set();
     ed._importedManaged = 0;
     clearEdHistory();
@@ -4153,18 +4275,61 @@
     $("ed-fill-none").checked = !ed[slot.on];
     $("ed-fill-opacity").value = String(pct);
     $("ed-fill-opacity-val").textContent = pct + "%";
+    refreshFillSwatch();
+  }
+  // Repaint the composite preview chip next to the three controls. Read off what the
+  // controls DISPLAY rather than off `ed.*`, on purpose: one source of truth means the
+  // chip can never disagree with the numbers sitting beside it, whichever of the three
+  // call sites (syncFillCtls / syncControls / the palette listener) got there last.
+  //
+  // The chip exists because neither control can show the actual result: <input type=color>
+  // renders the flat hue with no alpha, and #ed-fill-opacity-val is a bare number. "Trắng
+  // 30%" and "trắng 100%" look identical in both, which is why a background had to be
+  // committed before it could be judged. The checkerboard behind the chip is what makes a
+  // low percentage READ as see-through instead of just pale.
+  function refreshFillSwatch() {
+    const sw = $("ed-fill-swatch");
+    const ink = sw && sw.firstElementChild;
+    if (!ink) return;
+    const pct = Math.min(100, Math.max(0, +$("ed-fill-opacity").value || 0));
+    ink.style.background = $("ed-fill-none").checked
+      ? "transparent"
+      : hexToRgba($("ed-fill").value, pct / 100);
+  }
+  // The object the three fill controls act on: the selection, or — while the inline text
+  // editor is open on an EXISTING box — that box. The second half is load-bearing:
+  // openTextEditor does not select the box it opens, so `ed.sel` is null while retyping
+  // and every Nền change was dropped on the floor with nothing on screen to say so.
+  function fillTargetAnnot() {
+    // An open inline editor OWNS the controls: the box being retyped, or NOTHING for a
+    // box that does not exist yet. Falling through to `ed.sel` here would repaint whatever
+    // was left selected before the Hộp văn bản tool was picked — setTool does not
+    // deselect, so that stale selection outlives the tool change and can itself be a text
+    // box, which no kind check can tell apart from the intended target.
+    if (ed._taCommit) return ed._taAnnot || null;
+    if (ed.sel != null) {
+      const hit = findAnnot(ed.sel);
+      if (hit) return hit.a;
+    }
+    return null;
   }
   // Interior fill: picking a colour turns fill on (and clears the transparent
-  // toggle); the toggle turns it back off. Both update the selected shape live.
+  // toggle); the toggle turns it back off. Both update the target shape live.
   function applyFillToSel() {
-    if (ed.sel == null) return;
-    const hit = findAnnot(ed.sel);
-    if (hit && FILLABLE_KINDS.has(hit.a.kind)) {
-      pushEdUndo("fill:" + ed.sel);
-      hit.a.fill = effFill(hit.a.kind);
-      hit.a.fillOpacity = effFillOpacity(hit.a.kind);
-      syncOverlays();
-    }
+    const kind = fillCtlKind();
+    const a = fillTargetAnnot();
+    if (!a || !kind || !FILLABLE_KINDS.has(kind)) return;
+    // `a.kind !== kind` happens for real, and silently: leave a rectangle selected, switch
+    // to the Hộp văn bản tool, move Mờ nền. The controls now show the TEXT slot while the
+    // selection is still a rectangle, so the old code wrote effFill("box") — the shape's
+    // own unchanged values — back onto it. No visible change, but a wasted undo step and a
+    // session marked dirty for nothing. The tool the user is holding decides the target.
+    if (a.kind !== kind) return;
+    pushEdUndo("fill:" + a.id);
+    a.fill = effFill(a.kind);
+    a.fillOpacity = effFillOpacity(a.kind);
+    // Safe to rebuild the layer with an editor open: renderLayer carries it across (BI-75).
+    syncOverlays();
   }
   $("ed-fill").oninput = (e) => {
     const slot = fillSlotFor(fillCtlKind());
@@ -4189,6 +4354,40 @@
     }
     applyFillToSel();
   };
+  // One DELEGATED listener per palette container instead of a call bolted onto each of the
+  // ~20 style handlers. Those handlers already do their own job correctly; what was missing
+  // was the two things that have to happen after ANY of them, now that focus can sit in the
+  // palette with an editor still open:
+  //   · redraw the open textarea's preview, or the wash on screen goes stale exactly when
+  //     it finally became verifiable;
+  //   · repaint the composite chip, so it tracks the controls it sits next to.
+  // Adding one call to twenty handlers is how the twenty drift apart — the same reasoning
+  // that produced FILLABLE_KINDS.
+  //
+  // `change` (not `input`) hands the caret back: it fires when the interaction FINISHES —
+  // slider released, colour dialog closed, checkbox toggled — so typing resumes where it
+  // left off. Refocusing on `input` would fight a slider drag for the mouse.
+  //
+  // `click` is in the list for the BUTTON controls — B/I/U, canh lề, bullet/số, thụt lề.
+  // Those fire neither `input` nor `change`, and they are the ones that already keep the
+  // textarea focused (mousedown-preventDefault), so without `click` the preview would go
+  // stale for exactly the controls the user can reach WITHOUT interrupting their typing.
+  // Their own handlers sit on the button and run first, so `ed.*` is already updated by
+  // the time this one sees the event bubble up.
+  document.querySelectorAll("#edit-bar, #fmt-panel").forEach((box) => {
+    ["input", "change", "click"].forEach((evt) => {
+      box.addEventListener(evt, (e) => {
+        if (!inPalette(e.target)) return; // tool buttons / Copy / Dán / Áp dụng are not styles
+        if (ed._taPreview) ed._taPreview();
+        refreshFillSwatch();
+        if (evt === "change" && ed._taFocus) ed._taFocus();
+      });
+    });
+  });
+  // Paint the chip once from the markup's own starting values, so it is never a blank
+  // square on the first frame the Nền row is shown (setTool → syncFillCtls repaints it
+  // from the remembered slot after that).
+  refreshFillSwatch();
 
   $("wm-cancel").onclick = () => ($("wm-modal").hidden = true);
   $("wm-ok").onclick = applyWatermark;

@@ -4,7 +4,62 @@
 > [DESIGN.md](DESIGN.md) (kiến trúc), [ROADMAP.md](ROADMAP.md) (tiến độ chi tiết),
 > [SETUP.md](SETUP.md) (dựng môi trường).
 
-_Cập nhật: 2026-08-28 · v0.2.64 đã phát hành (dưới đây) · v0.2.63 là bản trước đó_
+_Cập nhật: 2026-08-28 · v0.2.65 đã phát hành (dưới đây) · v0.2.64 là bản trước đó_
+
+> **v0.2.65 — nền hộp văn bản: chọn được, THẤY được. Và một đường mất chữ đã bị bịt.**
+>
+> v0.2.64 ship phần nền **đúng** (hình học, nhân alpha, round-trip đều đo được) nhưng
+> **không kiểm chứng được**: người dùng báo “edit thì ổn, lần đầu thì không nuột, màu và độ
+> trong lúc làm không kiểm chứng được”. Bốn nguyên nhân, cả bốn đều im lặng — không lỗi,
+> không cảnh báo (BI-75):
+>
+> - **ba ô Nền là `<input>` thường** ⇒ `mousedown` vào chúng làm textarea `blur` ⇒
+>   `commit()` chạy ⇒ hộp ra đời với **nền CŨ**, giá trị vừa chọn chỉ ăn vào hộp **sau**.
+>   Kéo `%` sau đó cũng vô hiệu: `applyFillToSel` thoát ngay khi `ed.sel == null`, mà đường
+>   tạo hộp văn bản **không** set `ed.sel`. Mẹo `mousedown → preventDefault()` của các nút
+>   B/I/U **không dùng được** ở đây — trên `range` nó giết cú kéo, trên `color` nó chặn hộp
+>   chọn màu mở ra. Chỗ đúng là handler `blur`, lọc theo `e.relatedTarget`.
+> - **`applyTextCss` không tô nền**, mà `.annot-text-edit` lại là **trắng 92%** ⇒ “trong
+>   suốt” và “trắng 30%” khi gõ **trông y như nhau**, và cả hai trông như trắng đặc.
+> - **`syncControls` chỉ đẩy màu vào `#ed-fill` khi annot CÓ nền** ⇒ bỏ tick Trong suốt thì
+>   `effFill` trả màu của slot, không phải màu đang hiện trên ô: nhìn một màu, ra một màu.
+> - **`<input type=color>` chỉ vẽ được hue**, không vẽ được alpha ⇒ thêm ô xem trước
+>   `#ed-fill-swatch`: màu × % đè trên ô caro, đọc từ chính ba ô control.
+>
+> **Cái bẫy đi kèm, nguy hiểm hơn cả bốn cái trên — và nó chỉ mở ra VÌ bản sửa F1.** Bỏ
+> chốt-khi-blur nghĩa là hộp gõ chữ sống sót qua lúc mất focus. Nhưng `renderLayer` làm
+> `layer.innerHTML = ""` và hộp gõ là **con của layer đó**, còn Chromium **không phát
+> `blur`** khi xoá phần tử đang focus ⇒ `commit` không bao giờ chạy ⇒ **mất chữ đang gõ,
+> không annot, không bước undo, không một dòng lỗi**. Nên `renderLayer` giờ **cõng** hộp gõ
+> qua lần dựng lại và trả lại cả **con trỏ** (`innerHTML = ""` chỉ tháo rời — node, `value`,
+> vùng chọn, listener đều sống nhờ tham chiếu; focus thì không). Và bộ lọc phải là
+> `#edit-bar [data-ctl]`, **không** phải `#edit-bar`: `#ed-tools` cùng Copy / Dán / Áp dụng
+> nằm **bên trong** nó, nới ra là mất chữ ở mỗi lần đổi công cụ và mỗi lần bấm Áp dụng.
+>
+> Ba ô Nền khi hộp gõ đang mở nhắm vào **`ed._taAnnot`** (hộp đang gõ), **không bao giờ**
+> `ed.sel`: `setTool` không deselect nên lựa chọn cũ sống qua lần đổi công cụ, và **nó có
+> thể cũng là một hộp văn bản** — không phép kiểm `kind` nào phân biệt được.
+>
+> **Lỗi thứ sáu, tìm thấy khi làm F1:** để một hình chữ nhật đang chọn rồi đổi sang công cụ
+> Hộp văn bản và kéo Mờ nền — code cũ ghi `effFill("box")` (giá trị không đổi của chính nó)
+> trở lại hình đó: không thấy gì, nhưng **tốn một bước undo và bôi bẩn phiên** mỗi lần nhích
+> thanh trượt. Nay `applyFillToSel` từ chối mục tiêu có `kind` khác `kind` đang hiển thị.
+>
+> Phạm vi được chốt với người dùng là **cả thanh Chỉnh sửa + bảng Định dạng**, nên cỡ chữ /
+> phông / B-I-U / canh lề / giãn dòng cũng hết chốt hộp sớm và cũng preview trực tiếp —
+> bằng **một** listener uỷ quyền trên `#edit-bar, #fmt-panel`, không phải 20 handler (đúng
+> lý do `FILLABLE_KINDS` tồn tại). Hộp gõ **ghi chú** và **nhãn mũi tên** cố ý **không**
+> đổi: cùng loại vấn đề nhưng không ai báo, và các ô kiểu chữ của chúng không có Nền.
+>
+> ---
+>
+> **Lưới:** `npm run test:defaults` **61 → 78 ca** (nhóm mới “the Nền controls survive an
+> open text editor”, 16 ca, toàn bộ là canh-gác). Vì lưới này là **assertion trên source**,
+> ba ca then chốt đã được hoàn nguyên tạm để kiểm là chúng **thực sự đỏ** — cổng `blur`,
+> khối `keep` của `renderLayer`, và fallback màu của `syncControls` — rồi phục hồi.
+> 18/18 lưới renderer xanh · 13/13 file test Python xanh. Phần **trực quan** máy không kiểm
+> được: 9 mục kiểm tay mới nằm ở hàng “Nền hộp văn bản” trong
+> [docs/REGRESSION-GUARD.md](docs/REGRESSION-GUARD.md) §5.
 
 > **v0.2.64 — ẩn trang bằng mật khẩu · nền phía sau chữ trong hộp văn bản.**
 >
@@ -12,7 +67,8 @@ _Cập nhật: 2026-08-28 · v0.2.64 đã phát hành (dưới đây) · v0.2.63
 > [docs/RESEARCH-2026-08-28-hide-pages-textbg.md](docs/RESEARCH-2026-08-28-hide-pages-textbg.md).
 > Bốn probe chạy thật (pdf-lib 1.17.1, PyMuPDF 1.27.2.3, Electron thật, và chính
 > `annot-text.js`) đã quyết định gần như toàn bộ thiết kế. Các bất biến mới: **BI-71 →
-> BI-74** trong [docs/REGRESSION-GUARD.md](docs/REGRESSION-GUARD.md).
+> BI-74** trong [docs/REGRESSION-GUARD.md](docs/REGRESSION-GUARD.md); **BI-75** là hậu kiểm
+> của phần nền hộp văn bản, thêm ở v0.2.65.
 >
 > ---
 >
@@ -70,6 +126,9 @@ _Cập nhật: 2026-08-28 · v0.2.64 đã phát hành (dưới đây) · v0.2.63
 >
 > Hộp văn bản có **slot màu nền riêng** (`ed.textFill*`, `FILL_SLOTS`) — đặt nền trắng cho
 > chữ không làm khung chữ nhật vẽ sau đó cũng trắng.
+>
+> Hậu kiểm của phần nền này là **v0.2.65** (khối trên cùng) — thiết kế đúng, nhưng người
+> dùng không kiểm chứng được nó trước khi bị chốt. Xem BI-75.
 >
 > ---
 >

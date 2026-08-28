@@ -285,6 +285,12 @@ của Word. Mở bằng `Ctrl+H` hoặc nút **⇄** ở cuối ô *Tìm trong t
 > - Nền **ôm sát chữ**, **quay theo** khi bạn xoay hộp, và **đi theo file** — mở lại vẫn sửa được.
 > - **Hộp văn bản và hình khoanh vùng nhớ riêng hai bộ màu nền**, nên đặt nền trắng cho chữ không làm
 >   khung chữ nhật bạn vẽ sau đó cũng trắng.
+> - **Đổi nền ngay trong lúc đang gõ.** Bấm lên trang, gõ chữ, rồi vẫn kéo được **Nền** / **Mờ nền** —
+>   khung đang gõ đổi màu theo từng bước, và hộp gõ **không bị đóng**. Thả chuột là con trỏ về đúng chỗ
+>   bạn đang gõ. Cỡ chữ, phông, **B** / *I* / U và canh lề cũng vậy.
+> - **Ô vuông nhỏ cạnh thanh Mờ nền** là bản xem trước thật: nó đặt màu bạn chọn ở đúng độ mờ bạn đặt
+>   lên một ô kẻ caro, nên **trắng 30% trông ra trắng 30%** chứ không giống trắng đặc — thứ mà ô chọn
+>   màu không nói được (ô đó chỉ hiện màu, không hiện độ mờ). Thấy ô caro = đang **Trong suốt**.
 
 > 🔒 **Ẩn trang bằng mật khẩu (từ v0.2.64):** chuột phải một trang trong **cột trang** →
 > **Ẩn trang này bằng mật khẩu…** (chọn nhiều trang trước thì ẩn cả loạt bằng một mật khẩu).

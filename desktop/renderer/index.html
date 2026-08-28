@@ -318,6 +318,11 @@
       <label class="ctl" data-ctl="fill" title="Màu nền: bên trong hình khoanh vùng, hoặc phía sau chữ của hộp văn bản">Nền <input type="color" id="ed-fill" value="#ffffff" /></label>
       <label class="ctl" data-ctl="fill" title="Không tô nền — để trong suốt"><input type="checkbox" id="ed-fill-none" checked /> Trong suốt</label>
       <label class="ctl" data-ctl="fill" title="Độ mờ nền: 0% = trong suốt hoàn toàn, 100% = đặc kín. Hộp văn bản và hình khoanh vùng nhớ riêng hai bộ giá trị">Mờ nền <input type="range" id="ed-fill-opacity" min="0" max="100" step="1" value="100" /><span id="ed-fill-opacity-val" class="readout">100%</span></label>
+      <!-- Ô xem trước nền. Đứng RIÊNG, không lồng trong <label> của "Mờ nền": bấm vào một
+           phần tử bên trong label sẽ được chuyển tiếp sang chính cái <input> mà label bọc,
+           và ở đây cái đó là thanh trượt — một ô chỉ-để-nhìn không được phép có cơ hội
+           đụng vào giá trị. `data-ctl="fill"` để nó ẩn/hiện cùng ba ô kia. -->
+      <span class="fill-swatch" data-ctl="fill" id="ed-fill-swatch" title="Xem trước nền: đúng màu và đúng độ mờ đang đặt, trên ô kẻ caro nên 30% trông ra 30%"><i></i></span>
       <button id="ed-img-pages" data-ctl="imgpages" title="Sao chép ảnh/chữ ký đang chọn sang nhiều trang (cùng vị trí)">Áp nhiều trang</button>
       <button id="ed-recalibrate" data-ctl="measure" title="Quên tỷ lệ hiện tại — kéo đoạn đã biết kích thước để hiệu chuẩn lại">Hiệu chuẩn lại</button>
       <div class="sep"></div>
