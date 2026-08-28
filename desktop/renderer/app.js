@@ -2040,6 +2040,10 @@ async function unhidePagesWithPassword(indices) {
 
 // "Xuất bản sao không kèm trang ẩn" — the copy to send outside, with the ciphertext left
 // behind entirely. Offered only when the document actually has hidden pages.
+//
+// Ungated for the same reason unhide is: this is the safety valve on a feature whose whole
+// point is confidentiality. Making someone re-activate a licence before they can produce a
+// shareable copy would push them toward sending the one that still carries the ciphertext.
 async function exportWithoutHiddenPages() {
   const PV = window.PageVault;
   if (!PV || !state.vaultPages.size) return;

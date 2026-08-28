@@ -907,6 +907,11 @@
       //     and glyphs share one rotated canvas there).
       // Appended LAST: `el.textContent` above wipes children, so any earlier insert dies.
       if (a.fill && a.fill !== "none") {
+        // `a.fontSize * 0.15` is the BAKE's `padPt` — the number drawOneAnnot and
+        // addManagedAnnot use to place the image — NOT renderTextPng's internal `pad`,
+        // which is the same figure ceil'd to whole supersampled pixels and so runs up to
+        // 1/RS larger. Matching the PLACEMENT is what makes the two rectangles coincide;
+        // matching the internal inset would put the wash a quarter-point out.
         const padPx = a.fontSize * 0.15 * s;
         const bg = document.createElement("div");
         bg.className = "an-text-bg";
