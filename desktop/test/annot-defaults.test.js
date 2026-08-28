@@ -301,7 +301,7 @@ check(
 //  F2 nothing painted the wash on the textarea, and app.css gives it a near-opaque white
 //     — so "trong suốt" and "trắng 30%" both looked like solid white while typing.
 //  F3 syncControls only pushed a colour into #ed-fill when the annot HAD one, so
-//     unticking "Trong suốt" handed back the slot colour, not the one on display.
+//     unticking the tick handed back the slot colour, not the one on display.
 //  F4 no composite preview: <input type=color> shows the hue with no alpha.
 //
 // The mousedown-preventDefault trick the B/I/U buttons use is NOT the fix and must not be
@@ -452,6 +452,319 @@ group("multi-kind creation paths resolve through colorSlotFor");
     !/\bed\.color\b/.test(shapeBranch.replace(/\/\/.*$/gm, "")),
     "highlight and redact would lose their own colours"
   );
+}
+
+// ---- 4c. the three background handlers, driven for real (BI-76) ------------
+//
+// WHY THIS EXISTS. Through v0.2.65 the three #ed-fill* controls were inline arrow bodies
+// nobody could call from a test, and they carried two silent bugs no other grid could
+// see — both of them "the toolbar shows one thing, the object gets another":
+//
+//   A. applyFillToSel() rebuilt the fill from `ed[slot]` via effFill() (the defaults for
+//      the NEXT object) instead of from the controls (the object's own background).
+//      syncControls() only ever writes the DOM, so ticking and un-ticking the tick on a
+//      yellow-40% rectangle brought it back WHITE-100% while both controls still showed
+//      yellow 40%. Silent data loss.
+//   B. dragging Mờ nền to 0% left the tick CLEAR, so the object carried an invisible wash
+//      while the control read "has a background" — which is why the tick looked like a
+//      duplicate of the slider and did nothing anybody could name.
+//
+// So the handlers are named functions now, and this section RUNS them against a fake DOM
+// and a fake target. Every case below is a state the user can reach by hand.
+
+group("the three background handlers (BI-76)");
+{
+  const FILL_SLOTS_DECL = "const FILL_SLOTS = " + cutConst(EDITOR_SRC, "FILL_SLOTS") + ";\n";
+  const SHAPE_FILL_SLOT = evalExpr(cutConst(EDITOR_SRC, "SHAPE_FILL_SLOT"));
+  const FILLABLE_KINDS = evalExpr(cutConst(EDITOR_SRC, "FILLABLE_KINDS"));
+  const FILL_ON_FROM_ZERO_PCT = evalExpr(cutConst(EDITOR_SRC, "FILL_ON_FROM_ZERO_PCT"));
+  check(
+    "FILL_ON_FROM_ZERO_PCT is a VISIBLE percentage — raising to 0 would fix nothing",
+    FILL_ON_FROM_ZERO_PCT > 0 && FILL_ON_FROM_ZERO_PCT <= 100,
+    String(FILL_ON_FROM_ZERO_PCT)
+  );
+
+  // Every function the handlers reach, cut from the SHIPPING source. Renaming any one of
+  // them fails loudly here rather than quietly testing nothing.
+  const BODY = [
+    "clampFillPct", "setFillPctCtl", "setFillOn", "fillFromCtls",
+    "fillTargetAnnot", "applyFillToSel",
+    "onFillColorInput", "onFillNoneToggle", "onFillOpacityInput",
+    "fillCtlKind", "fillSlotFor",
+  ].map((n) => cutFunction(EDITOR_SRC, n)).join("\n");
+
+  // One rig per case: a fake DOM for the three controls plus the readout, a fake target,
+  // and the `ed` fields the handlers touch. `$` THROWS on an unexpected id, so a handler
+  // that starts reaching for some other control fails here instead of passing quietly.
+  // Note the chip (#ed-fill-swatch) is deliberately absent: repainting it is the delegated
+  // #edit-bar listener's job, and a handler that took it over would trip this.
+  function rig(opts) {
+    const o = opts || {};
+    const dom = {
+      "ed-fill": { value: o.ctlColor || "#ffffff" },
+      "ed-fill-none": { checked: o.ctlNone !== undefined ? o.ctlNone : true },
+      "ed-fill-opacity": { value: String(o.ctlPct !== undefined ? o.ctlPct : 100) },
+      "ed-fill-opacity-val": { textContent: "" },
+    };
+    const $ = (id) => {
+      if (!dom[id]) throw new Error("the handlers touched an unexpected control: #" + id);
+      return dom[id];
+    };
+    const target = o.target || null;
+    const ed = Object.assign({
+      tool: o.tool || "select",
+      sel: target ? target.id : null,
+      _taCommit: null,
+      _taAnnot: null,
+      fillColor: "#ffffff", fillOn: false, fillOpacity: 1,
+      textFillColor: "#ffffff", textFillOn: false, textFillOpacity: 0.8,
+    }, o.ed || {});
+    const undos = [];
+    const findAnnot = (id) => (target && target.id === id ? { page: 0, a: target } : null);
+    const make = new Function(
+      "$", "ed", "findAnnot", "pushEdUndo", "syncOverlays",
+      "FILLABLE_KINDS", "SHAPE_FILL_SLOT", "FILL_ON_FROM_ZERO_PCT",
+      FILL_SLOTS_DECL + BODY +
+      "; return { onFillColorInput, onFillNoneToggle, onFillOpacityInput };"
+    );
+    const api = make(
+      $, ed, findAnnot, (t) => undos.push(t), () => {},
+      FILLABLE_KINDS, SHAPE_FILL_SLOT, FILL_ON_FROM_ZERO_PCT
+    );
+    return Object.assign(
+      { dom, ed, a: target, undos, pct: () => +dom["ed-fill-opacity"].value },
+      api
+    );
+  }
+  const rect = (over) =>
+    Object.assign({ id: 1, kind: "box", fill: "#ffeb3b", fillOpacity: 0.4 }, over);
+
+  // ---- A. the tick is a MUTE button: off and back on loses nothing ----------
+  {
+    // The state syncControls() leaves behind after clicking that rectangle: the controls
+    // show the OBJECT's yellow 40%, while ed.fill* still hold the white-100% defaults.
+    const r = rig({ target: rect(), ctlColor: "#ffeb3b", ctlNone: false, ctlPct: 40 });
+    r.onFillNoneToggle(true);
+    check('tick ⇒ the object goes to fill:"none"', r.a.fill === "none", r.a.fill);
+    check("tick ⇒ the opacity it had is KEPT (there is nothing else to restore from)",
+      r.a.fillOpacity === 0.4, String(r.a.fillOpacity));
+    r.onFillNoneToggle(false);
+    check("untick ⇒ the object's OWN colour comes back, not the remembered white",
+      r.a.fill === "#ffeb3b", r.a.fill);
+    check("untick ⇒ the object's OWN opacity comes back, not the remembered 100%",
+      r.a.fillOpacity === 0.4, String(r.a.fillOpacity));
+    check("… and the controls still agree with what the object has (no lying toolbar)",
+      r.dom["ed-fill"].value === "#ffeb3b" && r.pct() === 40 &&
+      r.dom["ed-fill-none"].checked === false);
+    check("a tick and an untick are two undo steps, not zero", r.undos.length === 2,
+      String(r.undos.length));
+  }
+  // CANH GÁC for bug A: the values written to the target must come from the CONTROLS.
+  // Point applyFillToSel back at effFill()/ed[slot] and this fails. Comments stripped
+  // first — the block deliberately NAMES effFill to say where it does still belong.
+  {
+    const applyCode = cutFunction(EDITOR_SRC, "applyFillToSel").replace(/\/\/.*$/gm, "");
+    check("applyFillToSel() reads the controls (fillFromCtls), not the remembered slot",
+      /fillFromCtls\(\)/.test(applyCode) && !/effFill/.test(applyCode),
+      "reading ed[slot] here IS bug A");
+    // effFill/effFillOpacity must SURVIVE, on the create paths: `ed[slot]` really is the
+    // answer for an object that does not exist yet. Deleting them "because the handlers
+    // stopped using them" would leave every new shape with no background at all.
+    const creates = (EDITOR_SRC.match(/effFill\(/g) || []).length;
+    check("effFill() is still wired into the create paths", creates >= 3, `${creates} use(s)`);
+  }
+  // The OTHER direction — target → controls. syncControls reads ~30 controls, so a full
+  // rig costs more than it proves; what matters is pinned on the source, the pattern
+  // find-replace.js and page-move.js use for their DOM halves.
+  {
+    const at = cutFunction(EDITOR_SRC, "syncControls").indexOf("FILLABLE_KINDS.has(a.kind)");
+    check("syncControls() still has a FILLABLE_KINDS branch (renamed?)", at > 0);
+    const branch = cutFunction(EDITOR_SRC, "syncControls").slice(at);
+    check("syncControls ticks for a 0% wash too, so the two controls agree on sight",
+      /clampFillPct\([\s\S]*?\) === 0/.test(branch),
+      "otherwise selecting a 0% object shows the tick clear next to a 0% slider");
+    check("syncControls pushes the percentage through setFillPctCtl (one writer only)",
+      /setFillPctCtl\(/.test(branch));
+  }
+
+  // ---- B. 0% and the tick are ONE state, never two -------------------------
+  {
+    const r = rig({ tool: "box", target: rect(), ctlColor: "#ffeb3b", ctlNone: false, ctlPct: 40 });
+    r.onFillOpacityInput(0);
+    check("slider → 0% ticks the box (0% IS no background)",
+      r.dom["ed-fill-none"].checked === true);
+    check("slider → 0% turns the remembered slot off too", r.ed.fillOn === false);
+    check('slider → 0% ⇒ the object gets fill:"none", not an invisible wash',
+      r.a.fill === "none", r.a.fill);
+    check("the readout follows the slider",
+      r.dom["ed-fill-opacity-val"].textContent === "0%",
+      r.dom["ed-fill-opacity-val"].textContent);
+    r.onFillOpacityInput(40);
+    check("slider back above 0 clears the tick", r.dom["ed-fill-none"].checked === false);
+    check("… and is NOT bumped to 100 by the from-zero rule", r.pct() === 40, String(r.pct()));
+    check("… and the object is filled again at exactly that value",
+      r.a.fill === "#ffeb3b" && r.a.fillOpacity === 0.4);
+  }
+  {
+    // Untick with the slider sitting at 0 — reachable by dragging to 0 and changing your
+    // mind, and from a file a build saved with a fill colour and fillOpacity 0.
+    const r = rig({ tool: "box", target: rect({ fill: "none", fillOpacity: 0 }),
+                    ctlColor: "#00c853", ctlNone: true, ctlPct: 0 });
+    r.onFillNoneToggle(false);
+    check("untick at 0% raises the slider so the background is VISIBLE",
+      r.pct() === FILL_ON_FROM_ZERO_PCT, String(r.pct()));
+    check("… and the object really gets that opacity",
+      r.a.fillOpacity === FILL_ON_FROM_ZERO_PCT / 100, String(r.a.fillOpacity));
+    check("… with the colour the swatch was showing", r.a.fill === "#00c853", r.a.fill);
+  }
+  {
+    // The same rule through the colour swatch: picking a colour at 0% must not paint nothing.
+    const r = rig({ tool: "box", target: rect({ fill: "none", fillOpacity: 0 }),
+                    ctlNone: true, ctlPct: 0 });
+    r.onFillColorInput("#2962ff");
+    check("picking a colour at 0% raises the slider as well", r.pct() === FILL_ON_FROM_ZERO_PCT);
+    check("picking a colour clears the tick", r.dom["ed-fill-none"].checked === false);
+    check("… and the object shows it", r.a.fill === "#2962ff" &&
+      r.a.fillOpacity === FILL_ON_FROM_ZERO_PCT / 100);
+  }
+  {
+    // THE SIDE DOOR. Remember 0% (so ed.fillOpacity is 0), then work on another object
+    // that sits at 70%: the slider is no longer at zero, so the DOM raise must not fire —
+    // but the REMEMBERED zero is still there, and the next new rectangle would come out
+    // invisible with the tick clear. Each zero has to be cleared on its own.
+    const r = rig({ tool: "box", target: rect({ fillOpacity: 0.7 }),
+                    ctlColor: "#ffeb3b", ctlNone: false, ctlPct: 70, ed: { fillOpacity: 0 } });
+    r.onFillNoneToggle(true);
+    r.onFillNoneToggle(false);
+    check("un-ticking clears the REMEMBERED zero, so the NEXT object is visible",
+      r.ed.fillOn === true && r.ed.fillOpacity > 0,
+      "on=" + r.ed.fillOn + " op=" + r.ed.fillOpacity);
+    check("… without repainting the object on screen away from its own 70%",
+      r.a.fillOpacity === 0.7 && r.pct() === 70, String(r.a.fillOpacity));
+  }
+  // CANH GÁC: no handler may leave "background on" together with "opacity 0" — that pair
+  // IS the invisible-but-ticked lie, whichever door it arrives through.
+  {
+    const bad = [];
+    for (const startPct of [0, 40, 100]) {
+      for (const startOn of [false, true]) {
+        for (const act of ["none-off", "none-on", "colour", "op0", "op1", "op100"]) {
+          const r = rig({ tool: "box", ctlNone: !startOn, ctlPct: startPct,
+                          ed: { fillOn: startOn, fillOpacity: startPct / 100 } });
+          if (act === "none-off") r.onFillNoneToggle(true);
+          else if (act === "none-on") r.onFillNoneToggle(false);
+          else if (act === "colour") r.onFillColorInput("#123456");
+          else if (act === "op0") r.onFillOpacityInput(0);
+          else if (act === "op1") r.onFillOpacityInput(1);
+          else r.onFillOpacityInput(100);
+          const domLies = r.dom["ed-fill-none"].checked === false && r.pct() === 0;
+          const edLies = r.ed.fillOn === true && !r.ed.fillOpacity;
+          if (domLies || edLies) bad.push(startPct + "%/on=" + startOn + "/" + act);
+        }
+      }
+    }
+    check('no reachable action leaves "has a background" sitting at 0% opacity',
+      bad.length === 0, bad.join(" | "));
+  }
+
+  // ---- C. the target, and the guards v0.2.65 put around it ----------------
+  {
+    // A rectangle left selected under the Hộp văn bản tool: the controls show the TEXT
+    // slot, so it is NOT a target. Writing to it would be an undo step and a dirty
+    // session for a change the user cannot see (v0.2.65's `a.kind !== kind` guard).
+    const r = rig({ tool: "text", target: rect(), ctlColor: "#ffeb3b", ctlNone: false, ctlPct: 40 });
+    r.onFillOpacityInput(55);
+    check("a target whose kind is not the one on display is left alone",
+      r.a.fill === "#ffeb3b" && r.a.fillOpacity === 0.4);
+    check("… and costs no undo step", r.undos.length === 0, String(r.undos.length));
+    check("… while the TEXT slot still moves, ready for the next box", r.ed.textFillOpacity === 0.55);
+  }
+  {
+    // The inline editor OWNS the controls: openTextEditor does not select the box it
+    // opens, so `ed.sel` stays null and only `_taAnnot` names the target.
+    const box = { id: 9, kind: "text", fill: "none", fillOpacity: 1 };
+    const r = rig({ tool: "text", ctlColor: "#fff59d", ctlNone: true, ctlPct: 60,
+                    ed: { _taCommit: () => {}, _taAnnot: box } });
+    r.onFillNoneToggle(false);
+    check("the box being retyped is the target even with nothing selected",
+      box.fill === "#fff59d" && box.fillOpacity === 0.6);
+    check("… and the undo step is keyed on THAT box's id", r.undos[0] === "fill:9", r.undos[0]);
+  }
+  {
+    // A brand-new box does not exist yet: nothing to write to, and nothing may throw.
+    const r = rig({ tool: "text", ctlNone: true, ctlPct: 80, ed: { _taCommit: () => {} } });
+    r.onFillColorInput("#e0f7fa");
+    check("a box that does not exist yet only moves the default, no undo step",
+      r.ed.textFillColor === "#e0f7fa" && r.ed.textFillOn === true && r.undos.length === 0);
+  }
+
+  // ---- D. the two remembered slots stay separate through the handlers ------
+  {
+    const r = rig({ tool: "text", ctlPct: 80 });
+    r.onFillColorInput("#e0f7fa");
+    check("under the text tool the colour lands in textFillColor",
+      r.ed.textFillColor === "#e0f7fa" && r.ed.fillColor === "#ffffff");
+    check("… and so does the ON flag", r.ed.textFillOn === true && r.ed.fillOn === false);
+    const r2 = rig({ tool: "box", ctlPct: 100 });
+    r2.onFillOpacityInput(35);
+    check("under the rectangle tool the opacity lands in fillOpacity",
+      r2.ed.fillOpacity === 0.35 && r2.ed.textFillOpacity === 0.8);
+  }
+  {
+    // Under Select the slot follows the SELECTED object's kind, not `ed.tool`.
+    const r = rig({ tool: "select",
+                    target: { id: 7, kind: "text", fill: "none", fillOpacity: 1 }, ctlPct: 80 });
+    r.onFillColorInput("#fff59d");
+    check("Select + a text box ⇒ the TEXT slot is the one written",
+      r.ed.textFillColor === "#fff59d" && r.ed.fillColor === "#ffffff");
+  }
+
+  // ---- E. the percentage clamp --------------------------------------------
+  {
+    const r = rig({ tool: "box", ctlPct: 50 });
+    const at = (v) => { r.onFillOpacityInput(v); return r.pct(); };
+    check("above 100 clamps to 100", at(140) === 100);
+    check("below 0 clamps to 0", at(-5) === 0);
+    check("a fractional value rounds, it does not floor away to 0", at(0.6) === 1);
+    check("junk reads as 0, not NaN%", at("abc") === 0);
+  }
+}
+
+// ---- 4d. the tick's markup and the i18n dictionary agree ------------------
+//
+// i18n.js registers a text node or a title ONLY on an exact dictionary match (see
+// buildRegistry), so a one-character drift between index.html and the VI key is not an
+// error — it is an English-mode UI that silently keeps showing Vietnamese. Nothing else
+// in the repo notices. Same reason section 1 pins the three colour literals.
+
+group("the background controls' labels are translatable");
+{
+  const I18N_SRC = fs.readFileSync(path.join(ROOT, "renderer", "i18n.js"), "utf8");
+  const hasViKey = (s) => I18N_SRC.includes('"' + s + '":');
+
+  // The tick's own <label>: its text node is what i18n swaps, so it has to match a key
+  // byte for byte, trimmed.
+  const tick = /<label[^>]*>\s*<input type="checkbox" id="ed-fill-none"[^>]*\/>\s*([^<]*)<\/label>/
+    .exec(INDEX_SRC);
+  check("the #ed-fill-none label is still shaped <input …/> text</label>", !!tick);
+  if (tick) {
+    const label = tick[1].trim();
+    check('the tick reads "Không nền", not the old "Trong suốt"', label === "Không nền", label);
+    check("… and that exact string is in the i18n dictionary", hasViKey(label), label);
+  }
+  for (const id of ["ed-fill", "ed-fill-none", "ed-fill-opacity"]) {
+    const tag = new RegExp('<label[^>]*title="([^"]*)"[^>]*>(?:[^<]*)<input[^>]*id="' + id + '"', "i")
+      .exec(INDEX_SRC);
+    check(`#${id} still sits in a titled <label>`, !!tag, id);
+    if (tag) check("… and its tooltip is translatable", hasViKey(tag[1]), tag[1]);
+  }
+  // The word the rename was about: "Trong suốt" read as a LEVEL of Mờ nền, which is why
+  // the tick looked like a duplicate of the slider. It must not creep back into the bar.
+  const from = INDEX_SRC.indexOf('id="edit-bar"');
+  const to = INDEX_SRC.indexOf('id="wm-modal"');
+  check("the edit bar could be located in index.html", from > 0 && to > from);
+  check('no control in the edit bar is labelled "Trong suốt" any more',
+    !/Trong suốt/.test(INDEX_SRC.slice(from, to)));
 }
 
 // ---- 5. the round-trip import fallbacks were NOT retargeted --------------

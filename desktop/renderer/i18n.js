@@ -268,8 +268,9 @@
       "Hidden page — right-click to reopen it with the password",
     "Chuột phải lên trang có 🔒 để mở lại bằng mật khẩu":
       "Right-click a page marked 🔒 to reopen it with the password",
-    "Không tô nền — để trong suốt": "No fill — transparent",
-    "Trong suốt": "Transparent",
+    "Tắt nền — vật thể chỉ còn viền/chữ. Bỏ tick để bật lại đúng màu và độ mờ đang hiện":
+      "Turn the background off — only the outline/text is left. Untick to bring it back at exactly the colour and opacity shown",
+    "Không nền": "No background",
     "Đóng dấu mờ lên mọi trang": "Stamp a watermark on every page",
     "Điền form": "Fill form",
     "Điền các trường biểu mẫu PDF": "Fill PDF form fields",
@@ -327,8 +328,8 @@
     // --- edit toolbar: cloud-pen / fill-opacity / image multi-page ---
     "Khoanh mây tự do — vẽ bút (giữ chuột kéo) hoặc bấm từng điểm":
       "Freehand revision cloud — draw with the pen (drag) or click point by point",
-    "Độ mờ nền: 0% = trong suốt hoàn toàn, 100% = đặc kín. Hộp văn bản và hình khoanh vùng nhớ riêng hai bộ giá trị":
-      "Fill opacity: 0% = fully transparent, 100% = fully opaque. Text boxes and drawn regions remember separate values",
+    "Độ mờ nền: 0% = tắt nền (tự tick Không nền), 100% = đặc kín. Hộp văn bản và hình khoanh vùng nhớ riêng hai bộ giá trị":
+      "Fill opacity: 0% = background off (ticks Không nền for you), 100% = fully opaque. Text boxes and drawn regions remember separate values",
     "Mờ nền": "Fill opacity",
     "Xem trước nền: đúng màu và đúng độ mờ đang đặt, trên ô kẻ caro nên 30% trông ra 30%":
       "Fill preview: the exact colour and opacity set, over a checkerboard so 30% looks like 30%",

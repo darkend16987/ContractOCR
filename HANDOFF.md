@@ -4,7 +4,58 @@
 > [DESIGN.md](DESIGN.md) (kiến trúc), [ROADMAP.md](ROADMAP.md) (tiến độ chi tiết),
 > [SETUP.md](SETUP.md) (dựng môi trường).
 
-_Cập nhật: 2026-08-28 · v0.2.65 đã phát hành (dưới đây) · v0.2.64 là bản trước đó_
+_Cập nhật: 2026-08-29 · v0.2.66 đã phát hành (dưới đây) · v0.2.65 là bản trước đó_
+
+> **v0.2.66 — ô “Trong suốt” đổi thành “Không nền”, và nó thôi làm mất màu nền của bạn.**
+>
+> Người dùng hỏi thẳng: *“ô checkbox Trong suốt đang hoạt động cụ thể như thế nào? Tôi click
+> vào thì chỉ thấy độ trong suốt tăng giảm, mà việc đó slider đang làm tốt.”* Câu hỏi đúng.
+> Ô đó **không** phải control độ trong suốt — nó là công tắc tắt/bật cả lớp nền — nhưng
+> **hai lỗi im lặng** làm nó vừa vô dụng vừa phá dữ liệu (BI-76). Cả hai còn nguyên ở
+> v0.2.65:
+>
+> - **Bỏ tick trên vật thể đang chọn thì mất màu của chính nó.** `syncControls()` khi chọn
+>   một vật thể chỉ ghi **DOM**, cố ý — `ed[slot.*]` là mặc định cho vật thể **sau**. Nhưng
+>   `applyFillToSel()` lại đọc `effFill()`/`ed[slot]`. Kết quả: chọn chữ nhật nền **vàng
+>   40%** → tick → bỏ tick → nó quay lại **TRẮNG 100%**, trong khi ô màu vẫn hiện vàng và
+>   slider vẫn hiện 40%. Mất dữ liệu, cộng một thanh công cụ nói dối. Nay `applyFillToSel`
+>   đọc `fillFromCtls()` — ba ô control là sự thật của vật thể đang sửa;
+>   `effFill()`/`effFillOpacity()` **vẫn sống** cho đường tạo mới, nơi `ed[slot]` mới là
+>   câu trả lời đúng.
+> - **Slider về 0% để lại ô tick TRỐNG.** Vật thể mang một lớp nền **vô hình** mà control
+>   báo “đang có nền” — đúng cái làm ô tick trông như bản sao của slider. Nay 0% và ô tick
+>   là **một** trạng thái: kéo về 0 thì tự tick, bỏ tick khi đang ở 0 thì slider nhảy lên
+>   100% (bật nền thì phải *thấy* nền). Và **hai số 0 được dọn riêng** — số trên slider
+>   (vật thể đang sửa) với `ed[slot.opacity]` (vật thể sau) — nếu không, cửa hông “kéo về 0,
+>   chọn vật thể 70%, bỏ tick, vẽ hình mới” lại cho ra một hình vô hình.
+>
+> **Đổi tên nhãn: `Trong suốt` → `Không nền`.** Cái tên cũ đọc như một **mức** của **Mờ
+> nền**, và đó chính là chỗ hiểu nhầm. Tooltip nói rõ nó là nút mute: bỏ tick là bật lại
+> **đúng màu và đúng độ mờ đang hiện**. Cập nhật cả i18n (EN: *No background*), Hướng dẫn
+> sử dụng in-app (VI + EN) và `HUONG-DAN-SU-DUNG.md`.
+>
+> **Ba handler thành hàm CÓ TÊN** (`onFillColorInput` / `onFillNoneToggle` /
+> `onFillOpacityInput`, cộng `setFillOn` / `setFillPctCtl` / `fillFromCtls` /
+> `clampFillPct`). Tới v0.2.65 chúng là thân arrow inline — không lưới nào gọi được, nên
+> hai lỗi trên nằm ngoài mọi test. Nay `npm run test:defaults` §4c **chạy thật** cả ba trên
+> DOM giả + mục tiêu giả (**131 ca**, gồm ca canh gác quét **36 tổ hợp** trạng thái×hành
+> động để chứng minh không hành động nào để lại “có nền @ 0%”), và §4d ghim nhãn + tooltip
+> khớp từ điển i18n. Bản sửa được kiểm bằng cách **hoàn nguyên cả ba nửa** → **11 ca đỏ**,
+> kể cả đúng con số `#ffffff` của vụ mất dữ liệu.
+>
+> **Giữ nguyên toàn bộ v0.2.65:** `fillTargetAnnot` (mục tiêu là hộp đang gõ, không phải
+> `ed.sel`), guard `a.kind !== kind`, `refreshFillSwatch` + chip caro, listener uỷ quyền
+> trên `#edit-bar`, và luật `renderLayer` cõng hộp gõ (BI-75) — 78 ca của lưới đó vẫn xanh.
+> Handler **không** tự gọi `refreshFillSwatch()`: listener uỷ quyền nổi bọt **sau** chúng
+> nên đã thấy vật thể cập nhật.
+>
+> **CỐ Ý không làm:** `#ed-color` đổi màu cho **cả nhóm** Ctrl+click, ba ô nền thì vẫn chỉ
+> áp cho **một** mục tiêu. Mở rộng ra nhóm cần một luật lọc theo `kind` riêng cho từng chế
+> độ (dưới Select là nhóm trộn box+elip; dưới công cụ vẽ là guard `a.kind !== kind` của
+> v0.2.65), tức là một thay đổi **hành vi** giữa vùng code v0.2.65 vừa viết lại. Để riêng
+> cho một bản sau.
+
+> **v0.2.65 (bản trước)** — chi tiết ngay dưới.
 
 > **v0.2.65 — nền hộp văn bản: chọn được, THẤY được. Và một đường mất chữ đã bị bịt.**
 >

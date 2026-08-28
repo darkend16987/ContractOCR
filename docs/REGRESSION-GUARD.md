@@ -1877,11 +1877,63 @@ _Ghi 2026-08-13. **Đo được, không suy luận.**_
   `setTool` không deselect, nên lựa chọn cũ sống qua lần đổi công cụ và **bản thân nó có
   thể cũng là một hộp văn bản** — không phép kiểm `kind` nào phân biệt được. Hộp gõ đang
   mở thì nó **sở hữu** ba ô đó; hộp mới chưa tồn tại thì mục tiêu là **không có gì**.
-- **Vỡ khi:** gõ chữ → bỏ tick “Trong suốt” → hộp đóng lại và vẫn trong suốt · gõ chữ →
+- **Vỡ khi:** gõ chữ → bỏ tick “Không nền” → hộp đóng lại và vẫn trong suốt · gõ chữ →
   đổi cỡ chữ → **chữ đang gõ biến mất** · gõ giữa từ → kéo thanh Mờ nền → phần gõ tiếp
   nhảy xuống cuối · đổi công cụ giữa lúc gõ → mất chữ.
 - Lưới: `npm run test:defaults` nhóm “the Nền controls survive an open text editor”
   (16 ca, đều là canh-gác: ba ca then chốt đã được kiểm là **đỏ** khi hoàn nguyên bản sửa).
+
+### BI-76 · Ba ô nền: **control là sự thật của vật thể ĐANG SỬA, `ed[slot]` là sự thật của vật thể SAU** — và 0% với ô tick là **một** trạng thái
+- `editor.js`: `clampFillPct` · `FILL_ON_FROM_ZERO_PCT` · `setFillPctCtl` · `setFillOn` ·
+  `fillFromCtls` · `applyFillToSel` · `onFillColorInput` / `onFillNoneToggle` /
+  `onFillOpacityInput`; cộng nhánh `FILLABLE_KINDS` trong `syncControls` (chiều ngược:
+  vật thể → control). Nối tiếp BI-75 (mục tiêu là ai) và BI-71 (hình học của lớp lót).
+- **Hai nửa của sự thật, đừng trộn:**
+  · `syncControls()` khi chọn một vật thể chỉ ghi **DOM** — cố ý: `ed[slot.*]` là **mặc
+  định cho vật thể tiếp theo**, đúng cùng lằn ranh mà `#ed-color` giữ.
+  · Vì thế `applyFillToSel()` phải đọc **`fillFromCtls()`** (ba control), **không** đọc
+  `ed[slot]`/`effFill()`. Đọc `ed[slot]` là lỗi đã ship ở v0.2.64 **và còn nguyên ở
+  v0.2.65**: chọn một chữ nhật nền **vàng 40%**, tick rồi bỏ tick ô nền → vật thể quay lại
+  **TRẮNG 100%** trong khi ô màu vẫn hiện vàng và slider vẫn hiện 40%. Mất dữ liệu, và
+  thanh công cụ nói dối về việc đó.
+  · Ngược lại, `effFill()`/`effFillOpacity()` **vẫn phải sống** — chúng là đường **tạo
+  mới** (4 chỗ: `text`, nhánh shape, `cloudpen`, và `taFillPreview` cho hộp chưa tồn tại).
+  Xoá chúng “vì handler không dùng nữa” là làm mọi vật thể mới ra **không có nền**.
+  · Đây cũng là luật `refreshFillSwatch` đã theo từ v0.2.65 (“đọc control, không đọc
+  `ed.*`”) — nay ba handler theo cùng một luật, nên chip, con số và vật thể không thể
+  nói ba chuyện khác nhau.
+- **0% và ô “Không nền” là MỘT trạng thái, không phải hai.** Không có trạng thái thứ ba
+  “có nền, alpha 0”: nó vô hình mà ô tick lại báo “đang có nền” — đúng cái làm ô tick
+  trông như bản sao vô dụng của slider (khiếu nại thật của người dùng, 2026-08-29).
+  · kéo slider về 0 ⇒ **tự tick** + `ed[slot.on] = false` + vật thể nhận `fill: "none"`;
+  · bỏ tick khi slider đang ở 0 ⇒ nâng lên `FILL_ON_FROM_ZERO_PCT` (100%) — “bật nền” thì
+  phải **thấy** nền;
+  · `syncControls` cũng tick khi `pct === 0`. **Nhưng biến `none` phải giữ nghĩa hẹp**
+  (“không có `fill` nào”), vì dòng ngay dưới nó — `$("ed-fill").value = none ? … : a.fill`
+  của v0.2.65 (F3) — phụ thuộc vào nghĩa hẹp đó.
+- **HAI số 0 khác nhau, phải dọn riêng.** Slider là thứ **vật thể đang sửa** sắp nhận;
+  `ed[slot.opacity]` là thứ **vật thể sau** sắp nhận. Cửa hông: kéo về 0% (nhớ 0), chọn
+  vật thể khác đang 70%, bỏ tick → slider không ở 0 nên không nâng, nhưng **số 0 đã nhớ**
+  còn đó ⇒ chữ nhật vẽ tiếp theo ra vô hình mà ô tick lại trống. `setFillOn` nâng **từng
+  số 0 một**, nên dọn cái đã nhớ không bao giờ âm thầm sơn lại vật thể trên màn hình.
+- **Ô tick là nút MUTE, không phải slider thứ hai.** Đó là toàn bộ lý do nó tồn tại: tick
+  là tắt hẳn, bỏ tick là bật lại **đúng màu và đúng độ mờ đang hiện** — thử có/không nền
+  mà không mất giá trị đã chọn. Nhãn là **“Không nền”**, không phải “Trong suốt”: cái tên
+  cũ đọc như một **mức** của **Mờ nền**, và đó chính là chỗ hiểu nhầm.
+- **Ba handler phải là hàm CÓ TÊN.** Tới v0.2.65 chúng là thân arrow inline, nên
+  `test:defaults` không gọi được và cả hai lỗi trên nằm ngoài mọi lưới. Bọc lại thành
+  arrow inline là làm mù lưới lần nữa.
+- **Handler không tự vẽ lại chip hay nền hộp gõ.** Listener uỷ quyền trên `#edit-bar`
+  (BI-75) làm việc đó sau **bất kỳ** thao tác palette, và nó **nổi bọt SAU** handler của
+  chính phần tử — nên nó thấy vật thể đã cập nhật. Thêm `refreshFillSwatch()` vào từng
+  handler là đúng cái drift mà listener uỷ quyền sinh ra để tránh.
+- **Vỡ khi:** tick rồi bỏ tick trên vật thể đang chọn → nền ra **màu khác** với màu ô
+  swatch đang hiện · slider ở 0% mà ô “Không nền” vẫn trống · vẽ vật thể mới ra **vô hình**
+  · chip caro và con số % nói khác nhau.
+- Lưới: `npm run test:defaults` §4c (chạy **thật** ba handler trên DOM giả + mục tiêu giả,
+  gồm ca canh gác quét **36 tổ hợp** trạng thái×hành động) và §4d (nhãn + tooltip khớp
+  từ điển i18n). Đã kiểm bằng cách **hoàn nguyên cả ba nửa của bản sửa** → 11 ca đỏ, kể cả
+  đúng con số `#ffffff` của vụ mất dữ liệu.
 
 ---
 
@@ -1916,7 +1968,8 @@ _Ghi 2026-08-13. **Đo được, không suy luận.**_
 | Cột trang theo trang đang đọc (`syncThumbFocus`, `nearestScrollDelta`, `.thumb.current`) | `npm run test:geom` · cuộn tài liệu → thumbnail sáng đúng trang & tự trượt vào khung nhìn · **tick chọn vài trang rồi cuộn đi đâu đó → Xoá trang vẫn xoá đúng các trang đã tick** (BI-39, BI-26) · đang kéo sắp xếp trang thì cột **không nhảy** (BI-33) · thu sidebar (F4) rồi cuộn → không lỗi console · F11 → dải trang vẫn sáng đúng trang |
 | Ảnh round-trip (`addManagedAnnot` nhánh image, `managedSrcBytes`, `collectManagedChain`, `freeManagedTrash`, `MANAGED_KINDS`) | `cd desktop ; npm run test:managed` · chèn 1 ảnh → Áp dụng → Lưu → **mở lại** → Chỉnh sửa → ảnh **kéo/đổi cỡ/xoá được**, “Áp nhiều trang” vẫn dùng được · lưu 3–4 lần liên tiếp → **cỡ file không phình** · áp 1 chữ ký cho 20 trang → file ~1 lần cỡ ảnh, không 20 · ảnh trên trang **đã xoay** → **cũng sửa lại được** kể từ v0.2.58, xem hàng dưới (BI-59) · xoá ảnh round-trip rồi **thêm ô redact trên chính trang đó** → Áp dụng: ảnh **không** quay lại thành pixel, và ảnh còn lại **không nhân đôi** (BI-37, BI-38) |
 | Chữ nhật / elip / **khoanh mây** round-trip (`shapeAppearance`, `VECTOR_KINDS`, nhánh vector của `addManagedAnnot` · `serializeManaged` · `deserializeManaged`, `MANAGED_KINDS`) | `cd desktop ; npm run test:managed ; npm run test:rotate ; npm run test:defaults` · vẽ 1 chữ nhật **viền không nền** + 1 elip **có nền mờ** + 1 **khoanh mây hộp** + 1 **khoanh mây vẽ tay** → Áp dụng → Lưu → **mở lại** → Chú thích → cả hai **chọn/kéo/đổi cỡ/đổi màu/đổi nét/xoá được**, elip vẫn **mờ đúng độ mờ đã lưu** · zoom 400% → viền **nét, không rỗ** (vector, không phải PNG) · so **viền có bị gọt** không ở cả 4 cạnh với nét dày 8pt · lặp trên trang **đã xoay 90/180/270** → không méo, không lệch · Lưu 3–4 lần liên tiếp → **cỡ file không phình** · mở file đã bake bằng **Foxit + Acrobat + Chrome** → thấy đúng chỗ, đúng màu (BI-64) |
-| Nền hộp văn bản (`FILLABLE_KINDS`, `fillSlotFor`/`FILL_SLOTS`, `ed.textFill*`, khối `.an-text-bg` trong `renderAnnot`, `fillRect` trong `renderTextPng`, `.an-text { z-index: 0 }`) | `cd desktop ; npm run test:text ; npm run test:managed ; npm run test:defaults` · hộp chữ **nền vàng 100%** trên nền trắng → Áp dụng → Lưu → mở file bằng viewer khác: **mép nền trùng** đúng chỗ trên màn hình · nền **30%** → xuyên thấy nội dung trang, PDF **giống hệt** màn hình · nền + **Mờ chữ 50%** → cả chữ **và** nền cùng mờ ở cả hai nơi · nền + **xoay 45°** → nền quay theo, **không trôi** khỏi chữ · nền + `charScale 60%` → nền ôm đúng bề ngang · Áp dụng → Chỉnh sửa lại → sửa chữ → **nền còn** · Áp dụng → **Đánh số trang** (qua sidecar) → mở lại → nền còn · trang `/Rotate 90` → nền **không méo** · file **cũ** (trước v0.2.64) → hộp chữ vẫn trong suốt, **không tự mọc nền** · chọn hình chữ nhật rồi chọn hộp chữ → ô **Nền** hiện đúng giá trị **của từng loại** (slot riêng) · in (Ctrl+P) → nền in ra (BI-71) · **lượt đầu, đây là ca vỡ của v0.2.64 (BI-75)**: chọn công cụ Hộp văn bản → bấm lên trang → **gõ chữ trước** → rồi mới bỏ tick **Trong suốt** và kéo **Mờ nền** → khung gõ **đổi nền ngay trước mắt**, hộp **không** bị đóng, bấm ra ngoài thì hộp ra **đúng** màu và **đúng** % vừa kéo · đang gõ mà **đổi cỡ chữ / phông / B-I-U / canh lề** → khung gõ đổi theo, **chữ đang gõ còn nguyên** · gõ **giữa từ** rồi kéo Mờ nền → thả chuột là **con trỏ về đúng chỗ đang gõ**, không nhảy xuống cuối · đang gõ mà **đổi công cụ** hoặc bấm **Áp dụng** → hộp **được chốt** như cũ (không được im lặng mất chữ) · mở lại hộp cũ bằng công cụ Hộp văn bản (gõ sửa chữ) → kéo Mờ nền → **chính hộp đó** đổi nền, không phải hộp khác · chọn một hình chữ nhật, đổi sang công cụ Hộp văn bản, kéo Mờ nền → **hình chữ nhật không đổi gì** và **không sinh bước undo rỗng** · chọn hộp chữ **không có nền** → ô màu hiện đúng màu mà bỏ tick sẽ nhận (không phải màu của hình vừa chọn trước đó) · **ô xem trước** cạnh thanh Mờ nền: trắng 30% và trắng 100% **trông khác nhau rõ**, Trong suốt thì thấy ô caro |
+| Nền hộp văn bản (`FILLABLE_KINDS`, `fillSlotFor`/`FILL_SLOTS`, `ed.textFill*`, khối `.an-text-bg` trong `renderAnnot`, `fillRect` trong `renderTextPng`, `.an-text { z-index: 0 }`) | `cd desktop ; npm run test:text ; npm run test:managed ; npm run test:defaults` · hộp chữ **nền vàng 100%** trên nền trắng → Áp dụng → Lưu → mở file bằng viewer khác: **mép nền trùng** đúng chỗ trên màn hình · nền **30%** → xuyên thấy nội dung trang, PDF **giống hệt** màn hình · nền + **Mờ chữ 50%** → cả chữ **và** nền cùng mờ ở cả hai nơi · nền + **xoay 45°** → nền quay theo, **không trôi** khỏi chữ · nền + `charScale 60%` → nền ôm đúng bề ngang · Áp dụng → Chỉnh sửa lại → sửa chữ → **nền còn** · Áp dụng → **Đánh số trang** (qua sidecar) → mở lại → nền còn · trang `/Rotate 90` → nền **không méo** · file **cũ** (trước v0.2.64) → hộp chữ vẫn trong suốt, **không tự mọc nền** · chọn hình chữ nhật rồi chọn hộp chữ → ô **Nền** hiện đúng giá trị **của từng loại** (slot riêng) · in (Ctrl+P) → nền in ra (BI-71) · **lượt đầu, đây là ca vỡ của v0.2.64 (BI-75)**: chọn công cụ Hộp văn bản → bấm lên trang → **gõ chữ trước** → rồi mới bỏ tick **Trong suốt** và kéo **Mờ nền** → khung gõ **đổi nền ngay trước mắt**, hộp **không** bị đóng, bấm ra ngoài thì hộp ra **đúng** màu và **đúng** % vừa kéo · đang gõ mà **đổi cỡ chữ / phông / B-I-U / canh lề** → khung gõ đổi theo, **chữ đang gõ còn nguyên** · gõ **giữa từ** rồi kéo Mờ nền → thả chuột là **con trỏ về đúng chỗ đang gõ**, không nhảy xuống cuối · đang gõ mà **đổi công cụ** hoặc bấm **Áp dụng** → hộp **được chốt** như cũ (không được im lặng mất chữ) · mở lại hộp cũ bằng công cụ Hộp văn bản (gõ sửa chữ) → kéo Mờ nền → **chính hộp đó** đổi nền, không phải hộp khác · chọn một hình chữ nhật, đổi sang công cụ Hộp văn bản, kéo Mờ nền → **hình chữ nhật không đổi gì** và **không sinh bước undo rỗng** · chọn hộp chữ **không có nền** → ô màu hiện đúng màu mà bỏ tick sẽ nhận (không phải màu của hình vừa chọn trước đó) · **ô xem trước** cạnh thanh Mờ nền: trắng 30% và trắng 100% **trông khác nhau rõ**, Không nền thì thấy ô caro |
+| Ba ô nền (`onFillColorInput`/`onFillNoneToggle`/`onFillOpacityInput`, `setFillOn`, `fillFromCtls`, `clampFillPct`, nhánh `FILLABLE_KINDS` của `syncControls`) | `cd desktop ; npm run test:defaults` · chọn 1 chữ nhật nền **vàng 40%** → tick **Không nền** → bỏ tick → phải ra **lại vàng 40%**, không phải trắng 100% · kéo **Mờ nền** về **0%** → ô **Không nền** phải **tự tick**, chip thành ô caro · bỏ tick khi slider ở 0% → slider nhảy lên **100%** và thấy nền · kéo về 0%, chọn vật thể khác đang 70%, tick rồi bỏ tick, rồi **vẽ hình mới** → hình mới phải **thấy được** · để 1 chữ nhật đang chọn rồi đổi sang công cụ **Hộp văn bản**, kéo Mờ nền → chữ nhật **không đổi** và **không** ăn bước hoàn tác (BI-75) · gõ chữ trong hộp mới, kéo Mờ nền → khung gõ đổi màu, **không mất chữ** · đổi tool Hộp văn bản ↔ Chữ nhật → ba ô hiện đúng bộ **của từng loại** · đổi VI↔EN → nhãn **Không nền** dịch đúng (BI-76) |
 | Trang ẩn có khoá (`renderer/page-vault.js`, `scanVaultPages`, `hidePagesWithPassword`, `unhidePagesWithPassword`, `exportWithoutHiddenPages`, `#vault-modal`) | `cd desktop ; npm run test:vault` · **ba ca không được phép đỏ**: ẩn → **kéo thả sắp xếp trang** → bỏ ẩn được (BI-72) · ẩn → **chú thích lên trang giữ chỗ → Áp dụng** → bỏ ẩn được (BI-72) · ẩn xong mở thư mục recovery trong `userData` → **không còn bản rõ** (BI-74) · ẩn → Lưu → đóng app → mở lại → bỏ ẩn được · ẩn → **Đánh số trang** → bỏ ẩn được (BI-73) · ẩn → **Nén file** → bỏ ẩn được · ẩn → khoá cả file bằng mật khẩu (`/encrypt`) → mở khoá → bỏ ẩn được · ẩn → **In** → in ra trang giữ chỗ, không phải nội dung gốc · mở file có trang ẩn bằng **Acrobat/Chrome** → thấy trang giữ chỗ, **không đọc được** nội dung, file không lỗi · tách/trích trang giữ chỗ ra file mới → bỏ ẩn được ở file mới · chuyển trang giữ chỗ **sang tab khác** → blob đi theo · sai mật khẩu → hỏi lại, **tài liệu không đổi** · badge 🔒 và dòng “N trang đang ẩn” đúng sau mỗi lần xoá/ghép/sắp xếp trang |
 | Tay nắm đổi cỡ (`resizeRect`, `RESIZABLE_KINDS`, `.handle.h-*`) | `npm run test:geom` · kéo **cả 4 góc** của ảnh/tô sáng/redact/chữ nhật/elip → góc đối diện **đứng yên** · **giữ Shift** → không méo · Esc giữa lúc kéo → về đúng vị trí+cỡ cũ · Ctrl+Z sau khi đổi cỡ · bấm vào tay nắm rồi **không kéo** → không tạo bước undo rỗng |
 | `editor.js` bake | Chú thích → Xong → sửa lại được · số trang không đổi · comment panel còn đúng (BI-5) |

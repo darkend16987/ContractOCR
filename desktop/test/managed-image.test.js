@@ -878,7 +878,7 @@ function readManaged(doc) {
       ["#ffeb3b", 0.4]);
     check("… a background with no opacity stored reads as fully opaque",
       serializeManaged(txt({ fill: "#ffffff" })).fillOpacity, 1);
-    check("fill:\"none\" (the Trong suốt tick) serialises as NO background",
+    check("fill:\"none\" (the Không nền tick) serialises as NO background",
       "fill" in serializeManaged(txt({ fill: "none" })), false);
     {
       const back = deserializeManaged(serializeManaged(txt({ fill: "#ffeb3b", fillOpacity: 0.4 })), null);
@@ -886,7 +886,7 @@ function readManaged(doc) {
         [back.fill, back.fillOpacity], ["#ffeb3b", 0.4]);
       // Left OFF the object, not set to "none": renderAnnot and renderTextPng both test
       // `a.fill && a.fill !== "none"`, and an absent key is the shape a freshly-typed box
-      // with the Trong suốt tick has.
+      // with the Không nền tick has.
       const plain = deserializeManaged({ k: "text", x: 1, y: 2, w: 3, h: 4, text: "a" }, null);
       check("… and a payload written BEFORE backgrounds existed has no fill key at all",
         ["fill" in plain, "fillOpacity" in plain], [false, false]);
@@ -1028,7 +1028,7 @@ function readManaged(doc) {
           RECT(stubCtx._calls).length, 0);
         stubCtx._calls.length = 0;
         renderTextPng("Nghiem thu", FS, "#000000", Object.assign({ fill: "none" }, style));
-        check("fill:\"none\" (Trong suốt) rasterises with no wash either",
+        check("fill:\"none\" (Không nền) rasterises with no wash either",
           RECT(stubCtx._calls).length, 0);
 
         stubCtx._calls.length = 0;

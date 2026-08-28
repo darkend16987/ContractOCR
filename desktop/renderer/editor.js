@@ -76,7 +76,7 @@
   // inline `||` chain in each is how those places drift apart (see RESIZABLE_KINDS).
   const SYMBOL_KINDS = new Set(["check", "cross"]);
   // Kinds that carry an interior fill (`a.fill` + `a.fillOpacity`) and therefore show
-  // the three "Nền / Trong suốt / Mờ nền" controls. The list used to be spelled out
+  // the three "Nền / Không nền / Mờ nền" controls. The list used to be spelled out
   // inline in THREE places (syncControls, applyFillToSel, TOOL_CTLS/KIND_CTLS) — the
   // exact drift the RESIZABLE_KINDS comment above warns about, and adding `text` to it
   // is what made the drift real.
@@ -127,6 +127,26 @@
   function fillSlotFor(k) {
     return FILL_SLOTS.get(k) || SHAPE_FILL_SLOT;
   }
+  // The percentage the background code accepts, in ONE place: the slider handler, the
+  // "is it sitting at zero?" guard and syncControls must agree to the digit. A rounding
+  // difference between them IS a state where the tick says one thing and the wash does
+  // another — see BI-76.
+  function clampFillPct(v) {
+    const n = Math.round(+v);
+    return Number.isFinite(n) ? Math.min(100, Math.max(0, n)) : 0;
+  }
+  // Switching a background ON while the slider sits at 0% would hand the object an
+  // INVISIBLE wash while the tick claims there is one — BI-76's second half in the
+  // mirror. Opening at fully opaque is the one answer that needs no hidden "last
+  // non-zero" state and cannot surprise anybody: a background you have just switched on
+  // is visible. Reachable in normal use (drag to 0, then untick) and from a file written
+  // by a build that let the slider sit at 0 with a colour still attached.
+  //
+  // Declared UP HERE with the other fill classifiers, not beside setFillOn: it is a
+  // `const`, so anything that ran at IIFE-init time and reached setFillOn would hit its
+  // TDZ and blank the app — the trap the COLOR_SLOTS note above records. Nothing calls it
+  // at init today; this keeps it that way.
+  const FILL_ON_FROM_ZERO_PCT = 100;
   // Which parts of the chrome are "the palette": the style controls an inline editor's
   // text is allowed to KEEP being edited from. Focus landing in here does not commit the
   // open textarea (see openTextEditor's blur handler) — before v0.2.65 it did, and that
@@ -1349,17 +1369,21 @@
     }
     if (FILLABLE_KINDS.has(a.kind)) {
       const none = !a.fill || a.fill === "none";
-      $("ed-fill-none").checked = none;
+      // A wash at zero alpha is NOT a background, so the tick has to show set for it too:
+      // leaving it clear next to a 0% slider is the two controls contradicting each other
+      // the instant the object is selected. `none` itself stays "there is no fill at all",
+      // because the colour fallback on the next line depends on that narrower meaning.
+      // See BI-76.
+      $("ed-fill-none").checked =
+        none || clampFillPct((a.fillOpacity != null ? a.fillOpacity : 1) * 100) === 0;
       // With no fill there is no colour ON the annot, and the old `if (!none)` left the
       // swatch showing whatever the last object happened to have — very likely another
-      // kind's, since the three controls are shared DOM. Untick "Trong suốt" from there and
+      // kind's, since the three controls are shared DOM. Untick "Không nền" from there and
       // effFill hands back the remembered SLOT colour, not the one the swatch was showing:
       // you read one colour and got another. Fall back to the slot the create path reads,
       // so the control cannot promise something else.
       $("ed-fill").value = none ? ed[fillSlotFor(a.kind).color] : a.fill;
-      const op = a.fillOpacity != null ? a.fillOpacity : 1;
-      $("ed-fill-opacity").value = String(Math.round(op * 100));
-      $("ed-fill-opacity-val").textContent = Math.round(op * 100) + "%";
+      setFillPctCtl(clampFillPct((a.fillOpacity != null ? a.fillOpacity : 1) * 100));
       refreshFillSwatch();
     }
   }
@@ -4270,12 +4294,51 @@
   function syncFillCtls(kind) {
     if (!kind || !FILLABLE_KINDS.has(kind)) return;
     const slot = fillSlotFor(kind);
-    const pct = Math.round((ed[slot.opacity] != null ? ed[slot.opacity] : 1) * 100);
     $("ed-fill").value = ed[slot.color];
     $("ed-fill-none").checked = !ed[slot.on];
+    setFillPctCtl(clampFillPct((ed[slot.opacity] != null ? ed[slot.opacity] : 1) * 100));
+    refreshFillSwatch();
+  }
+  // ONE writer for the slider and its readout, so the number and the text beside it
+  // cannot drift. Deliberately does not touch `ed`: its callers want different things
+  // from the remembered slot.
+  function setFillPctCtl(pct) {
     $("ed-fill-opacity").value = String(pct);
     $("ed-fill-opacity-val").textContent = pct + "%";
-    refreshFillSwatch();
+  }
+  // Flip the background on/off across BOTH the remembered slot and the tick in ONE call,
+  // so the two can never disagree. `fromZero` defaults to true and applies the
+  // FILL_ON_FROM_ZERO_PCT rule; the opacity handler passes false because it is the one
+  // caller that has just decided the percentage itself and must not be overruled.
+  function setFillOn(on, fromZero) {
+    const slot = fillSlotFor(fillCtlKind());
+    ed[slot.on] = on;
+    $("ed-fill-none").checked = !on;
+    if (!on || fromZero === false) return;
+    // TWO zeros to clear, and they are DIFFERENT zeros: the slider is what the TARGET
+    // object is about to be given, `ed[slot.opacity]` is what the NEXT object will be
+    // given. Raising one and leaving the other is how the invisible-but-ticked state gets
+    // back in through the side door — drag to 0% (which remembers 0), select some other
+    // object at 70%, untick, then draw a fresh rectangle: it would come out invisible with
+    // the tick clear. Each is raised only if IT is the one at zero, so clearing the
+    // remembered zero never silently repaints the object on screen.
+    if (clampFillPct($("ed-fill-opacity").value) === 0) setFillPctCtl(FILL_ON_FROM_ZERO_PCT);
+    if (!ed[slot.opacity]) ed[slot.opacity] = FILL_ON_FROM_ZERO_PCT / 100;
+  }
+  // The three controls read back as the two fields an annot stores.
+  //
+  // THE CONTROLS ARE THE SOURCE OF TRUTH HERE, not `ed[slot]` — the same rule
+  // refreshFillSwatch already follows, for the same reason. syncControls() points these
+  // controls at the SELECTED object's own background and deliberately leaves the
+  // remembered slots alone (those are the defaults for the NEXT object, the split
+  // #ed-color keeps). Reading `ed[slot]` was the bug: ticking and un-ticking the tick on a
+  // yellow-40% rectangle brought it back WHITE-100% while both controls still showed
+  // yellow 40% — silent data loss plus a toolbar that lied about it. See BI-76.
+  function fillFromCtls() {
+    return {
+      fill: $("ed-fill-none").checked ? "none" : $("ed-fill").value,
+      fillOpacity: clampFillPct($("ed-fill-opacity").value) / 100,
+    };
   }
   // Repaint the composite preview chip next to the three controls. Read off what the
   // controls DISPLAY rather than off `ed.*`, on purpose: one source of truth means the
@@ -4325,35 +4388,49 @@
     // own unchanged values — back onto it. No visible change, but a wasted undo step and a
     // session marked dirty for nothing. The tool the user is holding decides the target.
     if (a.kind !== kind) return;
+    // From the CONTROLS, not from `ed[slot]` via effFill() — see fillFromCtls and BI-76.
+    // effFill()/effFillOpacity() stay in use, but only on the CREATE paths, which is the
+    // one place the remembered slot really is the answer.
+    const f = fillFromCtls();
     pushEdUndo("fill:" + a.id);
-    a.fill = effFill(a.kind);
-    a.fillOpacity = effFillOpacity(a.kind);
+    a.fill = f.fill;
+    a.fillOpacity = f.fillOpacity;
     // Safe to rebuild the layer with an editor open: renderLayer carries it across (BI-75).
     syncOverlays();
   }
-  $("ed-fill").oninput = (e) => {
-    const slot = fillSlotFor(fillCtlKind());
-    ed[slot.color] = e.target.value;
-    ed[slot.on] = true;
-    $("ed-fill-none").checked = false;
+  // Named functions, not inline arrow bodies: `npm run test:defaults` drives all three
+  // directly (source-extracted, the colorSlotFor pattern), so the wiring is no longer
+  // test-invisible. They used to spell the "turn the background off" dance out separately
+  // in slightly different words, which is how both halves of BI-76 got in. Everything now
+  // funnels through setFillOn / setFillPctCtl.
+  //
+  // None of them repaints the preview chip or the inline textarea by hand: the delegated
+  // #edit-bar listener below does that after ANY palette event, and it bubbles AFTER the
+  // element's own handler has run — so it sees the object already updated.
+  function onFillColorInput(hex) {
+    ed[fillSlotFor(fillCtlKind()).color] = hex;
+    $("ed-fill").value = hex;
+    setFillOn(true); // picking a colour means "I want a background"
     applyFillToSel();
-  };
-  $("ed-fill-none").onchange = (e) => {
-    ed[fillSlotFor(fillCtlKind()).on] = !e.target.checked;
+  }
+  function onFillNoneToggle(checked) {
+    setFillOn(!checked);
     applyFillToSel();
-  };
-  $("ed-fill-opacity").oninput = (e) => {
-    const slot = fillSlotFor(fillCtlKind());
-    const pct = Math.min(100, Math.max(0, +e.target.value || 0));
-    ed[slot.opacity] = pct / 100;
-    $("ed-fill-opacity-val").textContent = pct + "%";
-    // Adjusting opacity implies a fill is wanted — turn transparency off.
-    if (ed[slot.on] === false && pct > 0) {
-      ed[slot.on] = true;
-      $("ed-fill-none").checked = false;
-    }
+  }
+  function onFillOpacityInput(raw) {
+    const pct = clampFillPct(raw);
+    ed[fillSlotFor(fillCtlKind()).opacity] = pct / 100;
+    setFillPctCtl(pct);
+    // 0% IS "không nền" — there is no third state, and pretending there was is BI-76's
+    // second half: the slider at 0 used to leave the tick CLEAR, so the object carried an
+    // invisible wash while the control read "has a background". Above 0, touching the
+    // slider means a background is wanted, so it clears the tick.
+    setFillOn(pct > 0, false);
     applyFillToSel();
-  };
+  }
+  $("ed-fill").oninput = (e) => onFillColorInput(e.target.value);
+  $("ed-fill-none").onchange = (e) => onFillNoneToggle(e.target.checked);
+  $("ed-fill-opacity").oninput = (e) => onFillOpacityInput(e.target.value);
   // One DELEGATED listener per palette container instead of a call bolted onto each of the
   // ~20 style handlers. Those handlers already do their own job correctly; what was missing
   // was the two things that have to happen after ANY of them, now that focus can sit in the

@@ -280,7 +280,7 @@ của Word. Mở bằng `Ctrl+H` hoặc nút **⇄** ở cuối ô *Tìm trong t
 
 > **Nền cho hộp văn bản (từ v0.2.64):** hộp văn bản vốn **trong suốt**, nên đặt lên ảnh scan hay bản
 > vẽ nhiều nét thì chữ lẫn vào hình. Chọn công cụ **Hộp văn bản** (hoặc chọn một hộp đã có) → trên
-> thanh chú thích bỏ tick **Trong suốt**, chọn **Nền** và kéo **Mờ nền**:
+> thanh chú thích bỏ tick **Không nền**, chọn **Nền** và kéo **Mờ nền**:
 > - **100%** = che kín phần dưới; khoảng **70–85%** = vẫn thấy mờ mờ nội dung bên dưới, đủ để chữ nổi lên.
 > - Nền **ôm sát chữ**, **quay theo** khi bạn xoay hộp, và **đi theo file** — mở lại vẫn sửa được.
 > - **Hộp văn bản và hình khoanh vùng nhớ riêng hai bộ màu nền**, nên đặt nền trắng cho chữ không làm
@@ -290,7 +290,11 @@ của Word. Mở bằng `Ctrl+H` hoặc nút **⇄** ở cuối ô *Tìm trong t
 >   bạn đang gõ. Cỡ chữ, phông, **B** / *I* / U và canh lề cũng vậy.
 > - **Ô vuông nhỏ cạnh thanh Mờ nền** là bản xem trước thật: nó đặt màu bạn chọn ở đúng độ mờ bạn đặt
 >   lên một ô kẻ caro, nên **trắng 30% trông ra trắng 30%** chứ không giống trắng đặc — thứ mà ô chọn
->   màu không nói được (ô đó chỉ hiện màu, không hiện độ mờ). Thấy ô caro = đang **Trong suốt**.
+>   màu không nói được (ô đó chỉ hiện màu, không hiện độ mờ). Thấy ô caro = đang **Không nền**.
+> - **Ô “Không nền” là công tắc tắt/bật, không phải một mức của Mờ nền.** Tick là tắt hẳn lớp nền;
+>   bỏ tick là bật lại **đúng màu và đúng độ mờ đang hiện trên thanh**, nên dùng nó để thử có/không
+>   nền mà không mất giá trị đã chọn. Kéo **Mờ nền** về 0% cũng là tắt nền, và ô **Không nền** tự
+>   tick theo. (Ô này ở các bản trước ghi là *Trong suốt*.)
 
 > 🔒 **Ẩn trang bằng mật khẩu (từ v0.2.64):** chuột phải một trang trong **cột trang** →
 > **Ẩn trang này bằng mật khẩu…** (chọn nhiều trang trước thì ẩn cả loạt bằng một mật khẩu).
