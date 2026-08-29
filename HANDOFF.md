@@ -4,7 +4,53 @@
 > [DESIGN.md](DESIGN.md) (kiến trúc), [ROADMAP.md](ROADMAP.md) (tiến độ chi tiết),
 > [SETUP.md](SETUP.md) (dựng môi trường).
 
-_Cập nhật: 2026-08-29 · v0.2.66 đã phát hành (dưới đây) · v0.2.65 là bản trước đó_
+_Cập nhật: 2026-08-29 · v0.2.67 đã phát hành (dưới đây) · v0.2.66 là bản trước đó_
+
+> **v0.2.67 — sao chép chú thích sang file PDF khác (tab khác / cửa sổ khác).**
+>
+> Câu hỏi của người dùng là **khả thi hay không**, nên việc bắt đầu bằng khảo sát chứ
+> không bằng code. Kết luận: rẻ hơn nhiều so với vẻ ngoài, vì **bốn bài toán khó nhất đã
+> được giải sẵn** từ v0.2.52 và lời giải đó vốn không phụ thuộc tài liệu:
+>
+> - toạ độ annot nằm trong **không gian điểm PDF scale-1** (`editor.js` §đầu file, đo lại
+>   ở `layer.dataset.w = cw / state.scale`) → độc lập cả zoom **lẫn** tài liệu;
+> - `copySelected()` đã xoá `id` + `_managed`, tức bản sao đã “cắt rốn” khỏi file gốc;
+> - `fitShift(unionBounds(...))` đã kẹp biên cho “dán sang trang nhỏ hơn” — chính là ca
+>   liên-tài-liệu;
+> - schema hộp văn bản là **JSON tự chứa**, không tham chiếu gì tới file nguồn.
+>
+> Nói cách khác **“dán sang tài liệu khác” bằng đúng “dán sang trang khác”**; rào cản duy
+> nhất là ranh giới process (mỗi tab một `WebContentsView`). Việc thực làm chỉ là bắc cầu
+> qua main: `objClip` + `annots:clip-write`/`clip-read`, broadcast bỏ qua chính tab gửi.
+>
+> **Cái bẫy quyết định thiết kế (BI-77).** Handler `paste` phải quyết định **đồng bộ** có
+> `preventDefault()` hay không, vì luật bàn giao với đường dán-ảnh của `capture.js` dựa
+> vào chỗ đó. Nếu đổi thành `await readAnnotClip()` thì câu trả lời về **sau** khi event
+> đã bubble → `Ctrl+V` khi dán hai lần, khi không dán gì, **tuỳ thời điểm**, không ném
+> exception. Nên: main **chỉ đẩy**, `adoptSharedClip` ghi thẳng vào chính biến `clip` cục
+> bộ — nhờ vậy `pasteClip`, guard của listener `paste` và nút “Dán” **không sửa một dòng
+> nào**. Đó là lý do bản vá không đụng vào logic dán sẵn có.
+>
+> **Một lỗi bắt được lúc thiết kế, không phải lúc test:** clip nhận từ tab khác mang
+> `page: -1`. Giữ `srcPage` sẽ khiến trang 0 của file B bị nhầm là trang nguồn của file A,
+> làm **mọi** lần dán liên-tài-liệu lệch 12pt khỏi chỗ đã copy — sai lặng lẽ, và sai trong
+> file đã lưu.
+>
+> **Ảnh cố ý không qua IPC** (`SHARE_EXCLUDED`): ảnh mở lại là base64 **nhiều MB**, đẩy
+> qua IPC mỗi lần `Ctrl+C` đúng là cái giá mà ghi chú “clipboard riêng từng tab” đã từ chối
+> trả. Ảnh vẫn copy **trong cùng tab** y như cũ. Một lần copy không có mục nào chia sẻ được
+> thì **xoá** clip chung, không để clip cũ đứng lại.
+>
+> **Lưới mới `npm run test:clip` (56 ca).** Nhóm §5 **chạy thật** handler của `main.js` (cắt
+> khỏi source, ép qua stub) chứ không chỉ khớp regex — chứng minh broadcast bỏ đúng tab gửi
+> và payload rỗng thì xoá clip. Kiểm bằng **mutation test**: bẻ `page: -1` → 2 ca đỏ; bẻ
+> guard `paste` thành `await` → 2 ca đỏ. Ca định vị listener còn khẳng định thân hàm **khác
+> rỗng**, vì bản đầu của lưới này *pass giả* khi regex trượt CRLF.
+>
+> **Sửa kèm một comment đã lệch:** khối “WHAT IT CANNOT DO” trong `editor.js` viết ở
+> v0.2.52 vẫn khẳng định mây/chữ nhật/elip/vẽ tay bị dán chết khi bake — nhưng chúng đã vào
+> `MANAGED_KINDS` từ v0.2.61/v0.2.63. Nay danh sách đúng: chỉ còn ✓/✗, tô sáng, gạch chân,
+> gạch ngang và đoạn đo là bị dán chết.
 
 > **v0.2.66 — ô “Trong suốt” đổi thành “Không nền”, và nó thôi làm mất màu nền của bạn.**
 >

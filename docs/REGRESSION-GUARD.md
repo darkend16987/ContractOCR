@@ -1935,6 +1935,48 @@ _Ghi 2026-08-13. **Đo được, không suy luận.**_
   từ điển i18n). Đã kiểm bằng cách **hoàn nguyên cả ba nửa của bản sửa** → 11 ca đỏ, kể cả
   đúng con số `#ffffff` của vụ mất dữ liệu.
 
+### BI-77 · Clipboard liên-tab: main chỉ được **ĐẨY** vào `clip`, **không bao giờ được hỏi** lúc dán — và clip nhận từ tab khác mang `page: -1`
+- `main.js`: `objClip` · `annots:clip-write` / `annots:clip-read`; `preload.js`:
+  `writeAnnotClip` / `readAnnotClip` / `onAnnotClipChanged`; `editor.js`: `SHARE_EXCLUDED` ·
+  `isShareableKind` · `shareClip` · `adoptSharedClip` · `requestPaste`. Lưới `npm run test:clip`.
+- **Quyết định phải ĐỒNG BỘ, việc thì được async.** `editor.js` giành cử chỉ `Ctrl+V`
+  bằng `preventDefault()` **ngay trong** sự kiện `paste`, đọc `clip` ở module scope. Luật
+  bàn giao với đường dán-ảnh của `capture.js` (“có ảnh trên clipboard OS thì bỏ qua, không
+  `preventDefault`”) **dựa hoàn toàn** vào chỗ này chạy đồng bộ.
+  · Đổi thành `await window.desktop.readAnnotClip()` là hỏng: câu trả lời về **sau** khi
+  sự kiện đã bubble sang `capture.js` → `Ctrl+V` khi thì dán hai lần, khi thì không dán gì,
+  **tuỳ thời điểm**. Không có exception nào ném ra.
+  · Vì thế main **chỉ broadcast** (`annots:clip-changed`) và `adoptSharedClip` ghi thẳng
+  vào chính biến `clip`. Nhờ vậy **mọi** chỗ đọc cũ — guard của listener `paste`, nút
+  “Dán”, bản thân `pasteClip` — **không phải sửa một dòng nào**. Đó là lý do bản vá này
+  không đụng vào logic dán sẵn có.
+  · `readAnnotClip` **chỉ** được gọi một lần lúc renderer khởi động (cho tab mở **sau**
+  khi copy, vốn không nhận được broadcast). Gọi nó trong `pasteClip`/`requestPaste` là tái
+  phạm — lưới §3 của `test:clip` canh đúng chuyện đó, kể cả `paste` listener bị đổi thành
+  `async`.
+  · `requestPaste` là chỗ **duy nhất** được `await`, và chỉ để **làm việc** (bật Chỉnh sửa),
+  không bao giờ để **quyết định** — lúc nó chạy thì `preventDefault()` đã gọi xong. Sau
+  `await enter()` phải **kiểm lại** `ed.active` + `clip`: người dùng có thể đã bấm Escape,
+  hoặc tab khác đã xoá clip, trong lúc `importManaged()` còn đang chạy.
+- **`page: -1` là số học, không phải giá trị canh gác cho vui.** `pasteClip` lệch
+  `PASTE_STEP` khi dán **đúng trang nguồn** (`i === clip.page`) để bản sao không nấp hoàn
+  toàn dưới bản gốc. Clip đến từ **tài liệu khác** không có bản gốc nào trên trang này, nên
+  giữ `srcPage` sẽ khiến trang 0 của file B bị nhầm là trang nguồn của file A → **mọi** lần
+  dán liên-tài-liệu lệch 12pt khỏi chỗ người dùng đã copy. `-1` không bao giờ là chỉ số
+  trang, nên nhánh đó chết hẳn và bản dán rơi đúng toạ độ gốc.
+- **Ảnh cố ý không qua IPC** (`SHARE_EXCLUDED`). Ảnh mở lại là chuỗi base64 **nhiều MB**
+  (xem `edSnapshot`); đẩy nó qua IPC mỗi lần `Ctrl+C` đúng là cái giá mà ghi chú
+  “clipboard riêng từng tab” đã từ chối trả. Ảnh vẫn copy **trong cùng tab** y như cũ.
+  Một lần copy **không có** mục nào chia sẻ được thì **XOÁ** clip chung, không để clip cũ
+  đứng lại — nếu không, tab khác sẽ lặng lẽ dán thứ người dùng đã copy từ hai thao tác trước.
+- **Toạ độ vốn đã liên-tài-liệu**, đó là lý do việc này rẻ: annot nằm trong không gian
+  **điểm PDF scale-1** (`editor.js` §đầu file, đo lại ở `layer.dataset.w = cw / state.scale`),
+  nên trang đích chỉ tham gia qua khổ giấy `pw/ph` — và `fitShift(unionBounds(...))` đã kẹp
+  biên đúng từ v0.2.52. “Dán sang tài liệu khác” **bằng đúng** “dán sang trang khác”.
+- Đã kiểm bằng **mutation test**: đổi `page: -1` → `srcPage` ⇒ 2 ca đỏ; đổi guard của
+  `paste` thành `await readAnnotClip()` ⇒ 2 ca đỏ. Ca định vị listener cũng khẳng định thân
+  hàm **khác rỗng**, vì bản đầu tiên của lưới này *pass giả* khi regex trượt CRLF.
+
 ---
 
 ## 4. Hàm nút thắt (đổi chữ ký = ảnh hưởng diện rộng)
@@ -1980,6 +2022,7 @@ _Ghi 2026-08-13. **Đo được, không suy luận.**_
 | Tầng tab/cửa sổ (`main.js`, `tabs.js`) | Toàn bộ `docs/TABS-TEST-L1.md` (24 mục) |
 | Tách tab / kéo tab (`detachTab`, `adoptTab`, `classifyDrop`, `shell.js` dragend) | `docs/TABS-2B-DESIGN.md` §6.2 (18 mục) · BI-15/16/17 · **mục #1 là hồi quy của tính năng sắp xếp tab** |
 | Chuyển trang giữa 2 tài liệu (`renderer/page-move.js`, `classifyPageDrop`, `docViewScreenRect`, `routePages`, `pages:*`) | `cd desktop ; npm run test:pagedrop` · `docs/SPEC-page-drag.md` §7.1 (22 mục) · BI-55/56/57/58 · **mục #1 và #2 là hồi quy của kéo-sắp-xếp trang và kéo file PDF vào cột trang** — hai thứ đã chạy tốt từ v0.2.41 mà tính năng này gắn thêm việc lên đúng cùng một cử chỉ |
+| Clipboard vật thể **liên-tab/liên-tài-liệu** (`objClip` + `annots:clip-*` ở `main.js`, `writeAnnotClip`/`readAnnotClip`/`onAnnotClipChanged` ở `preload.js`, `SHARE_EXCLUDED`/`isShareableKind`/`shareClip`/`adoptSharedClip`/`requestPaste` ở `editor.js`) | `cd desktop ; npm run test:clip ; npm run test:managed ; npm run test:text` · **ca vỡ nguy hiểm nhất là hồi quy của dán-ảnh**: để một **ảnh** trên clipboard hệ điều hành (copy từ app khác) rồi `Ctrl+V` ở tab đang có clip vật thể → phải dán **ảnh**, **không** dán vật thể (luật bàn giao với `capture.js` — BI-77) · copy 1 hộp văn bản ở tab A → `Ctrl+V` ở tab B → **đúng vị trí, đúng cỡ chữ, đúng màu, đúng nền** · copy ở A → **Áp dụng** ở A → dán ở B (clip sống sót bake) · copy ở A → **xé tab B ra cửa sổ riêng** → dán được · copy ở A → **mở tab C mới** → dán được (đường `readAnnotClip` lúc khởi động) · dán vào tab **chưa bật Chỉnh sửa** → tự bật rồi dán, có toast · chọn nhóm Ctrl+click 3 mục → dán sang B **giữ nguyên cự ly tương đối** · dán sang trang **nhỏ hơn** ở B → cả nhóm lùi vào trong tờ, **không rời ra** · dán **hai lần liên tiếp** ở B → bản thứ hai lệch 12pt (không nấp lên nhau), bản **thứ nhất không lệch** · dán sang trang **đã xoay 90/180/270** ở B → Áp dụng → Lưu → mở lại: đúng chiều, đúng chỗ · copy **ảnh** ở A → nút “Dán” ở B **tối đi** (ảnh không qua tab) và toast nói rõ · copy nhóm **ảnh + hộp chữ** ở A → B chỉ nhận hộp chữ, toast báo số mục ở lại · đóng hết tab trừ một → clip cũ **không** làm app lỗi |
 | Khôi phục phiên (`src/session.js`, `snapshotSession`, `_closing`, `tab:reserved`) | `docs/SESSION-RESTORE.md` §5.3 (14 mục) · BI-18/19/20 · **mục #12 là hồi quy của khôi phục sự cố** |
 | Guard đóng | BI-6: nút X vs menu Thoát vs Ctrl+Q — cả 3 đường |
 | Recovery/autosave | BI-7: mở 2 tab, chỉ tab đầu được hỏi khôi phục |

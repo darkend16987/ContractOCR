@@ -902,6 +902,46 @@ ipcMain.handle("clipboard:read-image", () => {
   }
 });
 
+// ---- IPC: object clipboard, shared across tabs and windows ---------------
+//
+// Cross-DOCUMENT copy/paste of annotation objects. Each tab is its own renderer
+// process, so editor.js's module-level `clip` cannot be seen by another tab;
+// this is the mirror that lets a second tab fill its OWN `clip`.
+//
+// THE READ IS NOT ON THE PASTE PATH, and that is the whole design (BI-77). The
+// renderer's `clip` stays the synchronous source of truth that every paste-time
+// reader already consults; main only PUSHES into it. A pull-on-paste would have
+// to await, and by the time it resolved the `paste` event would already have
+// bubbled to capture.js's image-paste listener — the hand-off rule at the bottom
+// of editor.js depends on that decision being synchronous.
+//
+// Payload is small by construction: the renderer drops image annotations before
+// sending (an image's dataUrl is a multi-megabyte base64 string), so this
+// channel carries plain annotation JSON only — which answers the objection the
+// original per-tab-clipboard note raised against sharing at all.
+let objClip = null; // { items: [...], srcPage: n } | null
+
+ipcMain.handle("annots:clip-write", (e, payload) => {
+  try {
+    const items = payload && Array.isArray(payload.items) ? payload.items : null;
+    // A copy with no shareable member (an image-only selection) CLEARS the
+    // mirror instead of leaving the last one standing: a stale clip would let
+    // another tab paste something the user copied two gestures ago, silently.
+    objClip = items && items.length ? { items, srcPage: payload.srcPage | 0 } : null;
+    for (const wc of Tabs.allDocContents()) {
+      if (wc === e.sender) continue; // the sender set its own clip synchronously
+      wc.send("annots:clip-changed", objClip);
+    }
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, reason: String((err && err.message) || err) };
+  }
+});
+
+// The clip as it stands, for a tab that LOADED AFTER the copy happened and so
+// never saw the broadcast. Called once on renderer start — never while pasting.
+ipcMain.handle("annots:clip-read", () => objClip);
+
 // New empty document WINDOW (renderer "Cửa sổ mới" button / Ctrl+N). Each window
 // carries its own tabs.
 ipcMain.handle("window:new", () => {

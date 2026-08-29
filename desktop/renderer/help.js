@@ -332,8 +332,8 @@
               "**Ctrl+click** adds or removes objects from the selection. With several selected, **dragging one moves the whole group**, changing **Màu** (colour) or **Nét** (line width) applies to all of them, and `Delete` removes the group in **one** undo step. Resize handles only appear for a **single** object — click one on its own to resize it."
             ),
             T(
-              "`Ctrl+C` sao chép, sang trang khác rồi `Ctrl+V` để dán. Hoặc **bấm chuột phải** lên mục để có menu **Sao chép / Dán vào trang này / Xoá mục**.",
-              "`Ctrl+C` copies; go to another page and `Ctrl+V` pastes. Or **right-click** an object for **Sao chép / Dán vào trang này / Xoá mục** (copy / paste here / delete)."
+              "`Ctrl+C` sao chép, sang trang khác — hoặc sang **file PDF khác đang mở ở tab/cửa sổ khác** — rồi `Ctrl+V` để dán. Hoặc **bấm chuột phải** lên mục để có menu **Sao chép / Dán vào trang này / Xoá mục**.",
+              "`Ctrl+C` copies; go to another page — or to **another PDF open in another tab or window** — and `Ctrl+V` pastes. Or **right-click** an object for **Sao chép / Dán vào trang này / Xoá mục** (copy / paste here / delete)."
             ),
             T("`Delete` xoá mục đang chọn.", "`Delete` removes the selected object."),
             T(
@@ -345,8 +345,8 @@
         },
         {
           note: T(
-            "**Dán sang trang khác giữ đúng vị trí cũ** — tiện để lặp lại một khoanh mây hay một hộp chữ ở cùng chỗ trên nhiều trang. Dán lại trên **cùng** trang thì mỗi bản lệch xuống một chút cho khỏi đè nhau; dán vào trang **nhỏ hơn** thì cả nhóm tự lùi vào trong trang, không bị rời ra.\n\n**Clipboard không mất khi bấm Xong** — sao chép, bấm Xong, vẫn dán được. Nếu clipboard hệ điều hành đang có **ảnh** (copy từ app khác) thì `Ctrl+V` vẫn là dán ảnh vào trang như thường; hai đường không lẫn nhau.",
-            "**Pasting onto another page keeps the original position** — handy for repeating a revision cloud or a text box at the same spot across pages. Pasting again on the **same** page offsets each copy slightly so they don't stack; pasting onto a **smaller** page nudges the whole group back inside the sheet without breaking it apart.\n\n**The clipboard survives Xong** — copy, apply, and you can still paste. If the OS clipboard holds an **image** (copied from another app), `Ctrl+V` still pastes that image onto the page as before; the two paths never get confused."
+            "**Dán sang trang khác giữ đúng vị trí cũ** — tiện để lặp lại một khoanh mây hay một hộp chữ ở cùng chỗ trên nhiều trang. Dán lại trên **cùng** trang thì mỗi bản lệch xuống một chút cho khỏi đè nhau; dán vào trang **nhỏ hơn** thì cả nhóm tự lùi vào trong trang, không bị rời ra.\n\n**Sao chép được sang file PDF khác** — copy một hộp văn bản (hay mũi tên, khoanh mây, hình vẽ) ở file này rồi `Ctrl+V` ở **tab khác** hoặc **cửa sổ khác**; nó giữ nguyên vị trí, cỡ chữ và màu. Tab đích chưa bật **Chỉnh sửa** thì app tự bật giúp. Riêng **ảnh** chỉ dán được trong cùng một tab.\n\n**Clipboard không mất khi bấm Xong** — sao chép, bấm Xong, vẫn dán được. Nếu clipboard hệ điều hành đang có **ảnh** (copy từ app khác) thì `Ctrl+V` vẫn là dán ảnh vào trang như thường; hai đường không lẫn nhau.",
+            "**Pasting onto another page keeps the original position** — handy for repeating a revision cloud or a text box at the same spot across pages. Pasting again on the **same** page offsets each copy slightly so they don't stack; pasting onto a **smaller** page nudges the whole group back inside the sheet without breaking it apart.\n\n**Copying into another PDF works too** — copy a text box (or an arrow, revision cloud, drawing) here and press `Ctrl+V` in **another tab** or **another window**; position, font size and colour come across unchanged. If the destination tab is not in **Chỉnh sửa** yet, it is switched on for you. **Images** are the one exception: they paste only within the same tab.\n\n**The clipboard survives Xong** — copy, apply, and you can still paste. If the OS clipboard holds an **image** (copied from another app), `Ctrl+V` still pastes that image onto the page as before; the two paths never get confused."
           ),
         },
 

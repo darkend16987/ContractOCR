@@ -1,6 +1,6 @@
 {
   "name": "nabu-pdf-desktop",
-  "version": "0.2.66",
+  "version": "0.2.67",
   "private": true,
   "description": "Nabu PDF — desktop PDF suite (Electron + Python sidecar)",
   "author": "darkend16987 <hoangnam.mng@gmail.com>",
@@ -24,6 +24,7 @@
     "test:geom": "node test/viewer-geom.test.js",
     "test:managed": "node test/managed-image.test.js",
     "test:text": "node test/annot-text.test.js",
+    "test:clip": "node test/annot-clip.test.js",
     "test:cloud": "node test/annot-geom.test.js",
     "test:rotate": "node test/annot-rotate.test.js",
     "test:defaults": "node test/annot-defaults.test.js",

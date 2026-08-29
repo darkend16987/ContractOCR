@@ -271,10 +271,17 @@ của Word. Mở bằng `Ctrl+H` hoặc nút **⇄** ở cuối ô *Tìm trong t
 >   trí cũ** (tiện để lặp lại một khoanh mây hay một hộp chữ ở cùng chỗ trên nhiều trang); dán lại
 >   trên **cùng** trang thì mỗi bản lệch xuống một chút cho khỏi đè nhau. Dán vào trang **nhỏ hơn**
 >   thì cả nhóm tự lùi vào trong trang, **không** bị rời ra.
+> - **Sang hẳn file PDF khác (từ v0.2.67):** copy ở file này rồi **Ctrl+V** ở **tab khác** hoặc
+>   **cửa sổ khác** — kể cả tab bạn mới mở **sau** khi đã copy. Bản dán giữ nguyên vị trí, cỡ chữ,
+>   phông, màu và nền; dán vào file có khổ giấy nhỏ hơn thì cả nhóm tự lùi vào trong tờ. Tab đích
+>   chưa bật **Chỉnh sửa** thì app tự bật giúp. Riêng **ảnh** chỉ dán được **trong cùng một tab**
+>   (ảnh nặng hàng megabyte, chuyển qua lại giữa các tab sẽ làm app ì) — copy một nhóm có lẫn ảnh
+>   thì app báo rõ bao nhiêu mục ở lại.
 > - **Clipboard không mất khi bấm "Áp dụng"**: sao chép → Áp dụng → vẫn dán được. Lưu ý ngược lại:
->   sau khi Áp dụng thì **khoanh mây, khoanh vùng, vẽ tay, ✓/✗ đã dán chết** thành hình trên trang nên
->   **không chọn lại được để copy** — hãy **copy trước khi Áp dụng**. Hộp văn bản, ghi chú, mũi tên và
->   ảnh thì vẫn là đối tượng sống nên copy được cả sau khi Lưu và mở lại.
+>   sau khi Áp dụng thì **tô sáng, ✓/✗, ô che và đoạn đo đã dán chết** thành hình trên trang nên
+>   **không chọn lại được để copy** — hãy **copy trước khi Áp dụng**. Hộp văn bản, ghi chú, mũi tên,
+>   ảnh, **chữ nhật, elip, khoanh mây và nét vẽ tay** (từ v0.2.61/v0.2.63) thì vẫn là đối tượng sống
+>   nên copy được cả sau khi Lưu và mở lại.
 > - Nếu clipboard hệ điều hành đang có **ảnh** (copy từ app khác) thì Ctrl+V vẫn là **dán ảnh vào
 >   trang** như trước — hai đường không lẫn nhau.
 

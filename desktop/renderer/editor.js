@@ -1209,19 +1209,74 @@
   // workflow asked for ("copy … và paste ở 1 trang khác, ngay cả khi đã áp dụng
   // xong"). Kept as its own module-level binding, it survives a bake, a discard, and
   // leaving/re-entering Chỉnh sửa, for as long as the renderer lives. It is NOT
-  // persisted to disk and NOT shared between tabs — each tab is its own renderer
-  // process (§2), so every tab has its own clipboard. That is a limitation, not an
-  // oversight: sharing it would mean putting annotation payloads through IPC.
+  // persisted to disk.
   //
-  // WHAT IT CANNOT DO, so nobody goes looking for the bug: only kinds that round-trip
-  // (text / note / arrow / image — MANAGED_KINDS) come back as live objects after a
-  // save. Clouds, boxes, ellipses, freehand and ✓/✗ are FLATTENED TO PIXELS when baked
-  // (BI-42), so once applied there is no object left to select and copy. Copy them
-  // BEFORE applying — the clip outlives the bake, which is what makes that sequence
-  // work. Making those kinds re-selectable after a save is a different feature with a
-  // known price (BI-37/38).
+  // SHARED ACROSS TABS AND WINDOWS since v0.2.67, which is what makes copying an
+  // object from one DOCUMENT into another work. Each tab is its own renderer
+  // process (§2), so the sharing goes through main (`annots:clip-write`). The rule
+  // that shape has to obey is BI-77: main only ever PUSHES into this binding, and
+  // `clip` stays the synchronous source of truth. Every paste-time reader below —
+  // the `paste` listener's guard, the "Dán" button, pasteClip itself — keeps
+  // reading it synchronously and needed no change. Do NOT turn any of them into an
+  // await on main: the `paste` hand-off to capture.js's image paste is decided by
+  // whether we call preventDefault() during the event, and an awaited answer
+  // arrives after that decision is already gone.
+  //
+  // Cross-tab carries annotation JSON only — images are left behind on purpose
+  // (see SHARE_EXCLUDED). They still copy WITHIN a tab exactly as before.
+  //
+  // WHAT IT CANNOT DO, so nobody goes looking for the bug: only kinds that
+  // round-trip (MANAGED_KINDS) come back as live objects after a save. As of
+  // v0.2.63 that is text / note / image / arrow / box / ellipse / cloud / cloudpen
+  // / draw; ✓/✗, highlight, underline, strike-through and dimension lines are still
+  // FLATTENED TO PIXELS when baked (BI-42), so once applied there is no object left
+  // to select and copy. Copy those BEFORE applying — the clip outlives the bake,
+  // which is what makes that sequence work.
   let clip = null; // { items: [<annot minus id>], page: <source page>, dropped: {page: n} }
   const PASTE_STEP = 12; // pt of cascade per repeat paste, so copies don't hide
+
+  // Kinds held back from the cross-tab mirror. `image` is the whole list and the
+  // reason is size, not correctness: a re-opened photo is a multi-megabyte base64
+  // string (see edSnapshot), and pushing that through IPC on every Ctrl+C is the
+  // cost the per-tab-clipboard note was right to refuse. Everything else in
+  // MANAGED_KINDS is a few hundred bytes of JSON.
+  const SHARE_EXCLUDED = new Set(["image"]);
+  const isShareableKind = (k) => isManagedKind(k) && !SHARE_EXCLUDED.has(k);
+
+  // Mirror `clip` to the other tabs. Fire-and-forget BY DESIGN — see BI-77: the
+  // copy gesture calls preventDefault() synchronously, so this must not be awaited,
+  // and a mirror that fails costs cross-tab paste only, never the local one.
+  function shareClip(items, srcPage) {
+    try {
+      if (!window.desktop || !window.desktop.writeAnnotClip) return;
+      const send = items.filter((a) => isShareableKind(a.kind));
+      // Sending [] deliberately CLEARS the shared clip (an image-only copy): the
+      // alternative is another tab silently pasting a clip from two gestures ago.
+      window.desktop.writeAnnotClip({ items: send, srcPage }).catch(() => {});
+    } catch (_) {
+      /* cross-tab paste is a bonus; never let it break the local copy */
+    }
+  }
+
+  // Take on the clip another tab just put up. This is the ONLY writer of `clip`
+  // besides copySelected, and it exists so that no reader has to learn about IPC.
+  //
+  // `page: -1` is load-bearing: pasteClip offsets by PASTE_STEP when the target
+  // page IS the source page, so a copy does not land perfectly hidden under its
+  // original. A clip from ANOTHER document has no original on this page, so page 0
+  // of document B must not be mistaken for page 0 of document A — which a plain
+  // srcPage would do, nudging every cross-document paste 12pt off the spot the user
+  // copied it from. -1 is never a page index, so the "same page" branch is dead
+  // here and the paste lands exactly where it came from.
+  function adoptSharedClip(payload) {
+    const items = payload && Array.isArray(payload.items) ? payload.items : null;
+    clip = items && items.length ? { items, page: -1, dropped: {} } : null;
+    try {
+      syncCtlVisibility(ed.tool); // lights (or greys) "Dán" in this tab
+    } catch (_) {
+      /* palette not built yet — the next syncCtlVisibility picks it up */
+    }
+  }
 
   // Deep copy via JSON, which is sound here BECAUSE every field an annotation holds is
   // a JSON primitive: numbers, strings (including an image's `dataUrl`), booleans, and
@@ -1244,15 +1299,51 @@
       delete a._managed; // "came back from /NabuData" is about the ORIGINAL, not the copy
       return a;
     });
-    clip = { items, page: findAnnot(ed.sel).page, dropped: {} };
+    const srcPage = findAnnot(ed.sel).page;
+    clip = { items, page: srcPage, dropped: {} };
+    shareClip(items, srcPage);
+    // Say so when part of the selection will not cross tabs, rather than letting the
+    // user find out by pasting in the other document and counting.
+    const held = items.filter((a) => !isShareableKind(a.kind)).length;
+    const where = held
+      ? held === items.length
+        ? " Ảnh chỉ dán được trong tab này."
+        : ` ${held} ảnh chỉ dán được trong tab này.`
+      : "";
     toast(
-      items.length > 1
-        ? `Đã sao chép ${items.length} mục. Sang trang khác rồi Ctrl+V để dán.`
-        : `Đã sao chép 1 mục (${items[0].kind}). Sang trang khác rồi Ctrl+V để dán.`,
+      (items.length > 1
+        ? `Đã sao chép ${items.length} mục. Sang trang khác hoặc tab khác rồi Ctrl+V để dán.`
+        : `Đã sao chép 1 mục (${items[0].kind}). Sang trang khác hoặc tab khác rồi Ctrl+V để dán.`) +
+        where,
       ""
     );
     syncCtlVisibility(ed.tool); // lights up "Dán"
     return true;
+  }
+
+  // Paste, turning Chỉnh sửa on first if it is off. Every user-facing paste route
+  // goes through here; pasteClip stays the pure "the editor is open, drop it in"
+  // step so its guard keeps meaning what it says.
+  //
+  // Why entering is safe to await HERE and nowhere else (BI-77): the caller has
+  // already decided the gesture is ours — the `paste` listener called
+  // preventDefault() synchronously off `clip` before reaching this line. What is
+  // awaited is the WORK, never the DECISION.
+  //
+  // Entering is not free (importManaged + a repaint), so it is skipped whenever the
+  // editor is already open — i.e. every paste except the first in a fresh tab.
+  async function requestPaste(pageIndex) {
+    if (!clip || !clip.items.length) return false;
+    if (!state.numPages) return false;
+    if (!ed.active) {
+      await enter();
+      toast("Đã bật Chỉnh sửa để dán.", "");
+      // enter() awaits importManaged, during which the user could have pressed
+      // Escape or the clip could have been cleared by another tab. Re-check rather
+      // than paste into an editor that is no longer open.
+      if (!ed.active || !clip || !clip.items.length) return false;
+    }
+    return pasteClip(pageIndex);
   }
 
   // Drop the clipboard onto `pageIndex` (default: the page being read). Returns true if
@@ -3850,8 +3941,8 @@
   $("ed-copy").onclick = () => {
     if (!copySelected()) toast("Chọn một mục trên trang trước khi sao chép.", "bad");
   };
-  $("ed-paste").onclick = () => {
-    if (!pasteClip()) toast("Chưa có mục nào được sao chép.", "bad");
+  $("ed-paste").onclick = async () => {
+    if (!(await requestPaste())) toast("Chưa có mục nào được sao chép.", "bad");
   };
 
   // Ctrl+C / Ctrl+V for the object clipboard, ridden on the `copy` / `paste` DOM
@@ -3926,7 +4017,7 @@
           enabled: n > 0,
           onClick: copySelected,
         },
-        { label: tr("Dán vào trang này"), enabled: hasClip, onClick: () => pasteClip(i) },
+        { label: tr("Dán vào trang này"), enabled: hasClip, onClick: () => requestPaste(i) },
         { separator: true },
         {
           label: n > 1 ? tr("Xoá mục") + ` (${n} mục)` : tr("Xoá mục"),
@@ -3942,16 +4033,39 @@
   document.addEventListener(
     "paste",
     (e) => {
-      if (!ed.active || !clip) return;
+      // `ed.active` is deliberately NOT required: a clip copied in another tab
+      // should paste into this one without making the user find "Chỉnh sửa" first
+      // (requestPaste turns it on). Same shape beginImagePaste already uses for an
+      // OS-clipboard image. `clip` is still read SYNCHRONOUSLY — BI-77.
+      if (!clip) return;
       if (isTypingTarget(e.target)) return; // Ctrl+V inside a textarea is plain text
       const items = (e.clipboardData && e.clipboardData.items) || [];
       for (const it of items) if (it.type && it.type.indexOf("image/") === 0) return; // capture.js's
       e.preventDefault();
       e.stopPropagation(); // we own this gesture now — don't let capture.js re-handle it
-      pasteClip();
+      requestPaste();
     },
     true
   );
+
+  // Cross-tab clipboard, pull side (the push side is in copySelected). Both calls
+  // are startup/notification paths — neither runs while a paste is being decided,
+  // which is the whole of BI-77.
+  if (window.desktop && window.desktop.onAnnotClipChanged) {
+    window.desktop.onAnnotClipChanged(adoptSharedClip);
+  }
+  if (window.desktop && window.desktop.readAnnotClip) {
+    // Covers a tab that OPENED AFTER the copy and so never saw the broadcast —
+    // without this, "copy in A, open B, paste" is the one ordering that fails.
+    window.desktop
+      .readAnnotClip()
+      .then((payload) => {
+        // A copy made in THIS tab while the read was in flight is newer; keep it.
+        if (!clip && payload) adoptSharedClip(payload);
+      })
+      .catch(() => {});
+  }
+
   $("ed-watermark").onclick = openWatermark;
   $("ed-form").onclick = openForm;
   $("ed-img-pages").onclick = openImgPages;

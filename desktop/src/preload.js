@@ -203,6 +203,21 @@ contextBridge.exposeInMainWorld("desktop", {
   // Read an image off the OS clipboard as a PNG data URL, or null if none.
   readClipboardImage: () => ipcRenderer.invoke("clipboard:read-image"),
 
+  // --- object clipboard (annotations, shared across tabs and windows) ---
+  // Mirror this tab's object clip so OTHER tabs can paste it. The caller does
+  // NOT await: the copy gesture has to stay synchronous (BI-77), and a failed
+  // mirror only costs cross-tab paste, never the local one.
+  writeAnnotClip: (payload) => ipcRenderer.invoke("annots:clip-write", payload),
+  // The shared clip as it stands, for a tab that loaded after the copy. Startup
+  // path only — never called while handling a paste.
+  readAnnotClip: () => ipcRenderer.invoke("annots:clip-read"),
+  // Another tab copied (or cleared). Payload is { items, srcPage } or null.
+  onAnnotClipChanged: (cb) => {
+    const handler = (_e, payload) => cb(payload);
+    ipcRenderer.on("annots:clip-changed", handler);
+    return () => ipcRenderer.removeListener("annots:clip-changed", handler);
+  },
+
   // The real filesystem path of a dropped File, or null.
   //
   // `webUtils.getPathForFile()` is the supported way to do this from Electron 32 on;
