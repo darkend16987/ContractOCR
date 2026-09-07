@@ -85,11 +85,23 @@ function extractConst(file, name) {
 // it. Asserted, not trusted: changing the base is a deliberate UX decision and must
 // fail this grid rather than quietly rewrite what "one notch" means.
 const ZOOM_WHEEL_BASE = extractConst("renderer/app.js", "ZOOM_WHEEL_BASE");
+// Same deal for the free-zoom range, the button step and the raster budget: they are
+// LIFTED, never restated, so the cases below cannot keep passing while describing a
+// range the app no longer has (which is exactly what the old hard-coded `3 / 0.4`
+// case did before v0.2.66).
+const ZOOM_MIN = extractConst("renderer/app.js", "ZOOM_MIN");
+const ZOOM_MAX = extractConst("renderer/app.js", "ZOOM_MAX");
+const ZOOM_STEP_BASE = extractConst("renderer/app.js", "ZOOM_STEP_BASE");
+// Declared before viewRasterDpr is extracted, because the lifted function closes over
+// both of them by bare name (see the ZOOM_WHEEL_BASE note above).
+const MAX_VIEW_MEGAPIXELS = extractConst("renderer/app.js", "MAX_VIEW_MEGAPIXELS");
+const MAX_VIEW_SIDE_PX = extractConst("renderer/app.js", "MAX_VIEW_SIDE_PX");
 
 // Plain require since v0.2.48 — annot-geom.js is DOM-free (see the header).
 const { resizeRect } = require("../renderer/annot-geom.js");
 const nearestScrollDelta = extractFn("renderer/app.js", "nearestScrollDelta");
 const wheelZoomFactor = extractFn("renderer/app.js", "wheelZoomFactor");
+const viewRasterDpr = extractFn("renderer/app.js", "viewRasterDpr");
 
 // ---- resizeRect: which corner stays pinned -------------------------------
 // Box at (10,20) sized 100×50. The corner OPPOSITE the grip must not move.
@@ -184,8 +196,113 @@ check("a small pinch delta survives 3-decimal rounding at 100%", Math.round(1 * 
 near("huge positive delta clamps at 3 notches down", wheelZoomFactor(99999), Math.pow(1.1, -3), 1e-12);
 near("huge negative delta clamps at 3 notches up", wheelZoomFactor(-99999), Math.pow(1.1, 3), 1e-12);
 check("garbage delta is treated as no movement", wheelZoomFactor(undefined), 1);
-check("even clamped, one notch can't exceed the 40–300% span in a single step",
-  Math.pow(1.1, 3) < 3 / 0.4, true);
+check("even clamped, one notch can't exceed the whole zoom span in a single step",
+  Math.pow(ZOOM_WHEEL_BASE, 3) < ZOOM_MAX / ZOOM_MIN, true);
+
+// ---- the free-zoom range and the ± button step ---------------------------
+
+check("the free-zoom range is 20–500%", [ZOOM_MIN, ZOOM_MAX], [0.2, 5]);
+// The fit commands have their own, lower floor on purpose (a whole A0 does not fit
+// above 20%). If the free floor ever dropped to meet it, that distinction is gone.
+check("the fit floor stays below the free-zoom floor",
+  extractConst("renderer/app.js", "FIT_MIN_SCALE") < ZOOM_MIN, true);
+check("the ± step base is 1.25 per press", ZOOM_STEP_BASE, 1.25);
+// zoomStep divides to zoom out rather than multiplying by (2 - base), so ++−− is a
+// round trip. A fixed additive step is what this replaced: on a 20–500% range it was
+// +100% relative off the floor and +4% near the ceiling.
+near("one press out exactly undoes one press in",
+  (1 * ZOOM_STEP_BASE) / ZOOM_STEP_BASE, 1, 1e-12);
+check("one press moves more than one wheel notch", ZOOM_STEP_BASE > ZOOM_WHEEL_BASE, true);
+check("one press can't cross the whole range", ZOOM_STEP_BASE < ZOOM_MAX / ZOOM_MIN, true);
+
+// ---- viewRasterDpr: the page bitmap can never reach Chromium's cliff -----
+//
+// Measured in Chromium 148 (docs/RESEARCH-2026-09-07-zoom-range-20-500.md §3.2): past
+// a canvas AREA of ~268 MP Chromium accepts canvas.width, hands back a 2d context,
+// resolves page.render — and paints NOTHING, with no exception for renderPageCanvas's
+// try/catch to catch. The page goes blank and commitScale then thinks it is crisp.
+// A zoom ceiling alone cannot avoid that (a big enough sheet blows the cap at ANY
+// ceiling), so the bitmap is capped instead. These cases are the proof of that claim.
+const CHROMIUM_MAX_CANVAS_MP = 268; // measured 267.96 (= 2^28 px); do not raise
+const CHROMIUM_MAX_TEXTURE_PX = 16384; // Skia; past it the canvas falls off the GPU
+
+// {name, w, h} in PDF points (== CSS px at scale 1), page rotation already applied.
+const PAPERS = [
+  { name: "A4", w: 595, h: 842 },
+  { name: "A3", w: 842, h: 1191 },
+  { name: "A0", w: 2384, h: 3370 }, // the large-format case that actually breaks
+  { name: "strip 1:6", w: 200, h: 1200 }, // extreme aspect: the SIDE cap must bind
+];
+// dpr comes only from the Windows display scale (no setZoomFactor anywhere in the
+// app), so these four are the real spread — 2.5 is a 4K laptop at 250%.
+for (const paper of PAPERS) {
+  for (const dpr of [1, 1.5, 2, 2.5]) {
+    for (const zoom of [ZOOM_MIN, 1, 3, 4, ZOOM_MAX]) {
+      const cw = paper.w * zoom;
+      const ch = paper.h * zoom;
+      const rd = viewRasterDpr(cw, ch, dpr);
+      const tag = `${paper.name} at ${Math.round(zoom * 100)}% dpr ${dpr}`;
+      const mp = (cw * rd * ch * rd) / 1e6;
+      check(`${tag}: bitmap within the ${MAX_VIEW_MEGAPIXELS} MP budget`,
+        mp <= MAX_VIEW_MEGAPIXELS + 1e-6, true);
+      check(`${tag}: bitmap far below Chromium's blank-canvas cliff`,
+        mp < CHROMIUM_MAX_CANVAS_MP, true);
+      check(`${tag}: long side stays on the GPU path`,
+        Math.max(cw, ch) * rd <= MAX_VIEW_SIDE_PX
+          && MAX_VIEW_SIDE_PX < CHROMIUM_MAX_TEXTURE_PX, true);
+      // Rasterising ABOVE the display's own resolution buys nothing and costs the
+      // square of it, so the real dpr is always the ceiling.
+      check(`${tag}: never upscales past the real dpr`, rd <= dpr, true);
+    }
+  }
+}
+
+// The budget must be invisible on everyday pages — if it started easing A4 down at
+// ordinary zoom levels, this whole change would be a sharpness regression.
+for (const zoom of [ZOOM_MIN, 0.4, 1, 2, 3, ZOOM_MAX]) {
+  check(`A4 at ${Math.round(zoom * 100)}% on a 150% display renders at full dpr`,
+    viewRasterDpr(595 * zoom, 842 * zoom, 1.5), 1.5);
+}
+// …and it must actually bite where the measurements say it has to.
+check("A0 at 500% dpr 1.5 is eased down (uncapped: 452 MP → blank page)",
+  viewRasterDpr(2384 * 5, 3370 * 5, 1.5) < 1.5, true);
+check("A3 at 500% dpr 2.5 is eased down (uncapped: 157 MP ≈ 598 MB)",
+  viewRasterDpr(842 * 5, 1191 * 5, 2.5) < 2.5, true);
+// On a 1:6 strip the area budget alone would allow a 13856 px side, so the side cap
+// is what keeps it off the software path. This case is why there are TWO limits.
+check("on an extreme aspect ratio the SIDE cap is the binding one",
+  Math.round(Math.max(200, 1200) * 5 * viewRasterDpr(200 * 5, 1200 * 5, 2.5)),
+  MAX_VIEW_SIDE_PX);
+check("a degenerate box does not produce NaN", viewRasterDpr(0, 0, 1.5), 1.5);
+
+// ---- the UI must advertise the range the code actually enforces ----------
+//
+// The range is spelled out in three user-visible places, and i18n's key IS the
+// Vietnamese markup string — so a half-done edit does not error, it just quietly
+// serves Vietnamese to the English UI (same failure mode as the compress-dialog keys
+// below). Derive the expected text from the constants rather than repeating it.
+const RANGE = `${Math.round(ZOOM_MIN * 100)}–${Math.round(ZOOM_MAX * 100)}`;
+const readRenderer = (f) => fs.readFileSync(path.join(__dirname, "..", "renderer", f), "utf8");
+const zoomHtmlSrc = readRenderer("index.html");
+const i18nZoomSrc = readRenderer("i18n.js");
+const helpSrc = readRenderer("help.js");
+const zoomTitle = (/<input id="zoom-input"[^>]*title="([^"]+)"/.exec(zoomHtmlSrc) || [])[1];
+check("the zoom box has a title", typeof zoomTitle, "string");
+check(`the zoom box advertises ${RANGE}`, !!zoomTitle && zoomTitle.includes("(" + RANGE + ")"), true);
+// Not "i18n mentions the range" — the KEY has to be that title, character for character.
+check("i18n has the zoom box title verbatim as a key",
+  i18nZoomSrc.includes('"' + zoomTitle + '":'), true);
+// The English side of that pair has to carry the same numbers — a translated tooltip
+// still quoting 40–300 is worse than a missing one, because it looks authoritative.
+const i18nZoomLine = (i18nZoomSrc.split("\n").find((l) => l.includes('"' + zoomTitle + '":')) || "");
+check(`the English zoom box title advertises ${RANGE}`,
+  i18nZoomLine.slice(i18nZoomLine.indexOf('":') + 2).includes("(" + RANGE + ")"), true);
+check(`Trợ giúp advertises ${RANGE} in both languages`,
+  helpSrc.split("(" + RANGE + ")").length - 1 >= 2, true);
+// A stale copy of the OLD range anywhere in those three files means one was missed.
+for (const [name, src] of [["index.html", zoomHtmlSrc], ["i18n.js", i18nZoomSrc], ["help.js", helpSrc]]) {
+  check(`${name} has no stale 40–300 left`, src.includes("40–300"), false);
+}
 
 // ---- drop-gap arithmetic for reordering pages (v0.2.52) -------------------
 //

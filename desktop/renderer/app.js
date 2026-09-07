@@ -768,6 +768,47 @@ let keepObserver = null;
 // scroll back and forth across the edge doesn't thrash render↔free.
 const KEEP_MARGIN_PX = 1500;
 
+// ---- raster budget for a page bitmap (BI-78) -----------------------------
+//
+// A page's bitmap is `CSS box × devicePixelRatio`, so it grows with the SQUARE of
+// the zoom level. Measured in Chromium 148 with the pdf.js we ship
+// (docs/RESEARCH-2026-09-07-zoom-range-20-500.md §3):
+//   • A3 at 500%, dpr 1.5 → 56 MP = 215 MB for ONE page;
+//   • A0 at 300%, dpr 1.5 → 163 MP = 621 MB — i.e. already true at the OLD 300%
+//     ceiling, so this budget fixes a hole that predates the wider zoom range;
+//   • past a canvas AREA of ~268 MP (2^28) Chromium accepts canvas.width, returns a
+//     2d context, resolves page.render in ~7 ms — and paints NOTHING. No exception,
+//     so the try/catch below cannot see it: the page goes blank, m.paintScale is set
+//     to the new scale, and commitScale then considers it "already crisp" forever;
+//   • past a SIDE of 16384 px (Skia's texture limit) the canvas falls off the GPU
+//     path: the same render goes from 36 ms to 305 ms.
+// So the fix cannot be "pick a zoom ceiling that happens to fit" — a big enough sheet
+// blows the area cap at any ceiling. Instead we cap the bitmap and keep the CSS box:
+// the page still lays out at the full zoom (geometry, text layer, annotations, scroll
+// all unchanged — BI-36), only its pixels are coarser. Same trick, same shape and the
+// same reasoning as printScaleFor() on the print path.
+//
+// 32 MP ≈ 122 MB/page. Nothing under the budget is touched, so every everyday page
+// (A4 at 500%, dpr 1.5 = 28 MP) still rasterises at the full device resolution; only
+// large-format sheets and high-dpr extremes are eased down — and they are eased to
+// something FAR sharper than what the 268 MP cliff was silently giving them.
+const MAX_VIEW_MEGAPIXELS = 32;
+// Second guard, for extreme aspect ratios that stay under the area budget: keep the
+// long side clear of Skia's 16384 px texture limit with room to spare.
+const MAX_VIEW_SIDE_PX = 12000;
+
+// Device-pixel ratio to rasterise a page whose CSS box is cw×ch at: the smallest of
+// the real dpr, the area budget and the side cap. NEVER upscales past the real dpr —
+// that would cost memory for no sharpness.
+function viewRasterDpr(cw, ch, dpr) {
+  if (!(cw > 0) || !(ch > 0)) return dpr;
+  return Math.min(
+    dpr,
+    Math.sqrt((MAX_VIEW_MEGAPIXELS * 1e6) / (cw * ch)),
+    MAX_VIEW_SIDE_PX / Math.max(cw, ch)
+  );
+}
+
 async function renderViewer() {
   const v = $("viewer");
   // Every page below is built at the current scale, so a zoom repaint still queued
@@ -859,8 +900,13 @@ async function renderPageCanvas(i) {
   m.wrap.dataset.rendered = "1";
   m.rendering = true; // guards against a concurrent free() while rasterising
   const { page, vp, cw, ch, canvas, dpr } = m;
-  const pw = Math.floor(cw * dpr);
-  const ph = Math.floor(ch * dpr);
+  // Device resolution to rasterise at — `dpr` on every everyday page, eased down
+  // only when the CSS box has grown big enough that dpr× of it would be an unsafe
+  // bitmap (see viewRasterDpr / BI-78). The CSS box itself is NOT touched, so the
+  // page keeps its exact geometry: only the bitmap behind it is coarser.
+  const rd = viewRasterDpr(cw, ch, dpr);
+  const pw = Math.floor(cw * rd);
+  const ph = Math.floor(ch * rd);
   // While the editor is open, the round-trip text boxes / notes are lifted into
   // the live overlay, so hide their baked PDF appearance here (and let the overlay
   // own the note markers) to avoid drawing them twice.
@@ -877,7 +923,7 @@ async function renderPageCanvas(i) {
     await page.render({
       canvasContext: off.getContext("2d"),
       viewport: vp,
-      transform: dpr !== 1 ? [dpr, 0, 0, dpr, 0, 0] : undefined,
+      transform: rd !== 1 ? [rd, 0, 0, rd, 0, 0] : undefined,
       annotationMode: editing ? pdfjsLib.AnnotationMode.DISABLE : pdfjsLib.AnnotationMode.ENABLE,
     }).promise;
     canvas.width = pw;
@@ -2725,15 +2771,23 @@ function toggleSidebar(collapse) {
   if (exp) exp.hidden = !c;
 }
 
-// Floor for the "fit …" commands only. Free zoom keeps its 40% floor (typing 10%
+// Floor for the "fit …" commands only. Free zoom keeps its 20% floor (typing 2%
 // by accident should not be possible), but a fit is an explicit request for a
-// computed scale: on A0/A1 drawings the whole page simply does not fit above 40%,
+// computed scale: on A0/A1 drawings the whole page simply does not fit above 20%,
 // and clamping there silently failed to do what the button says.
 const FIT_MIN_SCALE = 0.08;
 
-// Free-zoom floor / ceiling (the zoom box advertises 40–300%).
-const ZOOM_MIN = 0.4;
-const ZOOM_MAX = 3;
+// Free-zoom floor / ceiling (the zoom box advertises 20–500%). Widened from 40–300%
+// at v0.2.66: 20% because the fit commands had been computing scales below it for a
+// long time (so the low end was already proven, and one wheel notch up from a 8% fit
+// no longer teleports to 40%), and 500% because reading fine print / stamps on a scan
+// wants it. The ceiling is only safe BECAUSE viewRasterDpr caps the bitmap — without
+// it a large sheet at 400%+ silently paints a blank page (BI-78). If you raise these,
+// re-read that note first; the numbers are measured, not chosen.
+// The three user-visible places that advertise the range (index.html title, its i18n
+// key + value, help.js) are checked against these two constants by `test:geom`.
+const ZOOM_MIN = 0.2;
+const ZOOM_MAX = 5;
 
 // ---- how a zoom is applied (two halves) ----------------------------------
 //
@@ -2878,8 +2932,15 @@ async function zoomTo(next, anchor, opts) {
   scheduleScaleCommit();
 }
 
-async function zoom(delta) {
-  await zoomTo(state.scale + delta);
+// One press of the ± buttons / Ctrl+ / Ctrl−. MULTIPLICATIVE for exactly the reason
+// the wheel is (see wheelZoomFactor): the fixed ±0.2 it replaced was a +100% jump off
+// the 20% floor and a +4% nudge near the 500% ceiling — the wider the range, the worse
+// that gets. 1.25 ≈ 2.4 wheel notches: visibly more than a notch, comfortably less
+// than a fit. `dir` > 0 zooms in, < 0 out; dividing (not multiplying by 0.8) makes in
+// and out exact inverses, so ++−− lands back where it started.
+const ZOOM_STEP_BASE = 1.25;
+async function zoomStep(dir) {
+  await zoomTo(dir > 0 ? state.scale * ZOOM_STEP_BASE : state.scale / ZOOM_STEP_BASE);
 }
 
 // Reset zoom to 100% (Ctrl+0).
@@ -3001,7 +3062,7 @@ function applyZoomInput() {
     return;
   }
   // Already showing the current scale (the box was focused and left untouched):
-  // do nothing. Without this, a "fit" that landed below the typed floor of 40%
+  // do nothing. Without this, a "fit" that landed below the typed floor of 20%
   // would be snapped back up by a stray blur.
   if (n === Math.round(state.scale * 100)) return;
   zoomTo(n / 100);
@@ -4643,8 +4704,8 @@ $("btn-tb-rotate-r").onclick = () => rotateSelected(90);
 $("btn-tb-blank").onclick = addBlankPage;
 $("btn-tb-extract").onclick = extractSelected;
 $("btn-tb-split").onclick = openSplit;
-$("btn-zoom-in").onclick = () => zoom(0.2);
-$("btn-zoom-out").onclick = () => zoom(-0.2);
+$("btn-zoom-in").onclick = () => zoomStep(1);
+$("btn-zoom-out").onclick = () => zoomStep(-1);
 $("btn-fit-width").onclick = fitWidth;
 $("btn-fit-height").onclick = fitHeight;
 $("btn-fit-page").onclick = fitPage;
@@ -5121,10 +5182,10 @@ window.addEventListener("keydown", (e) => {
       overlayEd ? window.Editor.redo() : redo();
     } else if (e.key === "=" || e.key === "+") {
       e.preventDefault();
-      zoom(0.2);
+      zoomStep(1);
     } else if (e.key === "-" || e.key === "_") {
       e.preventDefault();
-      zoom(-0.2);
+      zoomStep(-1);
     } else if (e.key === "0") {
       e.preventDefault();
       zoomReset();
@@ -5249,8 +5310,8 @@ window.desktop.onMenuCommand((cmd) => {
     merge: mergeFiles,
     insert: insertFile,
     extract: extractSelected,
-    zoomIn: () => zoom(0.2),
-    zoomOut: () => zoom(-0.2),
+    zoomIn: () => zoomStep(1),
+    zoomOut: () => zoomStep(-1),
     zoomReset,
     presentation: () => togglePresentation(),
     // Trợ giúp → Hướng dẫn sử dụng (F1). Resolved at call time, so help.js loading

@@ -27,7 +27,7 @@ tài liệu này chỉ có giá trị nếu được cập nhật.
 | `desktop/renderer/pan.js` | ~380 | Bàn tay/pan. Rủi ro **trung bình**: nó giành sự kiện chuột **trên cùng phần tử** với `editor.js`/`capture.js`. Nửa logic có lưới `npm run test:pan`; nửa DOM thì không → xem BI-30/31. |
 | `desktop/renderer/find-replace.js` | ~700 | Tìm & Thay thế. Rủi ro **trung bình** nhưng hậu quả **cao và im lặng**: nó **ghi vào chữ gốc** của tài liệu hàng loạt. Nửa số học có lưới `npm run test:find`; nửa DOM chỉ có **assertion trên source** trong cùng lưới đó → xem BI-50, BI-51. |
 | `desktop/renderer/wire.js` | ~130 | Bộ mã hoá payload nhị phân. Rủi ro **thấp** nhờ lưới `npm run test:wire`, nhưng sai ở đây **im lặng**: request vẫn đúng cú pháp, chỉ là base64 hỏng → xem BI-24. |
-| `desktop/renderer/app.js` — khối zoom | ~130 dòng | `applyScaleToDom`/`commitScale` đụng CSS box của **mọi** trang + 4 lớp overlay. Sai là zoom mờ mãi hoặc chú thích lệch. Nửa số học có lưới `npm run test:geom` → xem BI-36. |
+| `desktop/renderer/app.js` — khối zoom | ~170 dòng | `applyScaleToDom`/`commitScale` đụng CSS box của **mọi** trang + 4 lớp overlay. Sai là zoom mờ mãi hoặc chú thích lệch. Từ v0.2.66 còn giữ **hạn mức raster** (`viewRasterDpr`) — nới nó ra là **trang trắng im lặng** trên giấy khổ lớn. Nửa số học có lưới `npm run test:geom` → xem BI-36, **BI-78**. |
 | ~~`editor.js` — ảnh round-trip~~ → `managed-codec.js` (v0.2.49) | ~180 dòng | Ghi/đọc/giải phóng object PDF riêng. Sai ở đây **mất ảnh của người dùng** hoặc phình file âm thầm. Có lưới `npm run test:managed` → xem BI-37, BI-38. |
 | `desktop/renderer/app.css` — khối `@media print` + `app.js` `buildPrintPages` | ~50 dòng | Bố cục **tờ giấy**. Rủi ro **cao và im lặng**: sai ở đây không có lỗi, không có cảnh báo — chỉ là máy in nhả gấp đôi số tờ, hoặc mất phần dưới trang, và **chỉ trên khổ giấy mà người viết code không dùng** (A3/Letter). Nửa số học có lưới `npm run test:print`; nửa CSS chỉ probe `printToPDF` **đếm tờ** mới thấy → xem BI-43, BI-44. |
 | `desktop/src/prefs.js` | ~80 | Tuỳ chọn phía main. Rủi ro thấp; nằm trong lưới `npm run test:tabs`. |
@@ -1979,6 +1979,48 @@ _Ghi 2026-08-13. **Đo được, không suy luận.**_
 
 ---
 
+### BI-78 · Bitmap trang phải có **hạn mức pixel** — quá 268 MP Chromium trả về **trang trắng, không lỗi**
+- `app.js`: `MAX_VIEW_MEGAPIXELS` / `MAX_VIEW_SIDE_PX` / `viewRasterDpr` (cạnh `KEEP_MARGIN_PX`)
+  và **ba dòng** dùng nó trong `renderPageCanvas` (`rd`, `pw`/`ph`, `transform`).
+- **Số đo** (Chromium 148, đúng `vendor/pdf.min.js` đang ship — chi tiết + cách chạy lại probe
+  ở `docs/RESEARCH-2026-09-07-zoom-range-20-500.md`):
+  - vượt **area ≈ 268 MP** (`2^28`, đo được 267,96): Chromium **vẫn nhận** `canvas.width`,
+    **vẫn** trả về `2d context`, `page.render` **vẫn resolve** (~7 ms) và **không ném lỗi** —
+    nhưng **không vẽ gì**. Đọc lại pixel ra `[0,0,0,0]`.
+  - vượt **cạnh 16 384 px** (giới hạn texture Skia): rơi khỏi đường GPU, cùng một lượt vẽ đi
+    từ 36 ms → **305 ms** (A0 ở 500%: **1 624 ms**).
+  - A0 · dpr 1,5 ở **300%** — tức **trần cũ** — đã là **621 MB một trang**. Lỗ hổng này có
+    **trước** khi nới dải zoom, không phải do nới mà sinh ra.
+- **Vì sao `try/catch` trong `renderPageCanvas` KHÔNG cứu được:** nó chỉ bắt exception, mà ở đây
+  không có exception nào. Code đi tiếp, gán `canvas.width = pw` (**xoá bitmap cũ đang hiển thị**),
+  blit một offscreen rỗng, rồi gán `m.paintScale = state.scale` ⇒ `commitScale` coi trang đó **đã
+  nét** và **không bao giờ** vẽ lại. Người dùng thấy **trang trắng vĩnh viễn**, không thông báo,
+  không một dòng console.
+- **Luật:** hạn mức kẹp **độ phân giải thiết bị** (`rd`), **không** kẹp CSS box. Hình học trang,
+  `.text-layer`, lớp chú thích, `m.paintScale` và hình học cuộn **giữ nguyên** ở tỷ lệ đầy đủ —
+  đúng như BI-36 yêu cầu. Chỉ pixel là thô hơn, và chỉ ở những ca mà **không kẹp là trắng trang**.
+- **Không** thay hạn mức bằng “đọc lại một pixel để kiểm tra”: đọc lại một canvas 32 MP là một cú
+  đồng bộ GPU→CPU trên main thread, đắt hơn nhiều lần cái nó phát hiện. Hạn mức là hằng số nên
+  **chứng minh được** bitmap không thể vượt giới hạn, khỏi cần kiểm tra lúc chạy.
+- **Không** giải bằng cách “chọn trần zoom thấp cho an toàn”: giấy đủ lớn thì **trần nào cũng**
+  vượt 268 MP (A0 vỡ ngay ở **400%**). Trần và hạn mức là hai việc khác nhau.
+- `viewRasterDpr` **không bao giờ** trả về lớn hơn `dpr` thật — rasterise trên độ phân giải màn
+  hình chỉ tốn bình phương mà không nét thêm.
+- Bước của nút ±/Ctrl± là **phép nhân** (`ZOOM_STEP_BASE = 1.25`), cùng lý do với
+  `wheelZoomFactor`: `±0.2` cố định là **+100% tương đối** ở sàn 20% và **+4%** ở gần trần 500%.
+  Zoom ra là **chia**, không phải nhân với `2 - base`, để vào-rồi-ra là một vòng khép kín.
+- Ba chỗ chữ quảng cáo dải zoom (`index.html` title · **key VÀ value** của nó trong `i18n.js` ·
+  `help.js` hai ngôn ngữ) được `npm run test:geom` **so trực tiếp với `ZOOM_MIN`/`ZOOM_MAX`**.
+  Key của i18n **chính là** chuỗi tiếng Việt trong markup: sửa markup mà quên key thì bản tiếng
+  Anh **âm thầm** hiện tiếng Việt (`t()` trả lại chính đầu vào, không báo lỗi).
+- **Vỡ khi:** trang trắng ở mức zoom cao trên bản vẽ A0/A1 (nhưng zoom xuống là hiện lại) ·
+  zoom cao thấy khựng ~0,3 s mỗi trang · RAM renderer nhảy vài trăm MB mỗi trang · tooltip ô zoom
+  nói một dải khác với dải app thật sự nhận.
+- Lưới: `npm run test:geom` (nhóm “viewRasterDpr” + nhóm chữ) — thử **cố tình** đổi `ZOOM_MAX`
+  thành `6` thì phải **đỏ 5 ca**, gồm cả ba ca chữ.
+
+---
+
 ## 4. Hàm nút thắt (đổi chữ ký = ảnh hưởng diện rộng)
 
 | Hàm | Định nghĩa | Ai gọi |
@@ -2006,7 +2048,7 @@ _Ghi 2026-08-13. **Đo được, không suy luận.**_
 | `pushUndo` / `snapshot` / history | Ctrl+Z–Ctrl+Y sau: xoay, xoá trang, ghép, chèn, bake chú thích, sửa nội dung · chấm ● xuất hiện · đóng file bẩn có hỏi |
 | `state.bytes` ở bất kỳ đâu | Lưu ra file mở lại được · in · undo · autosave (BI-3) |
 | Virtualization / `renderPageCanvas` / `freePageCanvas` | Cuộn nhanh lên-xuống PDF nhiều trang · in · so sánh · copy vùng ảnh (BI-4) · **`m.paintScale` còn được gán sau khi vẽ** (BI-36) |
-| Zoom (`zoomTo`, `applyScaleToDom`, `commitScale`, `wheelZoomFactor`, `renderViewer`) | `cd desktop ; npm run test:geom` · Ctrl+lăn **nhanh liên tục** → trang bám tay, dừng lại ~0.2s là **nét**, không nấc nào bị bỏ · Ctrl+lăn trên A0 nhiều trang → không treo · zoom rồi bôi đen chữ → **vệt chọn đúng chỗ** · Ctrl+F có kết quả rồi zoom → highlight đúng chỗ · zoom **khi đang Chú thích** → hình vẽ/hộp chữ theo đúng tỷ lệ, ô nhập chữ đang mở **không mất** · zoom khi đang “Sửa chữ” → ô span đúng chỗ · Vừa bề ngang / Vừa cả trang / Ctrl+0 · F11 vào/ra (BI-36, BI-22) |
+| Zoom (`zoomTo`, `applyScaleToDom`, `commitScale`, `wheelZoomFactor`, `renderViewer`) | `cd desktop ; npm run test:geom` · Ctrl+lăn **nhanh liên tục** → trang bám tay, dừng lại ~0.2s là **nét**, không nấc nào bị bỏ · Ctrl+lăn trên A0 nhiều trang → không treo · zoom rồi bôi đen chữ → **vệt chọn đúng chỗ** · Ctrl+F có kết quả rồi zoom → highlight đúng chỗ · zoom **khi đang Chú thích** → hình vẽ/hộp chữ theo đúng tỷ lệ, ô nhập chữ đang mở **không mất** · zoom khi đang “Sửa chữ” → ô span đúng chỗ · Vừa bề ngang / Vừa cả trang / Ctrl+0 · F11 vào/ra · **dải mới 20–500% (v0.2.66):** gõ `500` rồi `20` vào ô zoom → nét, cuộn không đứng máy · gõ `5` / `0` / `999` / `abc` → kẹp về 20 / 20 / 500 / không đổi, **không NaN** · nút ±/Ctrl± bấm **vào rồi ra** cùng số lần → về **đúng** tỷ lệ ban đầu (bước nhân, xem BI-78) · **A0/A1 (bản vẽ CAD) ở 300 → 400 → 500%** → **không được có trang trắng**, và RAM renderer phải **thấp hơn** bản trước · ba nút “Vừa…” trên A0 vẫn xuống được **8%** (sàn 20% không được ăn `FIT_MIN_SCALE`) (BI-36, BI-78, BI-22) |
 | Cột trang theo trang đang đọc (`syncThumbFocus`, `nearestScrollDelta`, `.thumb.current`) | `npm run test:geom` · cuộn tài liệu → thumbnail sáng đúng trang & tự trượt vào khung nhìn · **tick chọn vài trang rồi cuộn đi đâu đó → Xoá trang vẫn xoá đúng các trang đã tick** (BI-39, BI-26) · đang kéo sắp xếp trang thì cột **không nhảy** (BI-33) · thu sidebar (F4) rồi cuộn → không lỗi console · F11 → dải trang vẫn sáng đúng trang |
 | Ảnh round-trip (`addManagedAnnot` nhánh image, `managedSrcBytes`, `collectManagedChain`, `freeManagedTrash`, `MANAGED_KINDS`) | `cd desktop ; npm run test:managed` · chèn 1 ảnh → Áp dụng → Lưu → **mở lại** → Chỉnh sửa → ảnh **kéo/đổi cỡ/xoá được**, “Áp nhiều trang” vẫn dùng được · lưu 3–4 lần liên tiếp → **cỡ file không phình** · áp 1 chữ ký cho 20 trang → file ~1 lần cỡ ảnh, không 20 · ảnh trên trang **đã xoay** → **cũng sửa lại được** kể từ v0.2.58, xem hàng dưới (BI-59) · xoá ảnh round-trip rồi **thêm ô redact trên chính trang đó** → Áp dụng: ảnh **không** quay lại thành pixel, và ảnh còn lại **không nhân đôi** (BI-37, BI-38) |
 | Chữ nhật / elip / **khoanh mây** round-trip (`shapeAppearance`, `VECTOR_KINDS`, nhánh vector của `addManagedAnnot` · `serializeManaged` · `deserializeManaged`, `MANAGED_KINDS`) | `cd desktop ; npm run test:managed ; npm run test:rotate ; npm run test:defaults` · vẽ 1 chữ nhật **viền không nền** + 1 elip **có nền mờ** + 1 **khoanh mây hộp** + 1 **khoanh mây vẽ tay** → Áp dụng → Lưu → **mở lại** → Chú thích → cả hai **chọn/kéo/đổi cỡ/đổi màu/đổi nét/xoá được**, elip vẫn **mờ đúng độ mờ đã lưu** · zoom 400% → viền **nét, không rỗ** (vector, không phải PNG) · so **viền có bị gọt** không ở cả 4 cạnh với nét dày 8pt · lặp trên trang **đã xoay 90/180/270** → không méo, không lệch · Lưu 3–4 lần liên tiếp → **cỡ file không phình** · mở file đã bake bằng **Foxit + Acrobat + Chrome** → thấy đúng chỗ, đúng màu (BI-64) |

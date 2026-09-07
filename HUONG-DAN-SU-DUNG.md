@@ -124,11 +124,15 @@ Chỉ cần **một file duy nhất**:
 > - **Ctrl+O** Mở · **Ctrl+S** Lưu · **Ctrl+Shift+S** Lưu thành…
 >   (Ctrl+S ghi đè thẳng vào file đang mở; file kéo–thả/chưa lưu thì hỏi nơi lưu.)
 > - **Ctrl+Z** Hoàn tác · **Ctrl+Y** Làm lại.
-> - **Ctrl + / Ctrl − / Ctrl 0** Phóng to / Thu nhỏ / Cỡ gốc 100%.
+> - **Ctrl + / Ctrl − / Ctrl 0** Phóng to / Thu nhỏ / Cỡ gốc 100%. Hai nút ± và hai phím này
+>   bước **theo tỷ lệ**, nên một cú bấm ở 20% và một cú ở 400% cảm giác như nhau; bấm phóng rồi
+>   bấm thu cùng số lần là về đúng tỷ lệ ban đầu.
 > - **Ctrl + lăn chuột** phóng to/thu nhỏ **bám theo con trỏ**. Trang bám tay ngay lập tức (hơi mềm
 >   một nhịp) rồi **tự làm nét khi bạn dừng lại** — đó là cách Acrobat/Foxit làm, và là lý do zoom
 >   không còn giật từng nấc.
 > - **Vừa bề ngang / Vừa chiều dọc** (nút cạnh ô zoom) — "Vừa chiều dọc" hợp văn bản khổ ngang (landscape).
+> - Gõ thẳng số vào **ô zoom**: nhận **20 đến 500**. Ba nút "Vừa…" vẫn xuống thấp hơn 20% được khi
+>   cần, vì trên bản vẽ A0 cả trang không lọt màn hình ở tỷ lệ nào cao hơn.
 > - **↑ / ↓** (ở cửa sổ xem trang) nhảy sang trang trước / trang kế.
 > - **Delete** Xóa trang đang chọn.
 >

@@ -51,7 +51,7 @@
     "Toàn màn hình — trọn trang trong màn hình, ẩn thanh công cụ (F11, Esc để thoát)":
       "Full screen — whole page on screen, toolbars hidden (F11; Esc to exit)",
     "Thoát toàn màn hình (Esc)": "Exit full screen (Esc)",
-    "Gõ tỷ lệ zoom (40–300) rồi Enter": "Type a zoom % (40–300) then Enter",
+    "Gõ tỷ lệ zoom (20–500) rồi Enter": "Type a zoom % (20–500) then Enter",
     "Tìm trong tài liệu…": "Find in document…",
     "Kết quả trước (Shift+Enter)": "Previous match (Shift+Enter)",
     "Kết quả tiếp (Enter)": "Next match (Enter)",

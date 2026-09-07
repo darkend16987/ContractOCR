@@ -149,7 +149,7 @@
               "**Ctrl + lăn chuột** phóng to **bám theo con trỏ**. Trang bám tay ngay rồi tự làm nét khi bạn dừng lại.",
               "**Ctrl + mouse wheel** zooms **around the pointer**. The page follows your hand immediately, then sharpens once you stop."
             ),
-            T("Gõ thẳng số vào ô zoom (40–300) rồi `Enter`.", "Type a percentage straight into the zoom box (40–300) and press `Enter`."),
+            T("Gõ thẳng số vào ô zoom (20–500) rồi `Enter`.", "Type a percentage straight into the zoom box (20–500) and press `Enter`."),
             T(
               "**Vừa bề ngang** · **Vừa chiều dọc** · **Vừa cả trang** — ba nút cạnh ô zoom. \"Vừa chiều dọc\" hợp với văn bản khổ ngang.",
               "**Fit width** · **Fit height** · **Fit page** — the three buttons beside the zoom box. Fit height suits landscape documents."

@@ -4,7 +4,59 @@
 > [DESIGN.md](DESIGN.md) (kiến trúc), [ROADMAP.md](ROADMAP.md) (tiến độ chi tiết),
 > [SETUP.md](SETUP.md) (dựng môi trường).
 
-_Cập nhật: 2026-08-29 · v0.2.67 đã phát hành (dưới đây) · v0.2.66 là bản trước đó_
+_Cập nhật: 2026-09-07 · v0.2.68 đã phát hành (dưới đây) · v0.2.67 là bản trước đó_
+
+> **v0.2.68 — dải zoom 20–500%, và một đường làm trang A0 trắng bệch đã bị bịt.**
+>
+> Người dùng hỏi: nới 40–300% thành 20–500% có khả thi, có nặng máy không. Nên việc bắt đầu
+> bằng **đo**, không bằng code — toàn bộ số đo + cách chạy lại probe nằm ở
+> [docs/RESEARCH-2026-09-07-zoom-range-20-500.md](docs/RESEARCH-2026-09-07-zoom-range-20-500.md).
+>
+> **Đầu dưới rẻ, và đã được chứng minh từ trước:** `FIT_MIN_SCALE = 0.08` nghĩa là ba nút
+> "Vừa…" vốn đã tính ra tỷ lệ thấp hơn 20% từ lâu. Chi phí duy nhất của 20% là cửa sổ giữ
+> bitmap (`KEEP_MARGIN_PX`, tính theo **CSS px**) chứa ~24 trang thay vì ~12, tức một lượt
+> `commitScale` đi từ ~0,3 s lên ~1,0 s — và chỉ trả **sau khi** người dùng đã ngừng lăn.
+>
+> **Đầu trên thì không được sửa mỗi hai con số (BI-78).** Đo được: vượt diện tích canvas
+> ~**268 MP** (`2^28`), Chromium **vẫn nhận** `canvas.width`, **vẫn** trả về `2d context`,
+> `page.render` **vẫn resolve** trong ~7 ms — và **không vẽ gì**, không ném lỗi. `try/catch`
+> trong `renderPageCanvas` chỉ bắt exception nên không thấy; code đi tiếp, xoá bitmap cũ, blit
+> một offscreen rỗng rồi gán `m.paintScale = state.scale` ⇒ `commitScale` coi trang đó "đã nét"
+> và **không bao giờ** vẽ lại. Trang trắng vĩnh viễn, im lặng. A0 · dpr 1,5 vỡ ngay ở **400%**
+> — nghĩa là **không có trần zoom nào an toàn** nếu không kẹp bitmap.
+>
+> **Lời giải là khuôn đã có sẵn trong repo**, không phải phát minh mới: `printScaleFor` +
+> `MAX_PRINT_MEGAPIXELS` đã bảo vệ đường **in** khỏi đúng bài toán này từ BI-43. Nay đường
+> **xem trang** có bản tương đương — `MAX_VIEW_MEGAPIXELS = 32` / `MAX_VIEW_SIDE_PX = 12000` /
+> `viewRasterDpr()` — kẹp **độ phân giải thiết bị**, **không** kẹp CSS box. Nhờ vậy hình học
+> trang, `.text-layer`, lớp chú thích, `m.paintScale` và hình học cuộn **không đổi một dòng**,
+> đúng như BI-36 đòi. Đúng ba dòng trong `renderPageCanvas` thay `dpr` bằng `rd`.
+>
+> **Con số sau khi làm** (probe đọc lại pixel giữa trang để chứng minh bitmap là thật, chứ
+> không chỉ "không ném lỗi"): A0/dpr1,5/500% từ **1 724 MB + trang trắng** về **122 MB, 116 ms,
+> vẽ thật**; A0 ở **300%** — mức người dùng đang thật sự dùng — từ **621 MB** về **122 MB**.
+> Chọn 32 MP thay vì 24 MP hoá ra đúng ở một điểm không thấy trước: **A4 ở 500% trên màn 150%
+> (28,2 MP) nằm ngay dưới hạn mức**, nên ca HiDPI thường gặp nhất **không bị hạ độ nét chút nào**.
+>
+> **Bước nút ±/Ctrl± chuyển sang phép nhân** (`ZOOM_STEP_BASE = 1.25`, `zoomStep(dir)` thay
+> `zoom(delta)` ở 6 chỗ gọi), cùng lý do `wheelZoomFactor` đã nhân từ v0.2.48: `±0.2` cố định là
+> **+100% tương đối** ở sàn 20% và **+4%** ở gần trần 500%. Zoom ra là **chia**, không phải nhân
+> với `2 - base`, để vào-rồi-ra là vòng khép kín.
+>
+> **Lưới `test:geom` từ 220 lên 430 ca.** Cả 5 hằng số + `viewRasterDpr` đều **nâng ra khỏi file
+> đang ship** (`extractConst`/`extractFn`), không sao chép — ca cũ hard-code `3 / 0.4` đã bỏ, vì
+> nó là loại test vẫn xanh trong khi mô tả một dải app không còn có. Thêm nhóm so chữ: ba chỗ
+> quảng cáo dải zoom (`index.html` title · **key VÀ value** của nó trong `i18n.js` · `help.js`
+> hai ngôn ngữ) được so **trực tiếp với `ZOOM_MIN`/`ZOOM_MAX`** — bẫy thật ở đây là **key i18n
+> chính là chuỗi tiếng Việt trong markup**, sửa markup mà quên key thì bản tiếng Anh âm thầm hiện
+> tiếng Việt (`t()` trả lại đầu vào, không báo lỗi). Kiểm chứng âm bản: đặt `ZOOM_MAX = 6` →
+> **đỏ 5 ca**, gồm cả 3 ca chữ.
+>
+> **Một ghi chú về quy trình:** cây làm việc lúc đó đang **chậm 2 commit** so với origin (v0.2.66
+> + v0.2.67 đã phát hành từ máy/session khác trong khi `package.json` ở đây vẫn là 0.2.65). Nếu
+> cứ patch-bump và publish thì bản 0.2.66 phát ra từ cây này sẽ **đè lên một tag đã tồn tại** và
+> OTA sẽ đẩy người dùng "lên" một bản **mất hai tính năng**. Đã `git pull --ff-only` rồi mới làm
+> tiếp, và số bất biến của lần này phải đổi **BI-76 → BI-78** vì upstream đã lấy 76 và 77.
 
 > **v0.2.67 — sao chép chú thích sang file PDF khác (tab khác / cửa sổ khác).**
 >

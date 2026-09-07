@@ -44,7 +44,7 @@ const FEATURES = [
   { i: "shield", t: "Ẩn trang bằng mật khẩu", d: "Giấu một vài trang trong chính file đó: nội dung được mã hoá AES-256 và thay bằng trang giữ chỗ có khoá, mở lại bằng đúng mật khẩu bạn đặt. Số trang không đổi nên mục lục và tham chiếu không lệch, và trang ẩn đi theo trang của nó khi bạn sắp xếp lại hay ghép file. Cần gửi ra ngoài thì xuất một bản sao không kèm trang ẩn." },
   { i: "combine", t: "Tab đa tài liệu", d: "Mở nhiều tài liệu bằng tab trong một cửa sổ, tách tab ra cửa sổ riêng khi cần. Mở app lại là có đúng bộ tab lần trước." },
   { i: "history", t: "Tự lưu & khôi phục", d: "Lưu nền trong lúc bạn làm việc. Mất điện hay app đóng đột ngột thì lần mở sau vẫn còn bản mới nhất — nhận lại, để sau, hay bỏ hẳn là tuỳ bạn." },
-  { i: "move", t: "Ngắm & di chuyển tài liệu", d: "Zoom bám theo con trỏ, bàn tay kéo trang đi, cột trang sáng theo trang đang đọc." },
+  { i: "move", t: "Ngắm & di chuyển tài liệu", d: "Zoom từ 20% đến 500%, bám theo con trỏ và mượt theo bước đều; bàn tay kéo trang đi; cột trang sáng theo trang đang đọc. Phóng to hết cỡ trên bản vẽ khổ lớn A0–A1 vẫn hiện đủ nét, không trắng trang." },
   { i: "fullscreen", t: "Đọc toàn màn hình", d: "Trọn trang nằm gọn trong màn hình, ẩn hết thanh công cụ — để trình bày hoặc đọc kỹ." },
 ];
 
