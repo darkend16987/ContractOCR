@@ -15,6 +15,13 @@
 // code, one less eval. Its cases below are unchanged, which is how the move was
 // verified: they were written against the pre-move implementation.
 //
+// `viewRasterDpr` + its two budget constants took the SAME road on 2026-09-08: they
+// moved to `renderer/raster-cap.js` so the read-only split-view pane can share ONE
+// definition of BI-78 instead of keeping a copy (a copy is how that invariant dies by
+// halves — capped on one side, blank A0 sheet on the other). Same treatment, same
+// proof: the cases below are untouched, and this file failed loudly on the move
+// itself, which is exactly what `extractConst` was written to do.
+//
 // Run:  node desktop/test/viewer-geom.test.js      (or: npm run test:geom)
 
 const fs = require("fs");
@@ -92,16 +99,32 @@ const ZOOM_WHEEL_BASE = extractConst("renderer/app.js", "ZOOM_WHEEL_BASE");
 const ZOOM_MIN = extractConst("renderer/app.js", "ZOOM_MIN");
 const ZOOM_MAX = extractConst("renderer/app.js", "ZOOM_MAX");
 const ZOOM_STEP_BASE = extractConst("renderer/app.js", "ZOOM_STEP_BASE");
-// Declared before viewRasterDpr is extracted, because the lifted function closes over
-// both of them by bare name (see the ZOOM_WHEEL_BASE note above).
-const MAX_VIEW_MEGAPIXELS = extractConst("renderer/app.js", "MAX_VIEW_MEGAPIXELS");
-const MAX_VIEW_SIDE_PX = extractConst("renderer/app.js", "MAX_VIEW_SIDE_PX");
+// The raster budget is a plain require() since 2026-09-08 (see the header): one
+// definition, shared by index.html and the read-only pane, testable under node.
+const RasterCap = require("../renderer/raster-cap.js");
+const MAX_VIEW_MEGAPIXELS = RasterCap.MAX_VIEW_MEGAPIXELS;
+const MAX_VIEW_SIDE_PX = RasterCap.MAX_VIEW_SIDE_PX;
 
 // Plain require since v0.2.48 — annot-geom.js is DOM-free (see the header).
 const { resizeRect } = require("../renderer/annot-geom.js");
 const nearestScrollDelta = extractFn("renderer/app.js", "nearestScrollDelta");
 const wheelZoomFactor = extractFn("renderer/app.js", "wheelZoomFactor");
-const viewRasterDpr = extractFn("renderer/app.js", "viewRasterDpr");
+const viewRasterDpr = RasterCap.viewRasterDpr;
+// The hoist must not have left a copy behind: two definitions is the failure mode
+// raster-cap.js exists to prevent, and grep is the only thing that can see it.
+(() => {
+  const app = fs.readFileSync(path.join(__dirname, "..", "renderer", "app.js"), "utf8");
+  for (const name of ["MAX_VIEW_MEGAPIXELS", "MAX_VIEW_SIDE_PX"]) {
+    if (new RegExp("^\s*const " + name + "\s*=", "m").test(app)) {
+      console.error("FAIL app.js van con khai bao " + name + " — BI-78 dang co HAI ban");
+      fail++;
+    } else pass++;
+  }
+  if (/^\s*function viewRasterDpr\s*\(/m.test(app)) {
+    console.error("FAIL app.js van con dinh nghia viewRasterDpr — BI-78 dang co HAI ban");
+    fail++;
+  } else pass++;
+})();
 
 // ---- resizeRect: which corner stays pinned -------------------------------
 // Box at (10,20) sized 100×50. The corner OPPOSITE the grip must not move.

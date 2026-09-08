@@ -713,6 +713,19 @@
     "Sát mép phải trang": "Align to right edge",
     "Sát mép trên trang": "Align to top edge",
     "Sát mép dưới trang": "Align to bottom edge",
+    // --- khung xem chỉ đọc (renderer/view.html, v0.2.69) ---
+    // This file is loaded by view.html too, so the pane's chrome switches language
+    // with the rest of the app instead of being a Vietnamese island beside it.
+    "Trang trước": "Previous page",
+    "Trang sau": "Next page",
+    "Mức phóng to": "Zoom level",
+    "Vừa ngang": "Fit width",
+    "Vừa cả trang": "Fit whole page",
+    "Vừa trang": "Fit page",
+    "Đóng khung xem": "Close view pane",
+    "Sửa file này": "Edit this file",
+    "Mở file này ở khung chính để sửa": "Open this file in the editable pane",
+    "Khung xem — chưa chọn tài liệu.": "View pane — no document selected.",
   };
 
   // Elements whose text/attrs change at runtime — never register these, or a

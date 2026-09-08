@@ -161,6 +161,45 @@ function sendFileToView(webContents, filePath) {
   }
 }
 
+// Hand a file to a READ-ONLY split-view pane (renderer/view.html). Same shape and
+// the same binary path as sendFileToView (BI-49), with three differences that are
+// the whole point of a pane:
+//   · it reads the file FROM DISK every time, so a pane always shows the last SAVE
+//     and never a half-edited buffer from the renderer next door;
+//   · it carries `savedAt` so the pane can say which save you are looking at;
+//   · an unreadable/missing file clears the pane WITH A REASON instead of leaving
+//     the previous document on screen pretending to be current.
+// `channel` is "view:open" normally, "view:reload" when the main pane just saved.
+function sendFileToPane(webContents, filePath, channel = "view:open") {
+  try {
+    if (!webContents || webContents.isDestroyed()) return;
+    if (!filePath || !/\.pdf$/i.test(filePath)) return;
+    let stat = null;
+    try {
+      stat = fs.statSync(filePath);
+    } catch (_) {
+      stat = null;
+    }
+    if (!stat || !stat.isFile()) {
+      webContents.send("view:clear", { reason: "Không còn thấy file này trên đĩa." });
+      return;
+    }
+    const data = fs.readFileSync(filePath);
+    webContents.send(channel, {
+      path: filePath,
+      name: path.basename(filePath),
+      savedAt: stat.mtimeMs,
+      data,
+    });
+  } catch (_) {
+    try {
+      webContents.send("view:clear", { reason: "Không đọc được file này." });
+    } catch (_) {
+      /* renderer gone */
+    }
+  }
+}
+
 // Read a batch of PDFs off disk and hand them to a renderer to PRE-FILL the
 // "Gộp nhiều PDF" dialog. Same shape as sendFileToView (one message, bytes over
 // the binary structured-clone path, never base64-in-JSON — BI-49), but it opens
@@ -304,6 +343,9 @@ const MENU_STR = {
     zoomOut: "Thu nhỏ",
     zoomReset: "Cỡ gốc (100%)",
     fullscreen: "Toàn màn hình (trọn trang)",
+    splitToggle: "Chia đôi màn hình (khung xem chỉ đọc)",
+    splitAdd: "Thêm khung xem",
+    splitClose: "Đóng khung xem",
     help: "Trợ giúp",
     guide: "Hướng dẫn sử dụng",
     settings: "Cài đặt…",
@@ -347,6 +389,9 @@ const MENU_STR = {
     zoomOut: "Zoom Out",
     zoomReset: "Actual Size (100%)",
     fullscreen: "Full Screen (fit page)",
+    splitToggle: "Split View (read-only pane)",
+    splitAdd: "Add View Pane",
+    splitClose: "Close View Pane",
     help: "Help",
     guide: "User Guide",
     settings: "Settings…",
@@ -354,6 +399,51 @@ const MENU_STR = {
 };
 
 let menuLang = "vi";
+
+// ---- split view commands (menu) -------------------------------------------
+//
+// A new pane starts on the document the user is already looking at: with one file
+// open, "split the screen" means "show me another part of THIS", which is the case
+// the feature was asked for. A tab that has never been saved has no path to give a
+// pane, and a pane deliberately reads from disk (see sendFileToPane) — so it opens
+// empty and says why, rather than silently showing nothing.
+function paneSourceFor(tw) {
+  const t = tw && tw._active();
+  return t && t.path ? t.path : null;
+}
+
+function addViewPane(tw) {
+  if (!tw) return;
+  const pane = tw.addViewPane({ openPath: paneSourceFor(tw) });
+  if (!pane) return; // already at MAX_VIEW_PANES
+  if (!paneSourceFor(tw)) {
+    try {
+      pane.view.webContents.once("did-finish-load", () =>
+        pane.view.webContents.send("view:clear", {
+          reason: "Hãy lưu tài liệu trước, rồi chọn nó cho khung xem.",
+        })
+      );
+    } catch (_) {
+      /* pane already gone */
+    }
+  }
+}
+
+function closeLastViewPane(tw) {
+  if (!tw || !tw.viewPanes.length) return;
+  tw.closeViewPane(tw.viewPanes.length - 1);
+}
+
+// Ctrl+\ is a toggle, not an "add": the second press must undo the first, whatever
+// state the user reached by other means.
+function toggleSplit(tw) {
+  if (!tw) return;
+  if (tw.viewPanes.length) {
+    while (tw.viewPanes.length) tw.closeViewPane(tw.viewPanes.length - 1);
+  } else {
+    addViewPane(tw);
+  }
+}
 
 function buildMenu(lang) {
   const L = MENU_STR[lang] || MENU_STR.vi;
@@ -453,6 +543,13 @@ function buildMenu(lang) {
         // does all four. registerAccelerator:false leaves F11 to the renderer's
         // key handler (same pattern as Ctrl+P) so it can't fire twice.
         { label: L.fullscreen, accelerator: "F11", registerAccelerator: false, click: send("presentation") },
+        { type: "separator" },
+        // Split view lives in MAIN, not in a renderer, for the same reason
+        // full-screen does (BI-22): main owns the window's shape and the renderers
+        // only ever react to it.
+        { label: L.splitToggle, accelerator: "CmdOrCtrl+\\", click: () => toggleSplit(Tabs.focusedTabbedWindow()) },
+        { label: L.splitAdd, accelerator: "CmdOrCtrl+Shift+\\", click: () => addViewPane(Tabs.focusedTabbedWindow()) },
+        { label: L.splitClose, click: () => closeLastViewPane(Tabs.focusedTabbedWindow()) },
         ...(isDev ? [{ type: "separator" }, { role: "reload" }, { role: "toggleDevTools" }] : []),
       ],
     },
@@ -581,10 +678,12 @@ if (!app.requestSingleInstanceLock()) {
       RENDERER,
       docPreload: path.join(__dirname, "preload.js"),
       shellPreload: path.join(__dirname, "shell-preload.js"),
+      viewPreload: path.join(__dirname, "view-preload.js"),
       iconPath: path.join(__dirname, "..", "build", "icon.png"),
       hardenNav,
       attachContextMenu,
       sendFileToView,
+      sendFileToPane,
       sendCombineToView,
       isQuitting: () => appQuitting,
       onAllClosed: () => {
@@ -755,6 +854,11 @@ ipcMain.handle("file:write-pdf", async (_e, { path: fp, data }) => {
   try {
     if (!fp) return { saved: false };
     await fs.promises.writeFile(fp, Buffer.from(data)); // async: never block main
+    // A read-only pane showing this same file is now looking at the PREVIOUS save.
+    // Refreshing here — at the one place bytes actually reach the disk — is what
+    // makes "the pane shows the last save" a rule instead of a hope.
+    const found = Tabs.findDoc(_e && _e.sender);
+    if (found) found.tw.reloadPanesForPath(fp);
     return { saved: true, path: fp };
   } catch (e) {
     return { saved: false, error: String((e && e.message) || e) };
@@ -1234,6 +1338,114 @@ ipcMain.on("tabs:context-menu", (e, id) => {
 ipcMain.on("tabs:close", (e, id) => {
   const tw = Tabs.findByStrip(e.sender);
   if (tw) tw.closeTab(id);
+});
+
+// ---- read-only split-view panes ------------------------------------------
+//
+// Both handlers identify the pane by e.sender and nothing else: a pane never sends
+// an id of its own, and main never sends it one (BI-55).
+
+ipcMain.on("view:ready", (e) => {
+  const found = Tabs.findViewPane(e.sender);
+  if (found) found.tw.paneReady(e.sender);
+});
+
+ipcMain.on("view:close", (e) => {
+  const found = Tabs.findViewPane(e.sender);
+  if (found) found.tw.closeViewPaneByContents(e.sender);
+});
+
+// "Which document should this pane show?" — a NATIVE menu, built and acted on
+// entirely in main. The pane asked a question; it never receives the list of open
+// documents, so it cannot learn what else the user has open (BI-55). Eligibility is
+// computed at menu-open time for the same reason pages:targets is (P13): what is
+// open changes constantly, and a remembered list offers a tab that has since gone.
+ipcMain.on("view:pick-source", (e) => {
+  const found = Tabs.findViewPane(e.sender);
+  if (!found) return;
+  const { tw, pane } = found;
+  const active = tw._active();
+  const items = [];
+  if (active && active.path) {
+    items.push({
+      label: "Cùng tài liệu khung chính",
+      type: "checkbox",
+      checked: !!(pane.path && Tabs.samePath(pane.path, active.path)),
+      click: () => tw.setPaneSource(pane, active.path),
+    });
+  }
+  // Every OTHER saved tab of this window. A tab that has never been saved has no
+  // path, and a pane reads from disk by design (see sendFileToPane) — so offering
+  // it would be offering a file that does not exist yet.
+  const others = tw.tabs.filter((t) => t.path && !(active && active.path && Tabs.samePath(t.path, active.path)));
+  if (others.length) {
+    if (items.length) items.push({ type: "separator" });
+    for (const t of others) {
+      items.push({
+        label: t.title || path.basename(t.path),
+        type: "checkbox",
+        checked: !!(pane.path && Tabs.samePath(pane.path, t.path)),
+        click: () => tw.setPaneSource(pane, t.path),
+      });
+    }
+  }
+  if (items.length) items.push({ type: "separator" });
+  items.push({
+    label: "Mở file khác…",
+    click: async () => {
+      try {
+        const res = await dialog.showOpenDialog({
+          title: "Chọn PDF cho khung xem",
+          properties: ["openFile"],
+          filters: [{ name: "PDF", extensions: ["pdf"] }],
+        });
+        if (res.canceled || !res.filePaths.length) return;
+        // The window may have been closed while the dialog was up.
+        if (!Tabs.findViewPane(e.sender)) return;
+        tw.setPaneSource(pane, res.filePaths[0]);
+      } catch (_) {
+        /* cancelled or no window — nothing to report */
+      }
+    },
+  });
+  Menu.buildFromTemplate(items).popup();
+});
+
+// "Sửa file này" — the escape hatch that stops a read-only pane from being a dead
+// end (§4.7). One click, and the document the user is reading on the right becomes
+// the one they are editing on the left; the pane takes over whatever the editable
+// pane was showing, so nothing disappears from the screen.
+ipcMain.on("view:edit-this", (e) => {
+  const found = Tabs.findViewPane(e.sender);
+  if (!found || !found.pane.path) return;
+  const { tw, pane } = found;
+  const want = pane.path;
+  const active = tw._active();
+  const prev = active && active.path ? active.path : null;
+  if (prev && Tabs.samePath(prev, want)) return; // already the one being edited
+  const tab = tw.tabs.find((t) => t.path && Tabs.samePath(t.path, want));
+  // Already open as a tab → just switch to it. Otherwise open it as one, which
+  // goes through the ordinary tab path (undo, autosave, recovery all included).
+  if (tab) tw.activateTab(tab.id);
+  else tw.createTab({ openPath: want });
+  // The swap: the pane picks up the document that just left the editable pane, so
+  // the two files stay side by side instead of one of them vanishing.
+  if (prev) tw.setPaneSource(pane, prev);
+});
+
+// ---- split view: the tab strip's ◫ button and divider drag ----------------
+
+ipcMain.on("split:toggle", (e) => {
+  const tw = Tabs.findByStrip(e.sender);
+  if (tw) toggleSplit(tw);
+});
+
+// Fires on every frame of a divider drag. Main owns the window's shape (BI-22):
+// the strip proposes fractions, tabs.js clamps them against the measured minimum
+// pane widths and echoes back the geometry it actually used.
+ipcMain.on("split:ratios", (e, ratios) => {
+  const tw = Tabs.findByStrip(e.sender);
+  if (tw) tw.setPaneRatios(ratios);
 });
 
 // A document renderer reporting its tab title / dirty state (see setTabMeta in

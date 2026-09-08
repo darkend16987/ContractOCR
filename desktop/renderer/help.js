@@ -182,6 +182,45 @@
             ),
           ],
         },
+        { h: T("Chia đôi màn hình — xem 2 tài liệu cùng lúc", "Split view — two documents at once") },
+        {
+          p: T(
+            "`Ctrl+\\` chia cửa sổ làm đôi: **khung trái** là tài liệu bạn đang sửa, **khung phải** là một **khung xem chỉ đọc**. Dùng để đọc bản vẽ cũ trong khi đánh dấu bản mới — hoặc để mở **cùng một file** hai lần, xem trang 40 trong khi đang sửa trang 5.",
+            "`Ctrl+\\` splits the window in two: the **left pane** is the document you are editing, the **right pane** is a **read-only view pane**. Use it to read the old drawing while marking up the new one — or to open the **same file** twice and read page 40 while editing page 5."
+          ),
+        },
+        {
+          ul: [
+            T(
+              "Bấm **tên file** trên đầu khung xem để đổi tài liệu: cùng tài liệu khung chính, một tab đang mở, hoặc **Mở file khác…**.",
+              "Click the **filename** at the top of the view pane to change what it shows: the same document as the main pane, any open tab, or **Mở file khác…**."
+            ),
+            T(
+              "**Kéo rãnh** giữa hai khung để đổi tỷ lệ. Tỷ lệ đó — và cả bố cục chia khung — được nhớ lại khi mở app lần sau.",
+              "**Drag the divider** between the panes to change the ratio. That ratio — and the split itself — comes back the next time you open the app."
+            ),
+            T(
+              "Khung xem hiển thị **bản đã lưu trên đĩa**, và nói rõ là bản lưu lúc mấy giờ. Bấm `Ctrl+S` ở khung chính là nó tự nạp lại, **giữ nguyên trang bạn đang đọc**.",
+              "The view pane shows the file **as saved on disk**, and says which save you are looking at. Press `Ctrl+S` in the main pane and it reloads itself, **keeping the page you were reading**."
+            ),
+            T(
+              "Khung xem **không sửa được** — đó là điều làm cho việc mở cùng một file hai lần an toàn: chỉ một khung ghi được, nên không có chuyện bản lưu này đè mất bản lưu kia. `Ctrl+S`, In, Hoàn tác **luôn** thuộc về khung chính.",
+              "The view pane **cannot be edited** — that is what makes opening one file twice safe: only one pane can write, so one save can never eat another. `Ctrl+S`, Print and Undo **always** belong to the main pane."
+            ),
+            T(
+              "Đang xem một file ở khung phải và muốn sửa nó? Bấm **Sửa file này** — nó chuyển sang khung chính, còn tài liệu đang sửa dời sang khung xem.",
+              "Reading a file on the right and want to edit it? Press **Sửa file này** — it moves to the main pane, and the document you were editing moves to the view pane."
+            ),
+            T(
+              "`Ctrl+Shift+\\` thêm khung xem thứ hai (tối đa 3 khung). `Ctrl+\\` lần nữa để đóng hết.",
+              "`Ctrl+Shift+\\` adds a second view pane (three panes maximum). `Ctrl+\\` again closes them all."
+            ),
+            T(
+              "Khung xem không nhận trang kéo sang — thả trang vào **khung chính**. Tài liệu có mật khẩu cũng phải mở ở khung chính.",
+              "A view pane will not accept dragged pages — drop them on the **main pane**. A password-protected file has to be opened in the main pane too."
+            ),
+          ],
+        },
         { h: T("Tìm trong tài liệu", "Find in document") },
         {
           p: T(
@@ -345,8 +384,8 @@
         },
         {
           note: T(
-            "**Dán sang trang khác giữ đúng vị trí cũ** — tiện để lặp lại một khoanh mây hay một hộp chữ ở cùng chỗ trên nhiều trang. Dán lại trên **cùng** trang thì mỗi bản lệch xuống một chút cho khỏi đè nhau; dán vào trang **nhỏ hơn** thì cả nhóm tự lùi vào trong trang, không bị rời ra.\n\n**Sao chép được sang file PDF khác** — copy một hộp văn bản (hay mũi tên, khoanh mây, hình vẽ) ở file này rồi `Ctrl+V` ở **tab khác** hoặc **cửa sổ khác**; nó giữ nguyên vị trí, cỡ chữ và màu. Tab đích chưa bật **Chỉnh sửa** thì app tự bật giúp. Riêng **ảnh** chỉ dán được trong cùng một tab.\n\n**Clipboard không mất khi bấm Xong** — sao chép, bấm Xong, vẫn dán được. Nếu clipboard hệ điều hành đang có **ảnh** (copy từ app khác) thì `Ctrl+V` vẫn là dán ảnh vào trang như thường; hai đường không lẫn nhau.",
-            "**Pasting onto another page keeps the original position** — handy for repeating a revision cloud or a text box at the same spot across pages. Pasting again on the **same** page offsets each copy slightly so they don't stack; pasting onto a **smaller** page nudges the whole group back inside the sheet without breaking it apart.\n\n**Copying into another PDF works too** — copy a text box (or an arrow, revision cloud, drawing) here and press `Ctrl+V` in **another tab** or **another window**; position, font size and colour come across unchanged. If the destination tab is not in **Chỉnh sửa** yet, it is switched on for you. **Images** are the one exception: they paste only within the same tab.\n\n**The clipboard survives Xong** — copy, apply, and you can still paste. If the OS clipboard holds an **image** (copied from another app), `Ctrl+V` still pastes that image onto the page as before; the two paths never get confused."
+            "**Dán sang trang khác giữ đúng vị trí cũ** — tiện để lặp lại một khoanh mây hay một hộp chữ ở cùng chỗ trên nhiều trang. Dán lại trên **cùng** trang thì mỗi bản lệch xuống một chút cho khỏi đè nhau; dán vào trang **nhỏ hơn** thì cả nhóm tự lùi vào trong trang, không bị rời ra.\n\n**Sao chép được sang file PDF khác** — copy một hộp văn bản (hay mũi tên, khoanh mây, hình vẽ, và từ **v0.2.69** cả **dấu ✓ / ✗**) ở file này rồi `Ctrl+V` ở **tab khác** hoặc **cửa sổ khác**; nó giữ nguyên vị trí, cỡ và màu. Tab đích chưa bật **Chỉnh sửa** thì app tự bật giúp. Riêng **ảnh** chỉ dán được trong cùng một tab.\n\n**Clipboard không mất khi bấm Xong** — sao chép, bấm Xong, vẫn dán được. Nếu clipboard hệ điều hành đang có **ảnh** (copy từ app khác) thì `Ctrl+V` vẫn là dán ảnh vào trang như thường; hai đường không lẫn nhau.",
+            "**Pasting onto another page keeps the original position** — handy for repeating a revision cloud or a text box at the same spot across pages. Pasting again on the **same** page offsets each copy slightly so they don't stack; pasting onto a **smaller** page nudges the whole group back inside the sheet without breaking it apart.\n\n**Copying into another PDF works too** — copy a text box (or an arrow, revision cloud, drawing, and from **v0.2.69** a **✓ / ✗ mark**) here and press `Ctrl+V` in **another tab** or **another window**; position, size and colour come across unchanged. If the destination tab is not in **Chỉnh sửa** yet, it is switched on for you. **Images** are the one exception: they paste only within the same tab.\n\n**The clipboard survives Xong** — copy, apply, and you can still paste. If the OS clipboard holds an **image** (copied from another app), `Ctrl+V` still pastes that image onto the page as before; the two paths never get confused."
           ),
         },
 
@@ -425,8 +464,8 @@
               "**Live objects** — **text boxes, notes, arrows, images / signatures**, from **v0.2.61** also **rectangles, ellipses, revision clouds and freehand clouds**, and from **v0.2.63** **freehand pen strokes**. Reopen the file, click **Chú thích**, and they are separate objects again: select, drag, restyle, `Delete`. Rectangles and ellipses resize by the corners; text boxes, notes, arrows and images still work with **Áp nhiều trang**."
             ),
             T(
-              "**Bị dán chết** — **tô sáng, ✓ / ✗, ô che, đoạn đo**. Bấm **Xong** là chúng thành hình trên trang, **không chọn lại được**. Muốn sao chép thì **copy trước khi bấm Xong**. Riêng **ô che (redact)** sẽ luôn như vậy: nó tồn tại để **xoá hẳn** nội dung bên dưới, nên một ô che sửa lại được thì không còn là ô che nữa.",
-              "**Flattened** — **highlights, ✓ / ✗, redactions, dimensions**. Once you press **Xong** they become part of the page and **cannot be selected again**. If you want to copy them, **copy before applying**. **Redactions** will always stay this way: the tool exists to **destroy** what is underneath, and a re-editable redaction is not a redaction."
+              "**Bị dán chết** — **tô sáng, ✓ / ✗, ô che, đoạn đo**. Bấm **Xong** là chúng thành hình trên trang, **không chọn lại được**. Muốn sao chép thì **copy trước khi bấm Xong**. Từ **v0.2.69**, **dấu ✓ và ✗ copy được sang file PDF khác** giống hộp văn bản — miễn là copy khi còn đang trong **Chú thích**, trước khi bấm **Xong**. Riêng **ô che (redact)** sẽ luôn bị dán chết: nó tồn tại để **xoá hẳn** nội dung bên dưới, nên một ô che sửa lại được thì không còn là ô che nữa.",
+              "**Flattened** — **highlights, ✓ / ✗, redactions, dimensions**. Once you press **Xong** they become part of the page and **cannot be selected again**. If you want to copy them, **copy before applying**. From **v0.2.69**, **✓ and ✗ marks copy into another PDF** just like text boxes — as long as you copy them while still in **Chú thích**, before pressing **Xong**. **Redactions** will always stay flattened: the tool exists to **destroy** what is underneath, and a re-editable redaction is not a redaction."
             ),
             T(
               "**Trang xoay và trang ngang cũng sửa lại được.** Trên trang có `/Rotate` — bản scan nằm ngang, bản vẽ A3, hoặc trang bạn vừa bấm **Xoay** — mọi đối tượng sống đều giữ nguyên là đối tượng sống (từ v0.2.58). File **trộn cả trang dọc lẫn trang ngang** cũng vậy: mỗi trang được tính riêng, nên **áp dụng xong không trang nào tự quay** và hình không lệch sang trang khác.",
@@ -804,6 +843,8 @@
             [T("Ctrl + lăn chuột", "Ctrl + wheel"), T("Phóng to bám theo con trỏ", "Zoom around the pointer")],
             ["F4", T("Ẩn / hiện cột trang", "Hide / show the page list")],
             ["F11", T("Toàn màn hình (Esc để thoát)", "Full screen (Esc exits)")],
+            ["Ctrl+\\", T("Chia đôi màn hình (bật / tắt khung xem chỉ đọc)", "Split view (toggle the read-only pane)")],
+            ["Ctrl+Shift+\\", T("Thêm một khung xem nữa (tối đa 3 khung)", "Add another view pane (three panes max)")],
             ["Esc", T("Đóng hộp thoại đang mở (như bấm Hủy)", "Close the open dialog (same as Hủy)")],
             ["↑ / ↓ · PageUp / PageDown", T("Trang trước / trang kế", "Previous / next page")],
             ["Delete", T("Xoá trang đang chọn", "Delete the selected pages")],

@@ -48,8 +48,15 @@ function check(name, actual, expected) {
 
 // Real prototype chain (so handleTabKey → cycleTab → activateTab resolves exactly
 // as in the app), with only the two side-effecting methods stubbed.
+//
+// `viewPanes` / `paneRatios` are set for the same reason `tabs` is: the real
+// constructor always sets them, and _layout → _rects → _livePanes reads them. A
+// fixture that leaves them out is testing an object the app can never produce — the
+// fix belongs here, NOT in a `this.viewPanes || []` guard in tabs.js.
 function mk(ids, activeId) {
   const w = Object.create(P);
+  w.viewPanes = [];
+  w.paneRatios = null;
   w.tabs = ids.map((id) => ({ id }));
   w.activeId = activeId === undefined ? ids[0] : activeId;
   w._emit = () => {};
@@ -300,6 +307,8 @@ console.log("\n-- snapshotSession (chụp cái gì, bỏ cái gì) --");
 // real TabbedWindow whose Electron bits are stubbed.
 function fakeWin(tabs, activeId, opts = {}) {
   const w = Object.create(P);
+  w.viewPanes = [];
+  w.paneRatios = null;
   w.tabs = tabs;
   w.activeId = activeId;
   w._closing = !!opts.closing;
@@ -338,6 +347,61 @@ check(
   "nhiều cửa sổ",
   snapWith([fakeWin([tab(1, "a.pdf")], 1), fakeWin([tab(2, "b.pdf"), tab(3, "c.pdf")], 3)]).windows.map((w) => w.tabs),
   [["a.pdf"], ["b.pdf", "c.pdf"]]
+);
+
+// ---- split view in the session (v0.2.69) ----------------------------------
+// The rule that matters most here is what is NOT written: a window with no split
+// must produce the SAME object it produced before this feature existed, byte for
+// byte, because session.json is also read by versions that never heard of panes.
+console.log("\n-- snapshotSession: chia khung --");
+const livePane = (p) => ({ view: { webContents: { isDestroyed: () => false } }, path: p || null });
+function splitWin(tabs, activeId, panes, ratios) {
+  const w = fakeWin(tabs, activeId);
+  w.viewPanes = panes;
+  w.paneRatios = ratios || null;
+  return w;
+}
+check(
+  "không chia khung → KHÔNG có khoá panes/ratios (file cũ không đổi một byte)",
+  Object.keys(snapWith([fakeWin([tab(1, "a.pdf")], 1)]).windows[0]).sort(),
+  ["active", "bounds", "maximized", "tabs"]
+);
+check(
+  "1 khung xem → nhớ đường dẫn của khung",
+  snapWith([splitWin([tab(1, "a.pdf")], 1, [livePane("b.pdf")])]).windows[0].panes,
+  ["b.pdf"]
+);
+check(
+  "nhớ tỷ lệ khi đã kéo rãnh",
+  snapWith([splitWin([tab(1, "a.pdf")], 1, [livePane("b.pdf")], [0.7, 0.3])]).windows[0].ratios,
+  [0.7, 0.3]
+);
+check(
+  "chưa kéo rãnh → không ghi ratios (mặc định do splitRects quyết)",
+  snapWith([splitWin([tab(1, "a.pdf")], 1, [livePane("b.pdf")])]).windows[0].ratios,
+  undefined
+);
+// A ratio list whose length no longer matches the pane count is a leftover from a
+// pane that has since been closed; writing it would restore a divider that belongs
+// to a layout the user no longer has.
+check(
+  "ratios lệch số khung → bỏ, không ghi rác",
+  snapWith([splitWin([tab(1, "a.pdf")], 1, [livePane("b.pdf")], [0.5, 0.25, 0.25])]).windows[0].ratios,
+  undefined
+);
+// An empty pane keeps its SLOT: the ratios are indexed by position, so dropping it
+// would shift the divider of every pane beside it.
+check(
+  "khung xem chưa chọn tài liệu → vẫn giữ chỗ (null)",
+  snapWith([splitWin([tab(1, "a.pdf")], 1, [livePane(null), livePane("c.pdf")])]).windows[0].panes,
+  [null, "c.pdf"]
+);
+const deadPaneWin = splitWin([tab(1, "a.pdf")], 1, [livePane("b.pdf"), livePane("c.pdf")]);
+deadPaneWin.viewPanes[0].view.webContents.isDestroyed = () => true;
+check(
+  "khung xem đã chết → không ghi vào phiên",
+  snapWith([deadPaneWin]).windows[0].panes,
+  ["c.pdf"]
 );
 
 console.log("\n-- session.js (luật ghi ra đĩa) --");
@@ -396,6 +460,8 @@ console.log("\n-- chế độ toàn màn hình (đọc) --");
 // declaration would hoist over it and quietly break the detach tests.
 function mkPresentWin(ids, { presenting = false, fullScreen = false } = {}) {
   const w = Object.create(P);
+  w.viewPanes = [];
+  w.paneRatios = null;
   w.tabs = ids.map((id) => ({ id, view: { setBounds: (b) => (w._bounds[id] = b), webContents: { isDestroyed: () => false, send: (ch, v) => w._sent.push([id, ch, v]) } } }));
   w.activeId = ids[0];
   w._presenting = presenting;

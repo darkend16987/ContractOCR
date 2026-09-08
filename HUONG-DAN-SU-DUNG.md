@@ -120,6 +120,26 @@ Chỉ cần **một file duy nhất**:
 >   ở **cửa sổ bạn đang kéo**. Cột trang bên nhận đang thu gọn thì **giữ con trỏ trên mép tab của nó
 >   một nhịp**, cột sẽ tự bung; kéo đi mà không thả thì nó thu lại như cũ.
 
+> ◫ **Chia đôi màn hình — xem hai tài liệu cạnh nhau (từ v0.2.69):**
+> - **`Ctrl+\`** (hoặc nút **◫** cạnh dấu **+** trên dải tab) tách cửa sổ làm hai: **khung trái** là
+>   tài liệu bạn đang sửa, **khung phải** là một **khung xem chỉ đọc**. Bấm `Ctrl+\` lần nữa để đóng.
+> - Đang mở **một** file thì khung xem mở **chính file đó** — đây là ca dùng chính: xem trang 40
+>   trong lúc đang sửa trang 5, khỏi phải cuộn qua cuộn lại.
+> - Bấm **tên file** trên đầu khung xem để đổi nguồn: *Cùng tài liệu khung chính* · một **tab** đang
+>   mở · **Mở file khác…** (chọn bất kỳ PDF nào trên máy).
+> - **Kéo rãnh** giữa hai khung để đổi tỷ lệ. Tỷ lệ đó — và cả việc đang chia khung — được **nhớ lại
+>   khi mở app lần sau**. **`Ctrl+Shift+\`** thêm khung thứ ba (tối đa 3 khung).
+> - **Khung xem không sửa được, và đó là điều làm cho việc mở cùng một file hai lần an toàn:** chỉ
+>   một khung ghi được, nên không có chuyện bản lưu này đè mất bản lưu kia. **`Ctrl+S`, In, Hoàn
+>   tác luôn thuộc về khung chính**, không bao giờ bắn sang khung xem.
+> - Khung xem hiển thị **bản đã lưu trên đĩa** và nói rõ *"bản lưu HH:MM"*. Bấm `Ctrl+S` ở khung
+>   chính là nó **tự nạp lại**, và **giữ nguyên trang bạn đang đọc**.
+> - Đang xem một file ở khung phải mà muốn sửa nó? Bấm **Sửa file này** — nó chuyển sang khung chính,
+>   còn tài liệu đang sửa dời sang khung xem. Hai file vẫn cạnh nhau, không file nào biến mất.
+> - Vài điều khung xem **không** làm (đúng thiết kế, không phải lỗi): không nhận trang kéo sang (thả
+>   vào **khung chính**) · file **có mật khẩu** phải mở ở khung chính · trang đang **ẩn bằng mật
+>   khẩu** hiện ra dạng **trang giữ chỗ**.
+
 > ⌨️ **Menu & phím tắt** (thanh menu trên cùng: Tập tin · Chỉnh sửa · Trang · Chuyển đổi · Hiển thị · Trợ giúp):
 > - **Ctrl+O** Mở · **Ctrl+S** Lưu · **Ctrl+Shift+S** Lưu thành…
 >   (Ctrl+S ghi đè thẳng vào file đang mở; file kéo–thả/chưa lưu thì hỏi nơi lưu.)
@@ -135,6 +155,7 @@ Chỉ cần **một file duy nhất**:
 >   cần, vì trên bản vẽ A0 cả trang không lọt màn hình ở tỷ lệ nào cao hơn.
 > - **↑ / ↓** (ở cửa sổ xem trang) nhảy sang trang trước / trang kế.
 > - **Delete** Xóa trang đang chọn.
+> - **Ctrl+\\** Chia đôi màn hình (bật/tắt khung xem chỉ đọc) · **Ctrl+Shift+\\** thêm một khung xem.
 >
 > 💡 **Cột trang chạy theo bạn:** cuộn tài liệu tới đâu, thumbnail trang đó **sáng lên** (số trang đổi
 > màu) và cột trang **tự trượt** để trang đó luôn nằm trong khung nhìn. Đây chỉ là dấu "bạn đang ở đây"
@@ -262,8 +283,12 @@ của Word. Mở bằng `Ctrl+H` hoặc nút **⇄** ở cuối ô *Tìm trong t
 >   lá, ✗ đỏ — nên đổi màu dấu ✗ không làm đổi màu bút tô sáng hay vẽ tay.
 > - Đã đặt rồi vẫn **chọn / kéo di chuyển / kéo 4 góc đổi cỡ** được (giữ Shift để giữ đúng tỷ lệ), và
 >   **Ctrl+Z** hoàn tác được.
+> - **Copy sang file khác (từ v0.2.69):** đánh dấu một lần cho vừa cỡ, vừa màu, rồi **Ctrl+C** /
+>   **Ctrl+V** sang trang khác, **tab khác** hoặc **file PDF khác** — y như hộp văn bản. Tiện khi phải
+>   tick cùng một ô trên hàng chục bộ hồ sơ.
 > - Lưu ý: sau khi bấm **Xong**, dấu ✓/✗ được **dán chết** vào trang (như vẽ tay và khoanh vùng) — không
->   sửa lại được như hộp văn bản, ghi chú hay ảnh.
+>   sửa lại được như hộp văn bản, ghi chú hay ảnh, và cũng **không copy được nữa**. Vậy nên **copy khi
+>   còn đang trong Chú thích**, trước khi bấm Xong; clipboard sống sót qua lần bấm Xong đó.
 
 > **Chọn nhiều mục & sao chép sang trang khác (từ v0.2.52):** dưới công cụ **Chọn**:
 > - **Giữ Ctrl bấm** để thêm/bớt mục vào vùng chọn (bấm lại lần nữa là bỏ mục đó ra). Chọn nhiều
@@ -275,7 +300,7 @@ của Word. Mở bằng `Ctrl+H` hoặc nút **⇄** ở cuối ô *Tìm trong t
 >   trí cũ** (tiện để lặp lại một khoanh mây hay một hộp chữ ở cùng chỗ trên nhiều trang); dán lại
 >   trên **cùng** trang thì mỗi bản lệch xuống một chút cho khỏi đè nhau. Dán vào trang **nhỏ hơn**
 >   thì cả nhóm tự lùi vào trong trang, **không** bị rời ra.
-> - **Sang hẳn file PDF khác (từ v0.2.67):** copy ở file này rồi **Ctrl+V** ở **tab khác** hoặc
+> - **Sang hẳn file PDF khác (từ v0.2.67; thêm dấu ✓/✗ từ v0.2.69):** copy ở file này rồi **Ctrl+V** ở **tab khác** hoặc
 >   **cửa sổ khác** — kể cả tab bạn mới mở **sau** khi đã copy. Bản dán giữ nguyên vị trí, cỡ chữ,
 >   phông, màu và nền; dán vào file có khổ giấy nhỏ hơn thì cả nhóm tự lùi vào trong tờ. Tab đích
 >   chưa bật **Chỉnh sửa** thì app tự bật giúp. Riêng **ảnh** chỉ dán được **trong cùng một tab**

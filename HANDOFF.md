@@ -4,7 +4,105 @@
 > [DESIGN.md](DESIGN.md) (kiến trúc), [ROADMAP.md](ROADMAP.md) (tiến độ chi tiết),
 > [SETUP.md](SETUP.md) (dựng môi trường).
 
-_Cập nhật: 2026-09-07 · v0.2.68 đã phát hành (dưới đây) · v0.2.67 là bản trước đó_
+_Cập nhật: 2026-09-08 · v0.2.69 đã phát hành (dưới đây) · v0.2.68 là bản trước đó_
+
+> **v0.2.69 — chia đôi màn hình (khung xem chỉ đọc), và dấu ✓ / ✗ copy được sang file khác.**
+>
+> Người dùng hỏi **khả thi hay không**: xem song song 2 file trong 1 cửa sổ, kiểu Revu, nhưng
+> **không cần so sánh**. Nên việc bắt đầu bằng **đo và chốt phạm vi**, không bằng code — toàn
+> bộ khảo sát, 5 probe Giai đoạn 0, kế hoạch S1.1→S1.13 và nhật ký thực hiện nằm ở
+> [docs/RESEARCH-2026-09-08-split-view.md](docs/RESEARCH-2026-09-08-split-view.md).
+>
+> **Kiến trúc tab hiện có đã đúng hình dạng cần.** Một cửa sổ là `BaseWindow` + N
+> `WebContentsView`; hôm nay nó gắn **một** view tài liệu, split view chỉ là gắn thêm 1–2 view
+> nữa. Toàn bộ quyết định "một khung" nằm trong **12 dòng** `_layout()`.
+>
+> **Quyết định của người dùng đã xoá rủi ro nặng nhất của bản thiết kế đầu:** khung 2/3 là
+> **CHỈ ĐỌC**. Nhờ đó (a) mở **cùng một file** hai lần không thể thành "bản lưu này đè mất bản
+> lưu kia" — chỉ một renderer ghi được; (b) `send(cmd)` ở `main.js` vẫn gọi `activeContents()`
+> nên **Ctrl+S / In / Undo / Ctrl+W luôn về khung chính**, không cần theo dõi focus, không cần
+> vòng báo hiệu ở thanh tab; (c) bảng ảnh hưởng thu từ **14 mục xuống 6**.
+>
+> **Pane thuộc CỬA SỔ, không thuộc TAB** (BI-79). Vì thế `activateTab` · `destroyTab` ·
+> `detachTab` · `moveTabTo` · `tearOutTab` · `adoptTab` · `closeTab` · `Ctrl+W` · `Ctrl+Tab` ·
+> `activeContents` **không đổi một dòng** — đúng như bảng ảnh hưởng dự đoán trước khi viết.
+>
+> **Hai con số tôi đoán đã bị chính phép đo bác bỏ, và được sửa tại chỗ:** `MAIN_MIN_W` đoán
+> 420 → đo được ở 420px thanh công cụ khung chính ăn **49%** chiều cao và ở 380px trang **tràn
+> ngang**, nên thành **620** (ưu tiên) / **420** (sàn tuyệt đối). Và bảng RAM P-E lượt đầu
+> **không hợp lệ** (chạy thiếu `backgroundThrottling: false` nên khung `app1` không rasterise
+> gì trong khi `view1` thì có) — đã rút lại con số "48–59%" và đo lại ba điểm: khung chỉ-đọc
+> tốn **≤53%** (bộ 300 trang A1) đến **≤81%** (file 120 MB ảnh đặc) so với renderer đầy đủ.
+>
+> **Trang xem mới là bản rút gọn có chủ đích, không phải bản sao `app.js`.**
+> `renderer/view.{html,css,js}` (~420 dòng) + `src/view-preload.js` — **8 hàm**, so với
+> `src/preload.js` 277 dòng / 43 kênh. Không ghi được gì, không chạm sidecar, không biết tên
+> renderer nào khác (BI-55). Nhưng nó **bắt buộc** cõng theo hai bảo vệ của viewer chính, và
+> mất cái nào cũng là lỗi **im lặng**: hạn mức raster BI-78 (nay tách ra
+> `renderer/raster-cap.js` để cả hai trang dùng **một** định nghĩa, không phải hai bản sao) và
+> việc nhả bitmap trang trôi xa để RAM phẳng theo số trang.
+>
+> **Rãnh kéo không cần thêm tiến trình.** Khi chia khung, chrome view (thanh tab, đã có) được
+> cho cao **hết cửa sổ** thay vì 40px; các view tài liệu `addChildView` sau nên nằm **trên**
+> nó và che kín — trừ đúng các dải rãnh 6px. Cơ chế kéo chốt **bằng đo** (probe P-B):
+> `setPointerCapture` bắn **đủ 15/15** `pointermove` kể cả khi con trỏ đã đi sâu vào lãnh thổ
+> view anh em, còn HTML5 drag bắn **0** lần ở giữa và còn rơi một `drop` lạc xuống tài liệu
+> bên dưới.
+>
+> **Hai cái bẫy của vòng phản hồi khi kéo rãnh, và cách chặn** (BI-79 §7–8): gọi `_emit()`
+> trong `setPaneRatios` sẽ **dựng lại toàn bộ DOM thanh tab — kể cả chính tay nắm đang giữ
+> pointer capture**, phiên kéo chết ngay frame đầu; còn để thanh tab tự đặt tay nắm theo con
+> trỏ thì tay nắm **rời khỏi biên thật** ngay khi chạm sàn `MAIN_MIN_W`, trừ phi chép các hằng
+> số đã đo sang renderer. Đường đã chọn: main `_layout()` rồi đẩy **`split:geom`** (chỉ hình
+> học) về thanh tab, thanh tab **chỉ đặt lại vị trí** tay nắm.
+>
+> **Thả trang vào khung xem: từ chối RA TIẾNG** (BI-80). `docViewScreenRect` co về khung chính
+> nên trang thả vào khung xem vốn đã không rơi vào tài liệu nào — nhưng kết quả là `"none"`,
+> **giống hệt** thả ra desktop, và một cử chỉ nhắm vào vùng hình-dạng-tài-liệu mà không xảy ra
+> gì thì đọc là lỗi. Thêm `readonly` + toast. Kế hoạch viết "dùng `paneAt(point)`"; khi làm
+> thật thì thấy **sai chỗ** — "điểm này thuộc mặt phẳng nào" là câu hỏi về **tất cả cửa sổ
+> cùng lúc** (chúng chồng nhau, cái ở trên thắng), và phép giải đó đã nằm sẵn, thuần và có
+> test, trong `classifyPageDrop`. `paneAt` bị **thay** bằng `viewPaneScreenRects()`; hit-test
+> riêng từng cửa sổ sẽ chèn trang vào tài liệu người dùng **không nhìn thấy** ở điểm đó.
+>
+> **Phiên: thêm khoá mới thì KHÔNG nâng `VERSION`** (BI-81). `session.js` vứt bỏ file có `v`
+> khác — nâng version để thêm một khoá **tuỳ chọn** sẽ khiến **mọi máy đang cài** mất phiên nó
+> đang giữ. `panes`/`ratios` chỉ được ghi **khi thật sự có chia khung**, nên cửa sổ thường cho
+> ra **đúng object cũ**, không thừa khoá nào; test so khớp **đúng bộ khoá**.
+>
+> **Dấu ✓ / ✗ copy sang file khác** — [docs/RESEARCH-2026-09-08-copy-check-marks.md](docs/RESEARCH-2026-09-08-copy-check-marks.md).
+> Copy trong **cùng** một file vốn đã chạy; cái chặn là **một biểu thức**:
+> `isShareableKind = (k) => isManagedKind(k) && …`. Chẩn đoán (BI-82): nó buộc **hai câu hỏi
+> khác nhau** làm một — "kind này sống sót qua một lần lưu không" (`MANAGED_KINDS`) và "kind
+> này gửi sang renderer khác có nghĩa không". Chúng trùng nhau ở gần hết mọi kind, và ✓ / ✗ là
+> đúng chỗ chúng khác: **không** round-trip (vẫn flatten, BI-42 **không đổi một byte**) nhưng
+> **hoàn toàn** gửi được — vài chục byte JSON, và ở tài liệu đích nó đúng bằng thứ công cụ ✓
+> tạo ra tại chỗ. Thêm `SHARE_EXTRA = {check, cross}`; `highlight`/`under`/`strike`/`redact`
+> **không** được cho qua (chúng bám vào đoạn chữ, hoặc là lời hứa về nội dung của chính file
+> này) — "cho tất cả qua" là sai, không phải là rộng rãi.
+>
+> **Kiểm chứng.** 21/21 lưới node xanh; `test:pagedrop` 63→82, `test:tabs` 113→120,
+> `test:clip` 56→59, `test:split` 306 ca mới, `test:raster` 24 ca mới (có bản chép **nguyên
+> văn** hàm cũ ở `9717b10` + lưới 280 ca chứng minh **0 trôi** sau khi tách file). Probe
+> Electron chạy `src/tabs.js` + `renderer/view.*` + `renderer/shell.*` **thật**: **42/43**.
+>
+> **Ca đỏ duy nhất là môi trường, không phải mã, và có chạy đối chứng:** khung xem không
+> rasterise trang nào vì phiên chạy lúc đó **không có display surface** — `capturePage` trả
+> `"Current display surface not available for capture"`, và đo trong chính renderer đó thì
+> `requestAnimationFrame` **timeout**, `IntersectionObserver` **timeout** (mà nó chính là thứ
+> khởi động bộ dựng trang lười), còn canvas 2D vẽ + đọc lại pixel thì **đúng**. Chạy lại probe
+> **cũ** — đường dựng trang không đổi một dòng — trong cùng phiên cũng cho `canvases: 0` với
+> đúng lỗi đó, trong khi sáng cùng ngày nó cho `canvases: 2, maxW: 584`. Ghi đúng như vậy, ở
+> §12 của memo, chứ không dán nhãn "đạt".
+>
+> **Một đường kiểm đã bị BỎ giữa đường:** thử E2E bằng ảnh chụp màn hình thì shot đầu chụp cả
+> **màn hình nền của người dùng** — nội dung riêng tư không liên quan tới việc. Đã xoá PNG và
+> chuyển sang probe cấu trúc (đọc bounds thật + DOM thật), vừa chắc hơn vừa không đụng gì.
+>
+> **Còn để ngỏ (Giai đoạn 2/3, không chặn ai):** Ctrl+F tìm chữ trong khung xem · chia **ngang** ·
+> cuộn đồng bộ (có tắt/bật — chỗ split view chạm gần "so sánh" nhất, đúng thứ yêu cầu nói
+> không cần) · in từ khung xem · gộp phần pane cuộn dùng chung với `compare.js` (nợ **M4** ở
+> `PERF-MEMORY`).
 
 > **v0.2.68 — dải zoom 20–500%, và một đường làm trang A0 trắng bệch đã bị bịt.**
 >

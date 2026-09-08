@@ -1417,6 +1417,9 @@
     <script src="vendor/pdf.min.js"></script>
     <script src="i18n.js"></script>
     <script src="page-range.js"></script>
+    <!-- raster-cap.js: hạn mức bitmap trang (BI-78). Phải nạp TRƯỚC app.js —
+         renderPageCanvas gọi window.RasterCap.viewRasterDpr trên mọi trang. -->
+    <script src="raster-cap.js"></script>
     <!-- wire.js must load BEFORE app.js / text-edit.js / compare.js / editor.js /
          sign.js: they call pdfJsonBody / b64ToU8 by bare name out of the shared
          script scope. -->

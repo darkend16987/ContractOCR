@@ -145,12 +145,95 @@ check("thiếu z → coi như 0, không thắng cửa sổ có z", drop(1200, 50
 });
 
 // ---------------------------------------------------------------------------
+// Split view (v0.2.69). A read-only pane is document-shaped and sits right beside
+// the document that CAN take pages, so "aimed at the pane" has to be told apart
+// from "let go over the desktop": the first needs an explanation, the second needs
+// silence. See docs/RESEARCH-2026-09-08-split-view.md §5.1 #4.
+console.log("\n-- classifyPageDrop: khung xem chỉ đọc (từ chối, không im lặng) --");
+
+// One window split in two: document 0..800, gutter, read-only pane 806..1200.
+const SPLIT = [
+  {
+    key: "A",
+    rect: { x: 0, y: 40, width: 800, height: 960 },
+    z: 2,
+    panes: [{ x: 806, y: 40, width: 394, height: 960 }],
+  },
+  { key: "B", rect: { x: 1400, y: 40, width: 500, height: 960 }, z: 1 },
+];
+check("thả vào khung xem của CỬA SỔ KHÁC → readonly", drop(1000, 500, "B", SPLIT), {
+  action: "readonly",
+  key: "A",
+});
+check("thả vào khung xem của CHÍNH cửa sổ nguồn → readonly", drop(1000, 500, "A", SPLIT), {
+  action: "readonly",
+  key: "A",
+});
+// The reorder gesture is untouched: everything inside the source DOCUMENT is still
+// "self", which is the whole of BI-57's promise.
+check("thả trong tài liệu của chính mình khi đang chia khung → vẫn self", drop(400, 500, "A", SPLIT), {
+  action: "self",
+  key: "A",
+});
+check("thả vào tài liệu cửa sổ khác khi đang chia khung → vẫn send", drop(1500, 500, "A", SPLIT), {
+  action: "send",
+  key: "B",
+});
+// The gutter is not a pane and not a document: nothing there.
+check("thả đúng vào rãnh giữa hai khung → none", drop(803, 500, "B", SPLIT), { action: "none", key: null });
+check("thả ra ngoài mọi cửa sổ → none (im lặng, không phải từ chối)", drop(1300, 500, "A", SPLIT), {
+  action: "none",
+  key: null,
+});
+
+// z decides between a pane and a document just as it decides between two documents:
+// whichever window is in FRONT at that point is the one the user is aiming at.
+const PANE_OVER_DOC = [
+  { key: "A", rect: { x: 0, y: 40, width: 400, height: 960 }, z: 5, panes: [{ x: 406, y: 40, width: 600, height: 960 }] },
+  { key: "B", rect: { x: 500, y: 40, width: 800, height: 960 }, z: 1 },
+];
+check("khung xem của cửa sổ TRƯỚC che tài liệu cửa sổ sau → readonly", drop(700, 500, "C", PANE_OVER_DOC), {
+  action: "readonly",
+  key: "A",
+});
+const DOC_OVER_PANE = PANE_OVER_DOC.map((t) => (t.key === "B" ? { ...t, z: 9 } : t));
+check("tài liệu của cửa sổ TRƯỚC che khung xem cửa sổ sau → send", drop(700, 500, "C", DOC_OVER_PANE), {
+  action: "send",
+  key: "B",
+});
+
+// A window with no split must behave EXACTLY as it did before this feature existed.
+check("panes thiếu hẳn (cửa sổ không chia khung) → không đổi gì", drop(1200, 500, "A", RECTS), {
+  action: "send",
+  key: "B",
+});
+check(
+  "panes là rác → bỏ qua, không ném",
+  Tabs.classifyPageDrop({ x: 1200, y: 500 }, "A", [{ key: "B", rect: RECTS[1].rect, z: 1, panes: "nope" }]),
+  { action: "send", key: "B" }
+);
+check(
+  "phần tử pane rác bị lọc",
+  Tabs.classifyPageDrop({ x: 900, y: 500 }, "A", [
+    { key: "B", rect: { x: 0, y: 40, width: 500, height: 960 }, z: 1, panes: [null, undefined, { x: 800, y: 40, width: 400, height: 960 }] },
+  ]),
+  { action: "readonly", key: "B" }
+);
+
+// ---------------------------------------------------------------------------
 console.log("\n-- docViewScreenRect (vùng thả = đúng vùng _layout vẽ) --");
 
 // Real prototype, plain-object window: the strip band must be excluded exactly as
 // _layout excludes it, or the cue and the hit test disagree by 40px.
-function mkWin({ x = 100, y = 200, width = 1000, height = 800, presenting = false } = {}) {
+function mkWin({ x = 100, y = 200, width = 1000, height = 800, presenting = false, panes = 0 } = {}) {
   const w = Object.create(P);
+  // Real constructor always sets these; _rects() reads them. See the note in
+  // tabs-logic.test.js — the fixture catches up with the object, not the reverse.
+  // A pane is only ever reached through _livePanes(), which asks its webContents
+  // whether it is still alive — so that is the whole shape a fixture pane needs.
+  w.viewPanes = [];
+  for (let i = 0; i < panes; i++) w.viewPanes.push({ view: { webContents: { isDestroyed: () => false } } });
+  w.paneRatios = null;
   w._presenting = presenting;
   w.base = {
     isDestroyed: () => false,
@@ -175,6 +258,40 @@ check("cửa sổ không có chiều rộng → không có vùng thả", mkWin({
 const dead = mkWin();
 dead.base.isDestroyed = () => true;
 check("cửa sổ đã bị huỷ → null", dead.docViewScreenRect(), null);
+
+// Split: the drop zone SHRINKS to the editable pane, and the read-only panes are
+// reported separately. Both come out of the same _rects() call _layout uses, so
+// the rectangle tested here is the rectangle drawn on screen — the one property
+// that keeps a cue from landing 400px away from the pages it is pointing at.
+const SPLIT_W = mkWin({ panes: 1 });
+check("chia 1 khung: vùng thả co lại đúng khung chính", SPLIT_W.docViewScreenRect(), {
+  x: 100,
+  y: 240,
+  width: 620,
+  height: 760,
+});
+check("chia 1 khung: rect khung xem (toạ độ màn hình)", SPLIT_W.viewPaneScreenRects(), [
+  { x: 726, y: 240, width: 374, height: 760 },
+]);
+check("kề khít qua rãnh 6px", SPLIT_W.docViewScreenRect().x + SPLIT_W.docViewScreenRect().width + 6, 726);
+check("không chia khung → không có rect khung xem", mkWin().viewPaneScreenRects(), []);
+const SPLIT2 = mkWin({ width: 1600, panes: 2 });
+check("chia 2 khung → 2 rect, trái sang phải", SPLIT2.viewPaneScreenRects().map((r) => r.x), [
+  SPLIT2.docViewScreenRect().x + SPLIT2.docViewScreenRect().width + 6,
+  SPLIT2.viewPaneScreenRects()[0].x + SPLIT2.viewPaneScreenRects()[0].width + 6,
+]);
+const deadPane = mkWin({ panes: 1 });
+deadPane.viewPanes[0].view.webContents.isDestroyed = () => true;
+check("khung xem đã chết → không còn rect, và vùng thả trở lại cả dải", deadPane.viewPaneScreenRects(), []);
+check("…và khung chính lấy lại toàn bộ bề rộng", deadPane.docViewScreenRect(), {
+  x: 100,
+  y: 240,
+  width: 1000,
+  height: 760,
+});
+const deadWin = mkWin({ panes: 1 });
+deadWin.base.isDestroyed = () => true;
+check("cửa sổ đã huỷ → không có rect khung xem", deadWin.viewPaneScreenRects(), []);
 
 // ---------------------------------------------------------------------------
 console.log("\n-- docViewLocalPoint (toạ độ màn hình → toạ độ trong view) --");

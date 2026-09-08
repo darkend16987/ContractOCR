@@ -106,13 +106,14 @@ group("1. share filter — what may cross a tab boundary");
 // should have to be considered here, not silently inherited.
 const MANAGED_KINDS = evalExpr(cutConst(CODEC_SRC, "MANAGED_KINDS", "managed-codec.js"));
 const SHARE_EXCLUDED = evalExpr(cutConst(EDITOR_SRC, "SHARE_EXCLUDED", "editor.js"));
+const SHARE_EXTRA = evalExpr(cutConst(EDITOR_SRC, "SHARE_EXTRA", "editor.js"));
 const isShareableKind = evalExpr(
-  "(function(){ const MANAGED_KINDS = arguments[0], SHARE_EXCLUDED = arguments[1];" +
+  "(function(){ const MANAGED_KINDS = arguments[0], SHARE_EXCLUDED = arguments[1], SHARE_EXTRA = arguments[2];" +
     " const isManagedKind = (k) => MANAGED_KINDS.has(k);" +
     " return " +
     cutConst(EDITOR_SRC, "isShareableKind", "editor.js") +
     "; })"
-)(MANAGED_KINDS, SHARE_EXCLUDED);
+)(MANAGED_KINDS, SHARE_EXCLUDED, SHARE_EXTRA);
 
 for (const k of ["text", "note", "arrow", "box", "ellipse", "cloud", "cloudpen", "draw"]) {
   check(`${k} crosses tabs`, isShareableKind(k) === true);
@@ -124,10 +125,26 @@ check("SHARE_EXCLUDED is exactly {image}", SHARE_EXCLUDED.size === 1 && SHARE_EX
   ...SHARE_EXCLUDED,
 ].join(","));
 
-// Kinds that flatten to pixels on bake were never live objects to copy in the first
-// place; they must not silently start crossing either.
-for (const k of ["check", "cross", "highlight", "under", "strike", "dim", "redact"]) {
-  check(`${k} does not cross (not a managed kind)`, isShareableKind(k) === false);
+// ✓ and ✗ cross from v0.2.69 (asked for by name: "copy dấu tích V hoặc x … file
+// này sang file khác"). They are NOT managed, and that is the point of the test:
+// "may this cross a tab boundary" and "does this survive a save" are two different
+// questions, and the ✓ is the kind where the answers differ. A pasted ✓ is exactly
+// the annotation the ✓ tool would have produced in the destination — nothing about
+// the bake changes, so BI-42 is untouched.
+for (const k of ["check", "cross"]) {
+  check(`${k} crosses tabs (v0.2.69)`, isShareableKind(k) === true);
+  check(`${k} is still NOT a managed kind (bake is unchanged)`, MANAGED_KINDS.has(k) === false);
+}
+check("SHARE_EXTRA is exactly {check, cross}", SHARE_EXTRA.size === 2 && SHARE_EXTRA.has("check") && SHARE_EXTRA.has("cross"), [
+  ...SHARE_EXTRA,
+].join(","));
+
+// The rest of the flatten-on-bake family did NOT get an opt-in. Highlight/underline/
+// strike are anchored to text runs the destination document does not have, and a
+// redaction is a promise about THIS file's content — none of them mean anything
+// pasted into another document, so a blanket "everything crosses" would be wrong.
+for (const k of ["highlight", "under", "strike", "dim", "redact"]) {
+  check(`${k} does not cross`, isShareableKind(k) === false);
 }
 
 // ---- 2. adopting a clip from another tab -----------------------------------

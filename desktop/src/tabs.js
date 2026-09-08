@@ -32,6 +32,169 @@ const TAB_STRIP_H = 40;
 const TEAR_PAD_X = 24;
 const TEAR_PAD_Y = 60;
 
+// ---- split view geometry (docs/RESEARCH-2026-09-08-split-view.md) ----------
+//
+// One window can show the ACTIVE TAB (full renderer, editable) beside up to two
+// READ-ONLY view panes. The panes belong to the WINDOW, not to a tab, which is why
+// nothing in the tab lifecycle below has to know about them.
+//
+// Every number here was MEASURED, not chosen (probe P-D, §10.3 of that doc): with a
+// 900px-tall pane, the main renderer's toolbar + breadcrumb + status bar eat
+//   380px → 52% of the pane AND the page starts scrolling sideways (broken)
+//   420px → 49%      470px → 44%      620px → 34%      700px → 30%      1360px → 21%
+// so 620 is the lowest width the editable pane is still usable at, and 420 is the
+// hard floor where it stops being merely cramped and starts being wrong.
+const SPLIT_GUTTER = 6; // draggable divider between panes
+const MAIN_MIN_W = 620;
+const MAIN_HARD_MIN_W = 420;
+// A read-only pane carries a single-line header (filename + page + zoom), nothing
+// that wraps, so its floor is set by "can you read a page in it", not by chrome.
+const VIEW_MIN_W = 260;
+const VIEW_HARD_MIN_W = 180;
+
+// Default split when the user has not dragged the divider yet: the editable pane
+// keeps the lion's share, because it is the one carrying a full toolbar.
+const DEFAULT_RATIOS = { 1: [0.6, 0.4], 2: [0.5, 0.25, 0.25] };
+
+// Read-only panes per window. Two, so the whole layout tops out at three panes —
+// the number the feature was scoped to, and the number the width budget supports
+// (620 + 6 + 260 + 6 + 260 = 1152px of content; see MAIN_MIN_W above).
+const MAX_VIEW_PANES = 2;
+
+// Do two paths point at the same document? Windows is case-insensitive and hands
+// back both separator styles depending on where a path came from (a dialog, argv,
+// a drop), so a plain === would miss a reload the user is entitled to.
+function samePath(a, b) {
+  if (!a || !b) return false;
+  const norm = (p) => path.resolve(String(p)).replace(/[\\/]+$/, "");
+  const x = norm(a);
+  const y = norm(b);
+  return process.platform === "win32" ? x.toLowerCase() === y.toLowerCase() : x === y;
+}
+
+function sumOf(a) {
+  let s = 0;
+  for (const x of a) s += x;
+  return s;
+}
+
+// `ratios` as the user last left them, sanitised into k positive fractions summing
+// to 1. Anything unusable (wrong length, NaN, zero or negative share, a stored file
+// from an older version) falls back to the default rather than to a pane of width 0 —
+// a zero-width pane is a renderer the user cannot see and cannot close.
+function normalizeRatios(ratios, k) {
+  const def = DEFAULT_RATIOS[k - 1] || [1];
+  if (!Array.isArray(ratios) || ratios.length !== k) return def.slice();
+  const clean = ratios.map((r) => (Number.isFinite(r) && r > 0 ? r : 0));
+  const total = sumOf(clean);
+  if (!(total > 0) || clean.some((r) => r <= 0)) return def.slice();
+  return clean.map((r) => r / total);
+}
+
+// Round fractional widths to integers whose sum is EXACTLY `total` (largest
+// remainder). Rounding each pane independently is what leaves a 1px seam or a 1px
+// overlap at odd window widths, and a seam between two native views shows through as
+// a flickering line of desktop.
+function largestRemainderRound(w, total) {
+  const floors = w.map((x) => Math.max(0, Math.floor(x)));
+  let left = Math.round(total) - sumOf(floors);
+  const order = w
+    .map((x, i) => ({ i, frac: x - Math.floor(x) }))
+    .sort((a, b) => b.frac - a.frac || a.i - b.i);
+  for (let n = 0; n < order.length && left > 0; n++, left--) floors[order[n].i]++;
+  // `left < 0` means the floors already overshot (only reachable with junk input);
+  // take the excess back from the widest pane so nothing ever goes negative.
+  while (left < 0) {
+    let widest = 0;
+    for (let i = 1; i < floors.length; i++) if (floors[i] > floors[widest]) widest = i;
+    if (floors[widest] <= 0) break;
+    floors[widest]--;
+    left++;
+  }
+  return floors;
+}
+
+// Pane widths for `usable` px of content (i.e. window width minus the gutters).
+// Three tiers on purpose: preferred minimums, then hard floors, then "the window is
+// smaller than even the floors" — where the ONLY honest answer is to share out what
+// there is proportionally. The function never returns a negative width and never
+// refuses to produce a layout: a caller that has already been told to split must get
+// something drawable, and it is the UI's job (not the geometry's) to say the window
+// is too narrow.
+function solveWidths(usable, n, ratios) {
+  const k = n + 1;
+  const fr = normalizeRatios(ratios, k);
+  let mins = [MAIN_MIN_W].concat(new Array(n).fill(VIEW_MIN_W));
+  if (sumOf(mins) > usable) mins = [MAIN_HARD_MIN_W].concat(new Array(n).fill(VIEW_HARD_MIN_W));
+  if (sumOf(mins) > usable) mins = new Array(k).fill(0);
+
+  let w = fr.map((f, i) => Math.max(mins[i], f * usable));
+  // Over budget: claw back only from panes that still have room above their floor,
+  // in proportion to how much room each has. Bounded loop — the proportional step
+  // converges, but a guard is cheaper than trusting floating point to land exactly.
+  for (let guard = 0; guard < 8 && sumOf(w) - usable > 1e-9; guard++) {
+    const over = sumOf(w) - usable;
+    const slack = w.map((x, i) => x - mins[i]);
+    const room = sumOf(slack);
+    if (room <= 1e-9) break; // everyone is on their floor; the round below absorbs it
+    const take = Math.min(over, room);
+    w = w.map((x, i) => x - (slack[i] / room) * take);
+  }
+  const short = usable - sumOf(w);
+  if (short > 1e-9) w = w.map((x, i) => x + fr[i] * short);
+  return largestRemainderRound(w, usable);
+}
+
+// THE one place split-view geometry is decided. Pure — no Electron, no DOM — so it
+// is unit-tested (test/split-layout.test.js) and so `_layout` and every hit test can
+// share it. `docViewScreenRect`'s comment already states the rule this obeys:
+// reading the layout anywhere with different arithmetic puts the hit test and the
+// pixels on screen out of step.
+//
+//   panes   how many READ-ONLY view panes (0, 1 or 2)
+//   ratios  [main, view1?, view2?] fractions; see normalizeRatios
+//
+// `chrome` is the tab-strip view. It is only a 40px band when nothing is split; the
+// moment a pane appears it takes the WHOLE window and the document views sit on top
+// of it, so the gutters are the only place it is exposed — that is what lets it own
+// the divider drag without a renderer process of its own (probe P-A).
+function splitRects(w, h, { stripH = TAB_STRIP_H, panes = 0, ratios } = {}) {
+  const W = Math.max(0, Math.round(w) || 0);
+  const H = Math.max(0, Math.round(h) || 0);
+  const y = Math.max(0, Math.min(Math.round(stripH) || 0, H));
+  const ph = Math.max(0, H - y);
+  const n = Math.max(0, Math.min(2, Math.round(panes) || 0));
+
+  if (!n) {
+    return {
+      chrome: { x: 0, y: 0, width: W, height: y },
+      main: { x: 0, y, width: W, height: ph },
+      views: [],
+      gutters: [],
+    };
+  }
+
+  const usable = Math.max(0, W - n * SPLIT_GUTTER);
+  const widths = solveWidths(usable, n, ratios);
+  const rects = [];
+  const gutters = [];
+  let x = 0;
+  for (let i = 0; i < widths.length; i++) {
+    rects.push({ x, y, width: widths[i], height: ph });
+    x += widths[i];
+    if (i < widths.length - 1) {
+      gutters.push({ x, y, width: SPLIT_GUTTER, height: ph });
+      x += SPLIT_GUTTER;
+    }
+  }
+  return {
+    chrome: { x: 0, y: 0, width: W, height: H },
+    main: rects[0],
+    views: rects.slice(1),
+    gutters,
+  };
+}
+
 let deps = null;
 function configure(d) {
   deps = d;
@@ -63,6 +226,15 @@ class TabbedWindow {
     });
     this.tabs = []; // [{ id, view, title, dirty, path, pendingPath }]
     this.activeId = null;
+    // Split view: up to two READ-ONLY panes (renderer/view.html) beside the active
+    // tab. They belong to the WINDOW, not to a tab — which is why nothing in the tab
+    // lifecycle below (activate / destroy / detach / tear out / Ctrl+W / Ctrl+Tab)
+    // has to know they exist. [{ view, path, name, ready, pending }]
+    this.viewPanes = [];
+    // Divider position as [main, view1?, view2?] fractions, or null for the default.
+    // Reset to null whenever the pane COUNT changes: a ratio for two panes means
+    // nothing for three, and splitRects would fall back anyway.
+    this.paneRatios = null;
     // Full-screen reading mode: the tab strip gives up its band so the document
     // really gets the whole screen. Mirrors the OS full-screen state, which can
     // also change without us (window controls) — see the listeners below.
@@ -118,18 +290,178 @@ class TabbedWindow {
     return { w: Math.max(0, b.width), h: Math.max(0, b.height) };
   }
 
-  _layout() {
-    if (this.base.isDestroyed()) return;
+  // Live panes, dropping any whose renderer has already gone. Every consumer of the
+  // pane list goes through this, so a destroyed view can never reach setBounds.
+  _livePanes() {
+    return this.viewPanes.filter((p) => p && p.view && !p.view.webContents.isDestroyed());
+  }
+
+  // The geometry this window is showing right now. ONE call, shared by _layout and
+  // by every hit test, so the pixels on screen and the rectangles we test against
+  // can never drift apart (the rule docViewScreenRect already states below).
+  _rects() {
     const { w, h } = this._contentSize();
     // Reading mode collapses the strip to nothing rather than detaching it: the
     // view stays in the tree with every listener intact, so leaving the mode is a
     // pure resize and can't lose the strip's state.
     const stripH = this._presenting ? 0 : TAB_STRIP_H;
-    this.strip.setBounds({ x: 0, y: 0, width: w, height: stripH });
+    return splitRects(w, h, { stripH, panes: this._livePanes().length, ratios: this.paneRatios });
+  }
+
+  _layout() {
+    if (this.base.isDestroyed()) return;
+    const r = this._rects();
+    // The chrome view is a 40px band with nothing split, and the WHOLE window as
+    // soon as a pane appears — the document views then sit on top of it and the
+    // gutters are the only place it shows through. That is what lets it own the
+    // divider drag with no renderer process of its own (probe P-A).
+    //
+    // It stays at the BOTTOM of the z-order because it is added once in the
+    // constructor and never re-added: addChildView on an existing child promotes it
+    // to the top (electron.d.ts:14226), so re-adding the chrome view would bury
+    // every document behind it.
+    this.strip.setBounds(r.chrome);
     const tab = this._active();
-    if (tab) {
-      tab.view.setBounds({ x: 0, y: stripH, width: w, height: Math.max(0, h - stripH) });
+    if (tab) tab.view.setBounds(r.main);
+    const panes = this._livePanes();
+    for (let i = 0; i < panes.length; i++) {
+      if (r.views[i]) panes[i].view.setBounds(r.views[i]);
     }
+  }
+
+  // ---- split view: read-only panes ---------------------------------------
+  //
+  // A pane shows a document AS SAVED ON DISK. It never writes, never registers a
+  // docId, never autosaves — so "the same file in two panes" cannot turn into "the
+  // second save ate the first", and that is the whole reason panes are read-only
+  // (docs/RESEARCH-2026-09-08-split-view.md §4.2).
+
+  // Open a read-only pane. `openPath` (optional) is the document it should show.
+  // Returns the pane, or null when the window already has the maximum.
+  addViewPane({ openPath = null } = {}) {
+    if (this.base.isDestroyed()) return null;
+    if (this._livePanes().length >= MAX_VIEW_PANES) return null;
+    const view = new WebContentsView({
+      webPreferences: {
+        preload: deps.viewPreload,
+        contextIsolation: true,
+        nodeIntegration: false,
+        sandbox: true,
+      },
+    });
+    deps.hardenNav(view.webContents);
+    deps.attachContextMenu(view.webContents);
+    const pane = { view, path: null, name: null, ready: false, pending: null };
+    this.viewPanes.push(pane);
+    this.base.contentView.addChildView(view);
+    view.webContents.loadFile(path.join(deps.RENDERER, "view.html"));
+    this.paneRatios = null; // the pane count changed; the old split no longer applies
+    this._layout();
+    this._emit(); // _emit() is also what remembers the session (Session.schedule)
+    if (openPath) this.setPaneSource(pane, openPath);
+    return pane;
+  }
+
+  // Point a pane at a file. A pane that has not finished loading parks the request
+  // and the view:ready handler flushes it — main pushes documents, panes never ask.
+  setPaneSource(pane, openPath) {
+    if (!pane || !openPath) return false;
+    pane.path = openPath;
+    pane.name = path.basename(openPath);
+    if (!pane.ready) {
+      pane.pending = openPath;
+      this._emit();
+      return true;
+    }
+    pane.pending = null;
+    deps.sendFileToPane(pane.view.webContents, openPath);
+    this._emit();
+    return true;
+  }
+
+  // A pane's renderer says it is listening. Flush whatever was parked for it.
+  paneReady(webContents) {
+    const pane = this.viewPanes.find((p) => p.view && p.view.webContents === webContents);
+    if (!pane) return;
+    pane.ready = true;
+    if (pane.pending) {
+      const p = pane.pending;
+      pane.pending = null;
+      deps.sendFileToPane(webContents, p);
+    }
+    // The pane missed every view:state sent while it was loading — including the
+    // one that decides whether "Sửa file này" is on its header.
+    this._emitPanes();
+  }
+
+  // The active tab saved to `savedPath` — every pane showing that same file is now
+  // looking at yesterday, so re-read it from disk. This is the ONLY thing that keeps
+  // "read-only pane shows the last save" honest.
+  reloadPanesForPath(savedPath) {
+    if (!savedPath) return;
+    for (const pane of this._livePanes()) {
+      if (pane.path && samePath(pane.path, savedPath)) {
+        deps.sendFileToPane(pane.view.webContents, pane.path, "view:reload");
+      }
+    }
+  }
+
+  closeViewPane(target) {
+    const idx = typeof target === "number" ? target : this.viewPanes.indexOf(target);
+    const pane = this.viewPanes[idx];
+    if (!pane) return false;
+    this.viewPanes.splice(idx, 1);
+    try {
+      this.base.contentView.removeChildView(pane.view);
+    } catch (_) {
+      /* already detached */
+    }
+    try {
+      // Unlike a TAB (BI-15: detach must never close a webContents, because the tab
+      // is being handed to another window), a pane is genuinely finished here — and
+      // an Electron renderer process costs ~80 MB just to exist (measured, §10.4),
+      // so leaving one parked would be a slow leak per split the user ever opened.
+      if (!pane.view.webContents.isDestroyed()) pane.view.webContents.close();
+    } catch (_) {
+      /* older Electron: drop the reference instead */
+    }
+    this.paneRatios = null;
+    this._layout();
+    this._emit();
+    return true;
+  }
+
+  closeViewPaneByContents(webContents) {
+    const idx = this.viewPanes.findIndex((p) => p.view && p.view.webContents === webContents);
+    return idx === -1 ? false : this.closeViewPane(idx);
+  }
+
+  // Divider dragged. `ratios` comes from the chrome renderer as fractions of the
+  // usable width; splitRects clamps anything unusable, so no validation here beyond
+  // "it is an array of the right length".
+  setPaneRatios(ratios) {
+    const k = this._livePanes().length + 1;
+    if (!Array.isArray(ratios) || ratios.length !== k) return false;
+    this.paneRatios = ratios.slice();
+    this._layout();
+    // Echo back the geometry main ACTUALLY used, so the handle on screen sits where
+    // the boundary between two views is rather than where the pointer wished it
+    // were. The widths went through solveWidths, which enforces minimum pane widths
+    // the strip deliberately does not know — those numbers exist once, in this file.
+    //
+    // Deliberately NOT _emit(): this fires on every pointermove of a drag, and
+    // _emit() rebuilds the strip's whole DOM — including the very handle holding
+    // the pointer capture, which would end the drag on its first frame.
+    try {
+      const r = this._rects();
+      if (this.strip && !this.strip.webContents.isDestroyed()) {
+        this.strip.webContents.send("split:geom", { gutters: r.gutters, chrome: r.chrome });
+      }
+    } catch (_) {
+      /* strip gone — the drag is over anyway */
+    }
+    Session.schedule();
+    return true;
   }
 
   // ---- full-screen reading mode -------------------------------------------
@@ -439,13 +771,41 @@ class TabbedWindow {
   // Deliberately the same arithmetic as _layout: strip band first, document
   // below it, and no band at all while presenting. Reading it any other way
   // would put the hit test and the pixels on screen out of step.
+  //
+  // With the window split this is the EDITABLE pane's rectangle, not the whole
+  // band: the read-only panes cannot receive pages (they never write), so a drop on
+  // one must not be read as a drop on the document beside it.
   docViewScreenRect() {
     if (this.base.isDestroyed()) return null;
     const b = this.base.getContentBounds();
-    const stripH = this._presenting ? 0 : TAB_STRIP_H;
-    const height = Math.max(0, b.height - stripH);
-    if (!height || !b.width) return null;
-    return { x: b.x, y: b.y + stripH, width: b.width, height };
+    const r = this._rects().main;
+    if (!r || !r.width || !r.height) return null;
+    return { x: b.x + r.x, y: b.y + r.y, width: r.width, height: r.height };
+  }
+
+  // The READ-ONLY panes' rectangles in screen coordinates (DIP), left to right.
+  //
+  // These exist for one caller: classifyPageDrop, which needs to tell "the user
+  // aimed at a pane and it cannot take pages" apart from "the user let go over the
+  // desktop". Silence is the right answer to the second and the wrong answer to the
+  // first — a drop that lands on a document-shaped area and does nothing at all is
+  // indistinguishable from a bug.
+  //
+  // Rectangles rather than a per-window hit test on purpose: which surface a point
+  // belongs to is a question about ALL the windows at once (they overlap, and the
+  // one in front wins), and that resolution already lives — pure and tested — in
+  // classifyPageDrop. A second hit test here would be a weaker copy of it.
+  viewPaneScreenRects() {
+    if (this.base.isDestroyed()) return [];
+    const b = this.base.getContentBounds();
+    const r = this._rects();
+    const n = this._livePanes().length;
+    const out = [];
+    for (let i = 0; i < n; i++) {
+      const v = r.views[i];
+      if (v && v.width > 0 && v.height > 0) out.push({ x: b.x + v.x, y: b.y + v.y, width: v.width, height: v.height });
+    }
+    return out;
   }
 
   // Take a tab out of this window WITHOUT closing its webContents. Returns the
@@ -561,6 +921,17 @@ class TabbedWindow {
       }
     }
     this.tabs = [];
+    // Read-only panes die with the window. Nobody adopts them (unlike a torn-out
+    // tab, BI-16) because a pane holds no unsaved work — it is a view onto a file
+    // that is still on disk.
+    for (const p of this.viewPanes) {
+      try {
+        if (p.view && !p.view.webContents.isDestroyed()) p.view.webContents.close();
+      } catch (_) {
+        /* ignore */
+      }
+    }
+    this.viewPanes = [];
     try {
       if (this.strip && !this.strip.webContents.isDestroyed()) this.strip.webContents.close();
     } catch (_) {
@@ -611,10 +982,43 @@ class TabbedWindow {
       dirty: t.dirty,
       active: t.id === this.activeId,
     }));
+    // The chrome renderer needs the split shape for two jobs: light up the ◫ button,
+    // and draw + drag the gutters. It gets GEOMETRY and pane NAMES only — never a
+    // webContents id and never another renderer's identity (BI-55).
+    const r = this._rects();
+    const split = {
+      panes: this._livePanes().length,
+      max: MAX_VIEW_PANES,
+      gutters: r.gutters,
+      chrome: r.chrome,
+      names: this._livePanes().map((p) => p.name || ""),
+    };
     try {
-      this.strip.webContents.send("tabs:state", { tabs });
+      this.strip.webContents.send("tabs:state", { tabs, split });
     } catch (_) {
       /* strip not ready yet — did-finish-load re-emits */
+    }
+    this._emitPanes();
+  }
+
+  // Push each read-only pane the one fact only main knows: whether the document it
+  // is showing is ALSO the one open in the editable pane. When it is, "Sửa file
+  // này" has nothing to do, so the pane hides the button rather than offering a
+  // dead one — and the pane never has to learn another renderer's identity to find
+  // that out (BI-55). Paths and booleans only.
+  _emitPanes() {
+    const t = this._active();
+    const mainPath = (t && t.path) || null;
+    for (const pane of this._livePanes()) {
+      try {
+        // No `canPick` twin: the source menu always has something in it ("Mở file
+        // khác…" at the very least), so a flag for it would be a constant `true`.
+        pane.view.webContents.send("view:state", {
+          canEdit: !!(pane.path && !samePath(pane.path, mainPath)),
+        });
+      } catch (_) {
+        /* pane still loading — paneReady emits again once it is listening */
+      }
     }
   }
 
@@ -688,19 +1092,28 @@ function classifyDrop(point, sourceKey, rects, pad) {
 // but over the DOCUMENT views instead of the tab strips, because a page lands in
 // another document's page column, not in its tab strip.
 //
-//   rects     [{ key, rect, z }] — every visible window's document view, source
-//             included. `z` is the focus-recency stamp; among the windows under
-//             the cursor the HIGHEST z wins, which is how an overlap resolves to
-//             the window the user can actually see there.
+//   rects     [{ key, rect, z, panes }] — every visible window's document view,
+//             source included. `z` is the focus-recency stamp; among the windows
+//             under the cursor the HIGHEST z wins, which is how an overlap resolves
+//             to the window the user can actually see there. `panes` (optional) is
+//             that window's READ-ONLY split-view rectangles.
 //   sourceKey the window the pages are being dragged from
 //
-// Three outcomes, and the two harmless ones are deliberately identical to
+// Four outcomes, and the two harmless ones are deliberately identical to
 // "do nothing":
-//   self  — ended inside its own window: the in-column reorder that has shipped
-//           since v0.2.41 owns this gesture, and this feature must never take it
-//           over (BI-57). Main sends nothing at all.
-//   send  — hand the pages to that window.
-//   none  — no target (empty desktop, another app, no cursor): nothing happens.
+//   self     — ended inside its own window: the in-column reorder that has shipped
+//              since v0.2.41 owns this gesture, and this feature must never take it
+//              over (BI-57). Main sends nothing at all.
+//   send     — hand the pages to that window.
+//   readonly — ended on a split-view pane. Those panes never write, so they cannot
+//              take pages; this is reported so the SOURCE can say why instead of
+//              swallowing a gesture the user aimed carefully.
+//   none     — no target (empty desktop, another app, no cursor): nothing happens.
+//
+// The source window's OWN panes answer "readonly" too, and that does not touch
+// BI-57: the in-column reorder lives entirely inside the source renderer's DOM, and
+// a pane is a different WebContentsView the renderer's drag never reaches. The
+// `self` branch above still owns every point inside the source DOCUMENT.
 //
 // Note the missing `pad`: unlike a tab, a page has nowhere to be "torn out" to,
 // so just-outside-a-window must mean nothing rather than something (P7).
@@ -709,16 +1122,22 @@ function classifyPageDrop(point, sourceKey, rects) {
   // No usable cursor position → do the harmless thing, exactly as classifyDrop does.
   if (!point || !Number.isFinite(point.x) || !Number.isFinite(point.y)) return { action: "none", key: null };
   const inside = (r) =>
-    point.x >= r.x && point.x <= r.x + r.width && point.y >= r.y && point.y <= r.y + r.height;
+    !!r && point.x >= r.x && point.x <= r.x + r.width && point.y >= r.y && point.y <= r.y + r.height;
   const src = list.find((t) => t.key === sourceKey);
   if (src && inside(src.rect)) return { action: "self", key: sourceKey };
   const zOf = (t) => (Number.isFinite(t.z) ? t.z : 0);
+  // At most ONE hit per window: a window's document view and its panes are laid out
+  // side by side by splitRects and never overlap, so the two branches below are
+  // mutually exclusive and the winner is decided purely by z (the window in front).
   let best = null;
   for (const t of list) {
-    if (t.key === sourceKey || !inside(t.rect)) continue;
-    if (!best || zOf(t) > zOf(best)) best = t;
+    let action = null;
+    if (t.key !== sourceKey && inside(t.rect)) action = "send";
+    else if (Array.isArray(t.panes) && t.panes.some(inside)) action = "readonly";
+    if (!action) continue;
+    if (!best || zOf(t) > zOf(best)) best = { key: t.key, z: zOf(t), action };
   }
-  return best ? { action: "send", key: best.key } : { action: "none", key: null };
+  return best ? { action: best.action, key: best.key } : { action: "none", key: null };
 }
 
 // A screen point (DIP) expressed in the target document view's own client
@@ -738,7 +1157,9 @@ function pageDropTargets() {
   for (const tw of tabbedWindows) {
     if (tw.base.isDestroyed() || tw.base.isMinimized()) continue;
     const rect = tw.docViewScreenRect();
-    if (rect) out.push({ key: tw, rect, z: tw._focusSeq || 0 });
+    // `panes` travels with the window so classifyPageDrop can answer "readonly"
+    // for a drop aimed at a split-view pane rather than reporting nothing.
+    if (rect) out.push({ key: tw, rect, z: tw._focusSeq || 0, panes: tw.viewPaneScreenRects() });
   }
   return out;
 }
@@ -807,7 +1228,24 @@ function snapshotSession(from) {
     // Normal (un-maximised) bounds, so un-maximising a restored window puts it
     // back where it was rather than somewhere arbitrary.
     const b = tw.base.getNormalBounds ? tw.base.getNormalBounds() : tw.base.getBounds();
-    windows.push({ bounds: b, maximized: !!tw.base.isMaximized(), active, tabs });
+    const w = { bounds: b, maximized: !!tw.base.isMaximized(), active, tabs };
+    // Split view, and ONLY when there is one. Two reasons for the `if`:
+    //  · session.json is read by every version, including ones released before this
+    //    feature; leaving the keys out entirely for the overwhelmingly common
+    //    unsplit window keeps those files byte-identical to what shipped before.
+    //  · `v` stays 1 on purpose. Bumping it would make every currently installed
+    //    copy discard the session it already has — losing real open documents to
+    //    add an optional layout hint is a bad trade. Old files simply have no
+    //    `panes` key, and restoreSession treats that as "no split", which is right.
+    const panes = tw._livePanes();
+    if (panes.length) {
+      // A pane with no document yet is recorded as null rather than dropped: the
+      // COUNT is what the ratios are indexed by, so losing an empty pane would
+      // shift the divider positions of the ones beside it.
+      w.panes = panes.map((p) => p.path || null);
+      if (Array.isArray(tw.paneRatios) && tw.paneRatios.length === panes.length + 1) w.ratios = tw.paneRatios.slice();
+    }
+    windows.push(w);
   }
   return { windows };
 }
@@ -830,6 +1268,18 @@ function restoreSession(list) {
     paths.forEach((p, i) => tw.createTab({ openPath: p, deferred: i !== active, background: true }));
     const target = tw.tabs[active] || tw.tabs[0];
     if (target) tw.activateTab(target.id);
+    // Split view. Panes come back AFTER the tabs, because addViewPane resets the
+    // divider positions every time the pane count changes — so the stored ratios
+    // can only be applied once the final count is in place.
+    if (Array.isArray(w.panes) && w.panes.length) {
+      for (const p of w.panes.slice(0, MAX_VIEW_PANES)) {
+        // Same rule as a tab: a file the user has since moved or deleted is dropped
+        // silently. The PANE still opens (empty) so the layout the user left is the
+        // layout they get back — only its content is missing, and it says so.
+        tw.addViewPane({ openPath: typeof p === "string" && p && safeExists(p) ? p : null });
+      }
+      if (Array.isArray(w.ratios)) tw.setPaneRatios(w.ratios);
+    }
     if (w.maximized) {
       try {
         tw.base.maximize();
@@ -916,6 +1366,17 @@ function pageTargetTabs(exceptWc) {
   return out;
 }
 
+// Which window owns this read-only pane? Panes are addressed ONLY this way — by the
+// webContents that sent the IPC — so a pane can never name itself, let alone another
+// renderer (BI-55).
+function findViewPane(webContents) {
+  for (const tw of tabbedWindows) {
+    const pane = tw.viewPanes.find((p) => p.view && p.view.webContents === webContents);
+    if (pane) return { tw, pane };
+  }
+  return null;
+}
+
 function findByStrip(webContents) {
   for (const tw of tabbedWindows) {
     if (tw.strip && tw.strip.webContents === webContents) return tw;
@@ -929,6 +1390,8 @@ function focusedTabbedWindow() {
   return null;
 }
 
+// Every DOCUMENT renderer (sidecar status, app-wide broadcasts). Read-only panes are
+// deliberately NOT here: they have no sidecar bridge and nothing to do with any of it.
 function allDocContents() {
   const out = [];
   for (const tw of tabbedWindows) {
@@ -1021,6 +1484,15 @@ module.exports = {
   snapshotSession,
   restoreSession,
   sanitizeBounds,
+  findViewPane,
+  splitRects,
+  samePath,
+  MAX_VIEW_PANES,
+  SPLIT_GUTTER,
+  MAIN_MIN_W,
+  MAIN_HARD_MIN_W,
+  VIEW_MIN_W,
+  VIEW_HARD_MIN_W,
   anyClosing,
   count,
   TabbedWindow,

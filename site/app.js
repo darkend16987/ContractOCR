@@ -18,6 +18,7 @@ const I = {
   history: '<path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l3.5 2"/>',
   signature: '<path d="M3 17c2.5 0 3-9 4.5-9S9 15 10.5 15 12 9 13.5 9 15 13 17 13"/><path d="M3 21h18"/><path d="M17 13c1.5 0 2-2 3-2"/>',
   fullscreen: '<path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M21 8V5a2 2 0 0 0-2-2h-3"/><path d="M3 16v3a2 2 0 0 0 2 2h3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/>',
+  split: '<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M12 3v18"/>',
   move: '<path d="M12 2v20"/><path d="M2 12h20"/><path d="m5 9-3 3 3 3"/><path d="m9 5 3-3 3 3"/><path d="m15 19-3 3-3-3"/><path d="m19 9 3 3-3 3"/>',
 };
 
@@ -32,7 +33,7 @@ const FEATURES = [
   { i: "search", t: "Tìm & Thay thế chữ", d: "Tìm một từ khoá trong toàn bộ tài liệu rồi thay từng chỗ hoặc thay tất cả trong một lần — quen tay như trong Word." },
   { i: "pages", t: "Quản lý trang", d: "Ghép, tách, chèn, xoay, sắp xếp, xoá theo khoảng, thêm trang trắng và đánh số trang. Kéo được cả một trang từ tài liệu này sang tài liệu khác đang mở ở cửa sổ bên cạnh." },
   { i: "combine", t: "Gộp nhiều PDF thành một", d: "Chọn nhiều file cùng lúc, sắp xếp thứ tự rồi gộp thành một tài liệu duy nhất — ngay từ menu chuột phải trong Explorer, hoặc bằng cách kéo–thả vào cửa sổ app." },
-  { i: "pen", t: "Chú thích & đánh dấu", d: "Hộp văn bản, ghi chú, mũi tên, ảnh/chữ ký, khoanh vùng chữ nhật, elip, khoanh mây revision và nét vẽ tay đều là đối tượng sống: mở lại file vẫn chọn, kéo, đổi màu/nét/nền và xoá được — kể cả trên trang đã xoay hay bản vẽ khổ ngang. Chữ trong hộp văn bản xoay được theo góc bất kỳ, và đặt được nền phía sau chữ (chọn màu, chỉnh độ mờ) để đọc rõ khi đặt lên ảnh scan hay bản vẽ nhiều nét. Sao chép được sang file PDF khác: copy một hộp văn bản ở file này rồi Ctrl+V ở tab hoặc cửa sổ khác, giữ nguyên vị trí, cỡ chữ và màu. Thêm tô sáng, che thông tin thật, watermark. Màu mặc định cho vật thể mới chọn được trong Cài đặt, app nhớ cho lần sau." },
+  { i: "pen", t: "Chú thích & đánh dấu", d: "Hộp văn bản, ghi chú, mũi tên, ảnh/chữ ký, khoanh vùng chữ nhật, elip, khoanh mây revision và nét vẽ tay đều là đối tượng sống: mở lại file vẫn chọn, kéo, đổi màu/nét/nền và xoá được — kể cả trên trang đã xoay hay bản vẽ khổ ngang. Chữ trong hộp văn bản xoay được theo góc bất kỳ, và đặt được nền phía sau chữ (chọn màu, chỉnh độ mờ) để đọc rõ khi đặt lên ảnh scan hay bản vẽ nhiều nét. Sao chép được sang file PDF khác: copy một hộp văn bản — hoặc một dấu tích ✓ / ✗ — ở file này rồi Ctrl+V ở tab hoặc cửa sổ khác, giữ nguyên vị trí, cỡ và màu. Thêm tô sáng, che thông tin thật, watermark. Màu mặc định cho vật thể mới chọn được trong Cài đặt, app nhớ cho lần sau." },
   { i: "compare", t: "So sánh & chồng lớp bản vẽ", d: "Đối chiếu hai phiên bản của một tài liệu hoặc hai bản vẽ CAD/Revit, chỉ ra vùng khác biệt và chồng lớp lên nhau để soi thay đổi." },
   { i: "ruler", t: "Đo & ghi kích thước", d: "Hiệu chuẩn theo một đoạn đã biết kích thước, các đoạn còn lại tự ghi số đúng tỷ lệ — dành cho bản vẽ kỹ thuật." },
   { i: "signature", t: "Ký số bằng USB token", d: "Ký số PKI bằng chứng thư trên token USB (VNPT-CA, Viettel-CA, FPT-CA…), chữ ký nhìn thấy được kèm dấu thời gian. Khoá bí mật không rời token." },
@@ -43,6 +44,7 @@ const FEATURES = [
   { i: "shield", t: "Khoá & mã hoá", d: "Đặt mật khẩu mở file và trích xuất ảnh — cho tài liệu nhạy cảm." },
   { i: "shield", t: "Ẩn trang bằng mật khẩu", d: "Giấu một vài trang trong chính file đó: nội dung được mã hoá AES-256 và thay bằng trang giữ chỗ có khoá, mở lại bằng đúng mật khẩu bạn đặt. Số trang không đổi nên mục lục và tham chiếu không lệch, và trang ẩn đi theo trang của nó khi bạn sắp xếp lại hay ghép file. Cần gửi ra ngoài thì xuất một bản sao không kèm trang ẩn." },
   { i: "combine", t: "Tab đa tài liệu", d: "Mở nhiều tài liệu bằng tab trong một cửa sổ, tách tab ra cửa sổ riêng khi cần. Mở app lại là có đúng bộ tab lần trước." },
+  { i: "split", t: "Chia đôi màn hình", d: "Xem hai tài liệu cạnh nhau trong một cửa sổ (Ctrl+\\): bên trái là bản đang sửa, bên phải là khung xem chỉ đọc. Mở được chính file đang sửa lần thứ hai, để xem trang 40 trong lúc làm trang 5 — khung chỉ đọc nên không có chuyện hai bản lưu đè nhau, và mỗi lần bạn lưu thì khung xem tự cập nhật mà vẫn giữ nguyên trang đang đọc. Kéo rãnh giữa để đổi tỷ lệ; bố cục được nhớ cho lần mở sau." },
   { i: "history", t: "Tự lưu & khôi phục", d: "Lưu nền trong lúc bạn làm việc. Mất điện hay app đóng đột ngột thì lần mở sau vẫn còn bản mới nhất — nhận lại, để sau, hay bỏ hẳn là tuỳ bạn." },
   { i: "move", t: "Ngắm & di chuyển tài liệu", d: "Zoom từ 20% đến 500%, bám theo con trỏ và mượt theo bước đều; bàn tay kéo trang đi; cột trang sáng theo trang đang đọc. Phóng to hết cỡ trên bản vẽ khổ lớn A0–A1 vẫn hiện đủ nét, không trắng trang." },
   { i: "fullscreen", t: "Đọc toàn màn hình", d: "Trọn trang nằm gọn trong màn hình, ẩn hết thanh công cụ — để trình bày hoặc đọc kỹ." },
@@ -64,6 +66,11 @@ fetch("https://api.github.com/repos/darkend16987/NabuPDF-Releases/releases/lates
   .then((rel) => {
     const v = document.getElementById("dl-version");
     if (v && rel.tag_name) v.textContent = rel.tag_name;
+    // The "Cập nhật mới nhất" band carries the same number. Filled in from the
+    // release so the two can never disagree; the value in the HTML is the fallback
+    // for an offline visitor or a rate-limited API.
+    const wn = document.getElementById("whatsnew-version");
+    if (wn && rel.tag_name) wn.textContent = rel.tag_name;
     const assets = rel.assets || [];
     const nsis = assets.find((a) => /-x64\.exe$/.test(a.name));
     if (nsis) document.getElementById("dl-installer").href = nsis.browser_download_url;

@@ -1241,7 +1241,44 @@
   // cost the per-tab-clipboard note was right to refuse. Everything else in
   // MANAGED_KINDS is a few hundred bytes of JSON.
   const SHARE_EXCLUDED = new Set(["image"]);
-  const isShareableKind = (k) => isManagedKind(k) && !SHARE_EXCLUDED.has(k);
+
+  // …and kinds that cross even though they are NOT managed (v0.2.69).
+  //
+  // ✓ and ✗ flatten to pixels when applied (BI-42), so they never come back as
+  // objects after a save — that is unchanged, and it is why "sửa lại dấu tích đã
+  // áp dụng" is still not a thing. But BEFORE the bake they are ordinary live
+  // annotations: selectable, resizable, copyable. Tying "may this cross a tab
+  // boundary" to "does this survive a save" conflated two different questions, and
+  // the ✓ is where the difference shows: a user ticking the same box across twenty
+  // contracts wants the mark they already sized and coloured, not a fresh one each
+  // time. Nothing new can go wrong in the destination — a pasted ✓ is exactly the
+  // annotation the ✓ tool would have made there.
+  //
+  // The payload objection that kept `image` out does not apply: a ✓ is x/y/w/h,
+  // a colour and a stroke width — a few dozen bytes of JSON.
+  const SHARE_EXTRA = new Set(["check", "cross"]);
+  const isShareableKind = (k) => (isManagedKind(k) || SHARE_EXTRA.has(k)) && !SHARE_EXCLUDED.has(k);
+
+  // What to call an object in a message to the user. Names match the tool buttons,
+  // so "Đã sao chép 1 dấu tích ✓" reads as the thing that was clicked to make it.
+  const KIND_VI = {
+    text: "hộp chữ",
+    note: "ghi chú",
+    image: "ảnh",
+    arrow: "mũi tên",
+    box: "khung chữ nhật",
+    ellipse: "hình bầu dục",
+    cloud: "khung mây",
+    cloudpen: "mây vẽ tay",
+    draw: "nét vẽ tay",
+    check: "dấu tích ✓",
+    cross: "dấu ✗",
+    highlight: "vệt tô sáng",
+    under: "gạch chân",
+    strike: "gạch ngang",
+    redact: "vùng che",
+    dim: "kích thước",
+  };
 
   // Mirror `clip` to the other tabs. Fire-and-forget BY DESIGN — see BI-77: the
   // copy gesture calls preventDefault() synchronously, so this must not be awaited,
@@ -1302,6 +1339,9 @@
     const srcPage = findAnnot(ed.sel).page;
     clip = { items, page: srcPage, dropped: {} };
     shareClip(items, srcPage);
+    // The toast names what was copied, so the name has to be the one on the tool
+    // button — "Đã sao chép 1 mục (check)" tells a Vietnamese user nothing.
+    const kindName = KIND_VI[items[0].kind] || items[0].kind;
     // Say so when part of the selection will not cross tabs, rather than letting the
     // user find out by pasting in the other document and counting.
     const held = items.filter((a) => !isShareableKind(a.kind)).length;
@@ -1313,7 +1353,7 @@
     toast(
       (items.length > 1
         ? `Đã sao chép ${items.length} mục. Sang trang khác hoặc tab khác rồi Ctrl+V để dán.`
-        : `Đã sao chép 1 mục (${items[0].kind}). Sang trang khác hoặc tab khác rồi Ctrl+V để dán.`) +
+        : `Đã sao chép 1 ${kindName}. Sang trang khác hoặc tab khác rồi Ctrl+V để dán.`) +
         where,
       ""
     );

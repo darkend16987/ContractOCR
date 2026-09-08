@@ -770,44 +770,10 @@ const KEEP_MARGIN_PX = 1500;
 
 // ---- raster budget for a page bitmap (BI-78) -----------------------------
 //
-// A page's bitmap is `CSS box × devicePixelRatio`, so it grows with the SQUARE of
-// the zoom level. Measured in Chromium 148 with the pdf.js we ship
-// (docs/RESEARCH-2026-09-07-zoom-range-20-500.md §3):
-//   • A3 at 500%, dpr 1.5 → 56 MP = 215 MB for ONE page;
-//   • A0 at 300%, dpr 1.5 → 163 MP = 621 MB — i.e. already true at the OLD 300%
-//     ceiling, so this budget fixes a hole that predates the wider zoom range;
-//   • past a canvas AREA of ~268 MP (2^28) Chromium accepts canvas.width, returns a
-//     2d context, resolves page.render in ~7 ms — and paints NOTHING. No exception,
-//     so the try/catch below cannot see it: the page goes blank, m.paintScale is set
-//     to the new scale, and commitScale then considers it "already crisp" forever;
-//   • past a SIDE of 16384 px (Skia's texture limit) the canvas falls off the GPU
-//     path: the same render goes from 36 ms to 305 ms.
-// So the fix cannot be "pick a zoom ceiling that happens to fit" — a big enough sheet
-// blows the area cap at any ceiling. Instead we cap the bitmap and keep the CSS box:
-// the page still lays out at the full zoom (geometry, text layer, annotations, scroll
-// all unchanged — BI-36), only its pixels are coarser. Same trick, same shape and the
-// same reasoning as printScaleFor() on the print path.
-//
-// 32 MP ≈ 122 MB/page. Nothing under the budget is touched, so every everyday page
-// (A4 at 500%, dpr 1.5 = 28 MP) still rasterises at the full device resolution; only
-// large-format sheets and high-dpr extremes are eased down — and they are eased to
-// something FAR sharper than what the 268 MP cliff was silently giving them.
-const MAX_VIEW_MEGAPIXELS = 32;
-// Second guard, for extreme aspect ratios that stay under the area budget: keep the
-// long side clear of Skia's 16384 px texture limit with room to spare.
-const MAX_VIEW_SIDE_PX = 12000;
-
-// Device-pixel ratio to rasterise a page whose CSS box is cw×ch at: the smallest of
-// the real dpr, the area budget and the side cap. NEVER upscales past the real dpr —
-// that would cost memory for no sharpness.
-function viewRasterDpr(cw, ch, dpr) {
-  if (!(cw > 0) || !(ch > 0)) return dpr;
-  return Math.min(
-    dpr,
-    Math.sqrt((MAX_VIEW_MEGAPIXELS * 1e6) / (cw * ch)),
-    MAX_VIEW_SIDE_PX / Math.max(cw, ch)
-  );
-}
+// Moved to renderer/raster-cap.js on 2026-09-08: the read-only split-view pane
+// (renderer/view.html) rasterises pages too, and a second copy of these numbers is
+// how BI-78 dies by halves — one side capped, the other silently painting a blank
+// A0 sheet. Called through `window.RasterCap.*`, never by bare name (BI-14).
 
 async function renderViewer() {
   const v = $("viewer");
@@ -902,9 +868,9 @@ async function renderPageCanvas(i) {
   const { page, vp, cw, ch, canvas, dpr } = m;
   // Device resolution to rasterise at — `dpr` on every everyday page, eased down
   // only when the CSS box has grown big enough that dpr× of it would be an unsafe
-  // bitmap (see viewRasterDpr / BI-78). The CSS box itself is NOT touched, so the
+  // bitmap (see RasterCap.viewRasterDpr / BI-78). The CSS box itself is NOT touched, so
   // page keeps its exact geometry: only the bitmap behind it is coarser.
-  const rd = viewRasterDpr(cw, ch, dpr);
+  const rd = window.RasterCap.viewRasterDpr(cw, ch, dpr);
   const pw = Math.floor(cw * rd);
   const ph = Math.floor(ch * rd);
   // While the editor is open, the round-trip text boxes / notes are lifted into
@@ -2759,6 +2725,25 @@ function initSidebarWidth() {
     /* unreadable storage — fall through to the default */
   }
   applySidebarWidth(saved && !isNaN(saved) ? saved : SIDEBAR_W_DEFAULT, false);
+  // …and re-clamp whenever the viewport changes. clampSidebarWidth's window
+  // ceiling was only ever computed when something CALLED it, so a panel sized on a
+  // wide window kept its pixels when the window narrowed. That was survivable while
+  // the only way to narrow it was dragging the window; split view (v0.2.69) makes
+  // it a one-keystroke gesture, where a 300px panel in a 450px pane is 67% of the
+  // document area.
+  //
+  // Deliberately NOT persisted: the stored value is the width the user CHOSE, and
+  // it must come back when there is room for it again — so this re-applies the
+  // stored width every time and lets the clamp do the shrinking.
+  window.addEventListener("resize", () => {
+    let want = null;
+    try {
+      want = parseInt(localStorage.getItem(SIDEBAR_W_KEY) || "", 10);
+    } catch (_) {
+      /* unreadable storage — fall back to the default below */
+    }
+    applySidebarWidth(want && !isNaN(want) ? want : SIDEBAR_W_DEFAULT, false);
+  });
 }
 
 // Collapse / expand the thumbnail sidebar (toggle, or force a state).
@@ -2781,7 +2766,7 @@ const FIT_MIN_SCALE = 0.08;
 // at v0.2.66: 20% because the fit commands had been computing scales below it for a
 // long time (so the low end was already proven, and one wheel notch up from a 8% fit
 // no longer teleports to 40%), and 500% because reading fine print / stamps on a scan
-// wants it. The ceiling is only safe BECAUSE viewRasterDpr caps the bitmap — without
+// wants it. The ceiling is only safe BECAUSE RasterCap.viewRasterDpr caps the bitmap — without
 // it a large sheet at 400%+ silently paints a blank page (BI-78). If you raise these,
 // re-read that note first; the numbers are measured, not chosen.
 // The three user-visible places that advertise the range (index.html title, its i18n

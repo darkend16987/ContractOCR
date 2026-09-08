@@ -1,0 +1,144 @@
+/* Read-only split-view pane (view.html). Loaded AFTER app.css, which supplies the
+   palette, the light/dark theme and the base `body { display:flex; column }`.
+
+   Everything here is sized for a pane that can be as narrow as 260px (VIEW_MIN_W in
+   src/tabs.js, measured): one header line that never wraps, and a scroll area. That
+   is the whole reason a read-only pane exists as its own page — the main renderer's
+   toolbar needs 620px before it stops eating a third of the pane's height (probe
+   P-D, docs/RESEARCH-2026-09-08-split-view.md §10.3). */
+
+.vbar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px;
+  background: var(--bg-2);
+  border-bottom: 1px solid var(--line);
+  font-size: 12px;
+  /* NOT flex-wrap: a wrapping header would give back exactly the vertical space
+     this page exists to save. Items shrink or hide instead — see the widths below
+     and the narrow-pane rules at the bottom. */
+  flex-wrap: nowrap;
+  overflow: hidden;
+  white-space: nowrap;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+/* The one thing the user must never be in doubt about: this pane cannot be edited,
+   and Ctrl+S belongs to the other one. */
+.ro-badge {
+  flex: 0 0 auto;
+  background: var(--bg-3);
+  color: var(--muted);
+  border-radius: 4px;
+  padding: 1px 6px;
+  font-size: 10px;
+  letter-spacing: 0.4px;
+}
+
+/* The filename IS the source picker — one target instead of a label plus a
+   separate ▾ button, which at 260px is a button's width of header saved. */
+.vw-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: left;
+  color: var(--fg);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  padding: 2px 6px;
+  font: inherit;
+  cursor: default;
+}
+.vw-name:hover {
+  background: var(--bg-3);
+  border-color: var(--line);
+}
+.vw-saved { flex: 0 0 auto; color: var(--muted); font-size: 11px; }
+.vw-sep { flex: 0 0 auto; width: 1px; height: 16px; background: var(--line); }
+
+.vw-btn {
+  flex: 0 0 auto;
+  background: var(--bg-3);
+  color: var(--fg);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  padding: 2px 7px;
+  font-size: 12px;
+  line-height: 16px;
+  cursor: default;
+}
+.vw-btn:hover:not(:disabled) { background: var(--bg-hover); }
+.vw-btn:disabled { opacity: 0.4; }
+.vw-btn.wide { padding: 2px 8px; }
+.vw-btn.close { margin-left: 2px; }
+
+.vw-page { flex: 0 0 auto; color: var(--muted); font-variant-numeric: tabular-nums; }
+.vw-page input,
+.vw-zoom {
+  width: 38px;
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  padding: 2px 3px;
+  text-align: center;
+  font: inherit;
+}
+.vw-page input:disabled,
+.vw-zoom:disabled { opacity: 0.4; }
+
+/* One-line message strip: password-protected file, unreadable file, source gone.
+   A strip and not a modal — a modal in a 300px pane covers the pane. */
+.vw-note {
+  flex: 0 0 auto;
+  padding: 5px 8px;
+  font-size: 12px;
+  color: var(--warn);
+  background: var(--bg-2);
+  border-bottom: 1px solid var(--line);
+  white-space: normal;
+}
+
+.vw-body {
+  flex: 1 1 auto;
+  overflow: auto;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  background: var(--bg);
+}
+.vw-empty { margin: auto; color: var(--muted); font-size: 12px; text-align: center; padding: 0 12px; }
+
+/* One page slot. Sized in CSS px at the current scale; the canvas inside is
+   stretched to fill it, so a zoom is instant and the crisp bitmap follows. */
+.vw-pw {
+  position: relative;
+  flex: 0 0 auto;
+  background: #fff;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.45);
+}
+.vw-pw canvas { display: block; width: 100%; height: 100%; }
+
+/* Narrow pane: drop the two fit buttons' labels first (they are the widest items
+   and both have tooltips), then the page box. Order matters — the close button and
+   the filename are the two things that must survive to the last pixel. */
+@media (max-width: 420px) {
+  .vw-btn.wide { padding: 2px 5px; font-size: 0; }
+  .vw-btn.wide::after { font-size: 12px; }
+  #vw-fit-w::after { content: "↔"; }
+  #vw-fit-p::after { content: "⤢"; }
+  #vw-edit::after { content: "✎"; }
+}
+@media (max-width: 330px) {
+  .vw-saved { display: none; }
+  .vw-page input { width: 30px; }
+  .vw-zoom { width: 32px; }
+}

@@ -2021,6 +2021,97 @@ _Ghi 2026-08-13. **Đo được, không suy luận.**_
 
 ---
 
+### BI-79 · Chia đôi màn hình: khung xem thuộc **CỬA SỔ**, không thuộc **TAB** — và hình học chỉ có **một** hàm
+- `src/tabs.js`: `splitRects()` (thuần) · `solveWidths` · `MAIN_MIN_W = 620` / `MAIN_HARD_MIN_W = 420`
+  / `VIEW_MIN_W = 260` / `VIEW_HARD_MIN_W = 180` / `SPLIT_GUTTER = 6` · `_rects()` ·
+  `viewPaneScreenRects()` · `addViewPane` / `closeViewPane` / `setPaneRatios`.
+- **Luật 1 — pane thuộc cửa sổ.** `viewPanes` nằm trên `TabbedWindow`, **không** trên tab. Nhờ vậy
+  `activateTab` · `destroyTab` · `detachTab` · `moveTabTo` · `tearOutTab` · `adoptTab` · `closeTab` ·
+  `Ctrl+W` · `Ctrl+Tab` · `activeContents` **không cần biết pane tồn tại**. Gắn pane vào tab thì cả
+  vòng đời tab phải học lại — và đó là chỗ hỏng sẽ xuất hiện dưới dạng "kéo tab sang cửa sổ khác
+  làm mất khung xem" hoặc "đổi tab thì tab mới đè lên khung xem".
+- **Luật 2 — một hàm hình học.** `_layout()` và **mọi** hit-test đều đi qua `_rects()` → `splitRects()`.
+  Đọc bố cục bằng số học khác ở chỗ khác là đưa **pixel trên màn hình** và **vùng bắt chuột** ra
+  khỏi nhịp nhau; `docViewScreenRect` đã ghi đúng luật đó từ trước khi có tính năng này.
+- **Luật 3 — khung xem chỉ đọc, và đó là LỜI GIẢI chứ không phải hạn chế.** Chỉ khung chính ghi
+  được ⇒ mở **cùng một file** ở hai khung không thể thành "bản lưu này đè mất bản lưu kia".
+  `src/view-preload.js` phải giữ **bề mặt tối thiểu**: không `dialog:save-*`, không `file:write-pdf`,
+  không `recovery:*`, không sidecar. Thêm bất kỳ kênh ghi nào vào đó là **xoá** bảo đảm này.
+- **Luật 4 — `MAIN_MIN_W` là số ĐÃ ĐO, không phải số chọn cho đẹp.** Ở 420px thanh công cụ khung
+  chính ăn **49%** chiều cao; ở 380px trang **tràn ngang**. Số đo ở
+  `docs/RESEARCH-2026-09-08-split-view.md` §10.3. Bản kế hoạch đầu đoán 420 và **phép đo đã bác bỏ**.
+- **Luật 5 — chrome view phủ HẾT cửa sổ khi chia khung.** Đó là điều kiện để dải rãnh 6px nhận được
+  chuột mà không cần thêm tiến trình hay lớp phủ trong suốt (probe P-A). Chrome view phải ở **đáy**
+  z-order: nó được `addChildView` **một lần** trong constructor và **không bao giờ** thêm lại —
+  `addChildView` trên một child đã có sẽ **đẩy nó lên trên cùng** và chôn mọi tài liệu sau nó.
+- **Luật 6 — đóng pane thì HUỶ hẳn `webContents`.** Ngược hẳn BI-15/BI-16 (tab bị detach không bao
+  giờ được đóng vì nó sắp sang cửa sổ khác). Pane không giữ việc chưa lưu, mà một tiến trình
+  renderer tốn **~80 MB chỉ để tồn tại** ⇒ để lại là rò rỉ theo số lần từng chia khung.
+- **Luật 7 — kéo rãnh KHÔNG được gọi `_emit()`.** `_emit` dựng lại toàn bộ DOM thanh tab, kể cả tay
+  nắm đang giữ `setPointerCapture` ⇒ phiên kéo chết ngay frame đầu. Đường đúng: `setPaneRatios` →
+  `_layout()` → đẩy **`split:geom`** (chỉ hình học) → thanh tab **chỉ đặt lại vị trí** tay nắm. Và
+  `lostpointercapture` + `pointercancel` **bắt buộc** kết thúc phiên kéo (BI-58).
+- **Luật 8 — thanh tab KHÔNG được chép các hằng số sàn.** Nó gửi tỷ lệ thô; main kẹp bằng
+  `solveWidths` rồi trả lại hình học thật. Chép sàn sang renderer là tạo bản sao thứ hai của một
+  con số đã đo, và hai bản sao đó sẽ lệch nhau.
+- **Vỡ khi:** đổi tab lúc đang chia khung thì tab mới **đè lên** khung xem · kéo trang từ cửa sổ
+  khác rơi lệch **đúng bằng bề rộng khung chính** · một dòng desktop nhấp nháy giữa hai khung (làm
+  tròn bề rộng lẻ không dùng largest-remainder) · tay nắm rãnh **rời khỏi** biên thật khi kéo tới
+  sàn · kéo rãnh một cái là hết kéo được (DOM bị dựng lại) · mỗi lần chia khung rồi đóng lại tốn
+  thêm ~80 MB vĩnh viễn.
+- Lưới: `npm run test:split` (306 ca hình học thuần) · `npm run test:pagedrop` (82 ca) ·
+  `npm run test:tabs` (120 ca, có nhóm phiên) · probe Electron `scratchpad/probe-split2` (42/43,
+  ca đỏ duy nhất là môi trường — xem §12 của memo).
+
+### BI-80 · Khung xem **từ chối** trang thả vào — và "từ chối" khác "không có gì ở đây"
+- `src/tabs.js` `classifyPageDrop` (giá trị `readonly`) · `pageDropTargets()` (khoá `panes`) ·
+  `renderer/page-move.js` `dragEnd` (nhánh toast).
+- **Luật:** một trang thả trúng khung xem phải trả về `readonly` và **nói ra**; thả trúng rãnh /
+  dải tab / ra ngoài mọi cửa sổ vẫn là `none` và vẫn **im lặng**. Cùng là "không có gì xảy ra"
+  nhưng ý nghĩa ngược nhau: cái sau là cách bình thường để **huỷ** một cú kéo, cái trước là một cử
+  chỉ nhắm vào vùng hình-dạng-tài-liệu — im lặng ở đó người dùng đọc là **lỗi**.
+- **Luật — phép giải nằm ở hàm THUẦN, không ở hit-test từng cửa sổ.** "Điểm này thuộc mặt phẳng
+  nào" là câu hỏi về **tất cả cửa sổ cùng lúc**: chúng chồng nhau và cái ở **trên** thắng (luật
+  `z` đã có sẵn trong `classifyPageDrop`). Gọi một hit-test lần lượt từng cửa sổ sẽ trả lời **sai**
+  đúng ca chồng lấn — khung xem của cửa sổ trước che tài liệu của cửa sổ sau thì trang bị chèn vào
+  tài liệu người dùng **không nhìn thấy** ở điểm đó.
+- **BI-57 không bị chạm:** nhánh `self` vẫn đứng **trước** và vẫn ăn trọn mọi điểm trong **tài
+  liệu** của cửa sổ nguồn. Panes của **chính** cửa sổ nguồn trả `readonly` — hợp lệ, vì cú kéo
+  trong DOM của renderer nguồn không bao giờ với tới một `WebContentsView` khác.
+- **Vỡ khi:** thả trang vào khung xem → **không có gì xảy ra và không có lời giải thích** · hoặc
+  ngược lại, trang bị chèn vào tài liệu ở **phía sau** khung xem.
+- Lưới: `npm run test:pagedrop`, nhóm "khung xem chỉ đọc".
+
+### BI-81 · Phiên: thêm khoá mới thì **KHÔNG** nâng `VERSION` — và cửa sổ không chia khung phải cho ra **đúng object cũ**
+- `src/session.js` `VERSION = 1` · `src/tabs.js` `snapshotSession` / `restoreSession`.
+- **Luật:** `session.js` **vứt bỏ** file có `v` khác `VERSION` (`readFile`: `if (raw.v !== VERSION)
+  return null`). Nâng version để thêm một khoá **tuỳ chọn** sẽ khiến **mọi máy đang cài** mất phiên
+  nó đang giữ — đánh đổi tài liệu đang mở thật lấy một gợi ý bố cục.
+- **Luật:** khoá mới chỉ được ghi **khi thật sự có dữ liệu**. Cửa sổ không chia khung phải cho ra
+  đúng bộ khoá cũ `{bounds, maximized, active, tabs}` — không thừa `panes: []`, không thừa
+  `ratios: null`. Test so khớp **đúng bộ khoá**, không chỉ so giá trị.
+- **Luật:** khôi phục theo **thứ tự phụ thuộc** — pane dựng **sau** tab, `ratios` đặt **sau** khi
+  đủ số pane, vì `addViewPane` reset `paneRatios` mỗi lần số khung đổi.
+- **Vỡ khi:** người dùng cập nhật app và **mất sạch tab đang mở** · hoặc mở lại app thì rãnh nhảy
+  về mặc định dù đã kéo.
+- Lưới: `npm run test:tabs`, nhóm "snapshotSession: chia khung".
+
+### BI-82 · "Qua được biên tab" và "sống sót sau khi lưu" là **hai câu hỏi khác nhau**
+- `renderer/editor.js`: `SHARE_EXCLUDED` · `SHARE_EXTRA` · `isShareableKind`.
+- **Luật:** `isShareableKind` **không** được rút gọn lại thành `isManagedKind(k) && …`. Nó trả lời
+  câu hỏi về **payload** và **ý nghĩa ở tài liệu đích**; `MANAGED_KINDS` trả lời câu hỏi về
+  **round-trip qua `/NabuData`**. Chúng trùng nhau ở gần hết mọi kind, và đó chính là cái bẫy.
+  - `image`: round-trip được nhưng **không** qua biên tab — dataUrl base64 vài MB mỗi `Ctrl+C`.
+  - `check` / `cross` (v0.2.69): **không** round-trip (vẫn flatten, BI-42) nhưng **qua được** —
+    vài chục byte JSON, và ở tài liệu đích nó đúng bằng thứ công cụ ✓ tạo ra tại chỗ.
+  - `highlight` / `under` / `strike` / `redact`: **không** qua — chúng bám vào đoạn chữ, hoặc là
+    lời hứa về nội dung của **chính** file này. "Cho tất cả qua" là sai, không phải là rộng rãi.
+- **BI-42 không bị chạm:** thêm một kind vào `SHARE_EXTRA` **không** đưa nó vào `MANAGED_KINDS`, nên
+  không byte nào trong PDF xuất ra đổi khác. Test khoá cả hai chiều.
+- **Vỡ khi:** mỗi `Ctrl+C` trên một tấm ảnh đẩy vài MB qua IPC (nới nhầm) · hoặc copy liên-tab
+  **âm thầm** ngừng chạy cho một kind vốn vẫn chạy (thu nhầm).
+- Lưới: `npm run test:clip` §1 — `SHARE_EXTRA` được so khớp **đúng bằng** `{check, cross}`.
+
 ## 4. Hàm nút thắt (đổi chữ ký = ảnh hưởng diện rộng)
 
 | Hàm | Định nghĩa | Ai gọi |
@@ -2065,6 +2156,8 @@ _Ghi 2026-08-13. **Đo được, không suy luận.**_
 | Tách tab / kéo tab (`detachTab`, `adoptTab`, `classifyDrop`, `shell.js` dragend) | `docs/TABS-2B-DESIGN.md` §6.2 (18 mục) · BI-15/16/17 · **mục #1 là hồi quy của tính năng sắp xếp tab** |
 | Chuyển trang giữa 2 tài liệu (`renderer/page-move.js`, `classifyPageDrop`, `docViewScreenRect`, `routePages`, `pages:*`) | `cd desktop ; npm run test:pagedrop` · `docs/SPEC-page-drag.md` §7.1 (22 mục) · BI-55/56/57/58 · **mục #1 và #2 là hồi quy của kéo-sắp-xếp trang và kéo file PDF vào cột trang** — hai thứ đã chạy tốt từ v0.2.41 mà tính năng này gắn thêm việc lên đúng cùng một cử chỉ |
 | Clipboard vật thể **liên-tab/liên-tài-liệu** (`objClip` + `annots:clip-*` ở `main.js`, `writeAnnotClip`/`readAnnotClip`/`onAnnotClipChanged` ở `preload.js`, `SHARE_EXCLUDED`/`isShareableKind`/`shareClip`/`adoptSharedClip`/`requestPaste` ở `editor.js`) | `cd desktop ; npm run test:clip ; npm run test:managed ; npm run test:text` · **ca vỡ nguy hiểm nhất là hồi quy của dán-ảnh**: để một **ảnh** trên clipboard hệ điều hành (copy từ app khác) rồi `Ctrl+V` ở tab đang có clip vật thể → phải dán **ảnh**, **không** dán vật thể (luật bàn giao với `capture.js` — BI-77) · copy 1 hộp văn bản ở tab A → `Ctrl+V` ở tab B → **đúng vị trí, đúng cỡ chữ, đúng màu, đúng nền** · copy ở A → **Áp dụng** ở A → dán ở B (clip sống sót bake) · copy ở A → **xé tab B ra cửa sổ riêng** → dán được · copy ở A → **mở tab C mới** → dán được (đường `readAnnotClip` lúc khởi động) · dán vào tab **chưa bật Chỉnh sửa** → tự bật rồi dán, có toast · chọn nhóm Ctrl+click 3 mục → dán sang B **giữ nguyên cự ly tương đối** · dán sang trang **nhỏ hơn** ở B → cả nhóm lùi vào trong tờ, **không rời ra** · dán **hai lần liên tiếp** ở B → bản thứ hai lệch 12pt (không nấp lên nhau), bản **thứ nhất không lệch** · dán sang trang **đã xoay 90/180/270** ở B → Áp dụng → Lưu → mở lại: đúng chiều, đúng chỗ · copy **ảnh** ở A → nút “Dán” ở B **tối đi** (ảnh không qua tab) và toast nói rõ · copy nhóm **ảnh + hộp chữ** ở A → B chỉ nhận hộp chữ, toast báo số mục ở lại · đóng hết tab trừ một → clip cũ **không** làm app lỗi |
+| Chia đôi màn hình (`splitRects`/`solveWidths`/`_rects`/`viewPaneScreenRects`/`addViewPane`/`setPaneRatios` ở `tabs.js` · `sendFileToPane`/`view:*`/`split:*` ở `main.js` · `renderer/view.*` · `src/view-preload.js` · `#split`/`#gutters` ở `shell.*`) | `cd desktop ; npm run test:split ; npm run test:pagedrop ; npm run test:tabs` · **ba ca hồi quy phải làm trước**: app **không** chia khung phải y hệt bản cũ (chrome đúng 40px, tab chiếm hết) · `Ctrl+\` rồi **đổi tab** → tab mới nằm gọn trong khung chính, **không đè** khung xem · `Ctrl+\` rồi **kéo tab sang cửa sổ khác** / **xé tab ra** → không mất khung xem, không lỗi console (BI-79) · mở **cùng một file** ở cả hai khung → sửa + `Ctrl+S` ở khung chính → khung xem **tự nạp lại**, **giữ nguyên trang đang đọc** và chip "bản lưu HH:MM" đổi giờ · **kéo rãnh** hết cỡ sang trái → khung chính dừng ở sàn, tay nắm **không rời khỏi biên thật**; Alt-Tab **giữa lúc kéo** → phiên kéo kết thúc, không kẹt (BI-58) · bấm **tên file** trên khung xem → menu native có "Cùng tài liệu khung chính" + các tab + "Mở file khác…" · đổi khung xem sang file khác → nút **Sửa file này** hiện; bấm → file đó sang khung chính, tài liệu cũ sang khung xem · **kéo trang từ cửa sổ khác thả vào khung xem** → toast từ chối, **không** im lặng, và **không** chèn nhầm vào tài liệu phía sau (BI-80) · file **có mật khẩu** ở khung xem → dòng nhắc "hãy mở ở khung chính", không treo · file có **trang ẩn** (`/NabuVault`) ở khung xem → hiện **trang giữ chỗ** (đúng, không phải lỗi — BI-72) · bản vẽ **A0/A1** ở khung xem → **không trắng trang** (BI-78 dùng chung `raster-cap.js`) · `Ctrl+S` / **In** / `Ctrl+Z` khi đang chia khung → **luôn** tác động lên khung chính · `Ctrl+\` lần nữa → đóng hết, nút ◫ tắt, rãnh biến mất · **đóng app rồi mở lại** → bố cục chia khung **và** tỷ lệ rãnh quay lại (BI-81) · nâng cấp từ bản cũ → **phiên cũ không bị mất** (BI-81) |
+| Bộ lọc chia sẻ clipboard (`SHARE_EXTRA`/`SHARE_EXCLUDED`/`isShareableKind` ở `editor.js`) | `cd desktop ; npm run test:clip` · copy **dấu ✓** ở file A → `Ctrl+V` ở **tab khác** và ở **cửa sổ khác** → sang được, đúng màu/cỡ/vị trí · copy **✗ + hộp văn bản** cùng lúc → **cả hai** sang · copy **✓ + ảnh** cùng lúc → ✓ sang, ảnh ở lại, toast nói rõ · ở file đích bấm **Xong** → lưu → mở lại: dấu ✓ nằm trên trang và **không chọn lại được** (đúng BI-42, không phải lỗi) · toast sau khi copy gọi tên **tiếng Việt** ("1 dấu tích ✓"), không phải `check` (BI-82) |
 | Khôi phục phiên (`src/session.js`, `snapshotSession`, `_closing`, `tab:reserved`) | `docs/SESSION-RESTORE.md` §5.3 (14 mục) · BI-18/19/20 · **mục #12 là hồi quy của khôi phục sự cố** |
 | Guard đóng | BI-6: nút X vs menu Thoát vs Ctrl+Q — cả 3 đường |
 | Recovery/autosave | BI-7: mở 2 tab, chỉ tab đầu được hỏi khôi phục |

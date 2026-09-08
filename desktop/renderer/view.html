@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="utf-8" />
+    <title>Nabu PDF — khung xem</title>
+    <!-- Apply the saved theme before first paint, exactly as index.html does: the
+         two pages sit side by side, so a light pane next to a dark one is a bug. -->
+    <script>try{var t=localStorage.getItem('nabu-theme');if(t)document.documentElement.setAttribute('data-theme',t);}catch(e){}</script>
+    <!-- app.css first, for ONE palette and one set of base rules. Its component
+         rules target ids/classes this page does not have, so they are inert here;
+         what matters is that the pane can never drift from the app's colours or
+         from the light/dark theme. view.css then owns this page's own layout. -->
+    <link rel="stylesheet" href="app.css" />
+    <link rel="stylesheet" href="view.css" />
+  </head>
+  <body>
+    <header class="vbar">
+      <span class="ro-badge" id="vw-badge" data-no-i18n>CHỈ ĐỌC</span>
+      <button id="vw-name" class="vw-name" title="Chọn tài liệu cho khung xem" data-no-i18n>Chưa chọn tài liệu ▾</button>
+      <span class="vw-saved" id="vw-saved" data-no-i18n hidden></span>
+
+      <!-- Hidden until the pane is showing a DIFFERENT document from the editable
+           pane: with the same file on both sides there is nothing to swap. -->
+      <button id="vw-edit" class="vw-btn wide" title="Mở file này ở khung chính để sửa" hidden>Sửa file này</button>
+
+      <span class="vw-sep"></span>
+
+      <button id="vw-prev" class="vw-btn" title="Trang trước" disabled>‹</button>
+      <span class="vw-page" data-no-i18n><input id="vw-page" value="1" disabled /><span id="vw-total" data-no-i18n>/ –</span></span>
+      <button id="vw-next" class="vw-btn" title="Trang sau" disabled>›</button>
+
+      <span class="vw-sep"></span>
+
+      <button id="vw-zoom-out" class="vw-btn" title="Thu nhỏ" disabled>−</button>
+      <input id="vw-zoom" class="vw-zoom" value="100" title="Mức phóng to" disabled />
+      <button id="vw-zoom-in" class="vw-btn" title="Phóng to" disabled>+</button>
+      <button id="vw-fit-w" class="vw-btn wide" title="Vừa bề ngang" disabled>Vừa ngang</button>
+      <button id="vw-fit-p" class="vw-btn wide" title="Vừa cả trang" disabled>Vừa trang</button>
+
+      <button id="vw-close" class="vw-btn close" title="Đóng khung xem">✕</button>
+    </header>
+
+    <div class="vw-note" id="vw-note" hidden data-no-i18n></div>
+
+    <div class="vw-body" id="vw-body">
+      <div class="vw-empty" id="vw-empty">Khung xem — chưa chọn tài liệu.</div>
+    </div>
+
+    <script src="vendor/pdf.min.js"></script>
+    <!-- raster-cap.js BEFORE view.js: every page rasterised here goes through
+         window.RasterCap.viewRasterDpr, the same one index.html uses (BI-78). -->
+    <script src="raster-cap.js"></script>
+    <script src="i18n.js"></script>
+    <script src="view.js"></script>
+  </body>
+</html>

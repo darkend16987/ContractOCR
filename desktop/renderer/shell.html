@@ -127,17 +127,84 @@
         border-radius: 8px;
         cursor: default;
       }
-      #add:hover {
+      #add:hover,
+      #split:hover {
         background: var(--tab-hover);
         color: #f1f5f9;
+      }
+      #split {
+        flex: 0 0 auto;
+        width: 30px;
+        height: 34px;
+        border: none;
+        background: transparent;
+        color: var(--fg-dim);
+        font-size: 15px;
+        line-height: 1;
+        border-radius: 8px;
+        cursor: default;
+      }
+      #split.on {
+        color: var(--accent);
+        background: var(--tab);
+      }
+
+      /* ---- split-view dividers ------------------------------------------
+         When the window is split, main gives this view the WHOLE window instead
+         of a 40px band and puts the document views on top of it. The only places
+         it still shows through are the 6px gutters — so the handles below are
+         literally the visible strip background, and dragging one needs no extra
+         process and no transparent overlay over the documents.
+
+         #gutters is inert (pointer-events:none) so that, when nothing is split,
+         this full-window layer cannot swallow a click meant for a document. */
+      #gutters {
+        position: absolute;
+        inset: 0;
+        pointer-events: none;
+      }
+      .gutter {
+        position: absolute;
+        pointer-events: auto;
+        cursor: col-resize;
+        background: var(--border);
+      }
+      .gutter::after {
+        content: "";
+        position: absolute;
+        left: 50%;
+        top: 50%;
+        width: 2px;
+        height: 26px;
+        margin: -13px 0 0 -1px;
+        border-radius: 1px;
+        background: var(--fg-dim);
+        opacity: 0.35;
+      }
+      .gutter:hover,
+      .gutter.dragging {
+        background: var(--accent);
+      }
+      .gutter:hover::after,
+      .gutter.dragging::after {
+        opacity: 0.85;
+        background: #0b1222;
+      }
+      /* While a divider is being dragged the pointer routinely travels across the
+         document views; keep the resize cursor for the whole gesture. */
+      body.dragging-gutter,
+      body.dragging-gutter * {
+        cursor: col-resize !important;
       }
     </style>
   </head>
   <body>
     <div id="bar">
       <div id="tabs"></div>
+      <button id="split" title="Chia đôi màn hình (Ctrl+\)">◫</button>
       <button id="add" title="Tab mới (mở tài liệu trống)">+</button>
     </div>
+    <div id="gutters"></div>
     <script src="shell.js"></script>
   </body>
 </html>

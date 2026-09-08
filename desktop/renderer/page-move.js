@@ -346,6 +346,14 @@
     } finally {
       offered = null; // only now: main asks us to export DURING the call above
     }
+    // Dropped on a READ-ONLY split-view pane. Those panes never write, so there is
+    // nothing to insert into — but the user aimed at a page-shaped area, and a
+    // gesture that lands somewhere deliberate and produces nothing at all is read
+    // as a bug. Say what happened and where it would have worked.
+    if (res && res.action === "readonly") {
+      toast(tr("Khung xem chỉ đọc — không nhận trang. Hãy thả vào khung chính."), "warn");
+      return;
+    }
     if (!res || res.action !== "send") return;
     const moved = !!shift && res.ok && unchanged(fp);
     if (moved) await deletePages(indices);
